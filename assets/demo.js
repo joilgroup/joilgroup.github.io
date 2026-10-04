@@ -352,6 +352,7 @@
         store.cal.grants = store.cal.grants.filter(function (g) { return g.year !== String(req.year); });
         Object.keys(req.grants || {}).forEach(function (id) { store.cal.grants.push({ year: String(req.year), userId: id, name: id, days: Number(req.grants[id]) || 0 }); });
         save(); return calAll();
+      case 'cal.refreshHolidays': if (me.role !== 'admin') fail('관리자만 할 수 있습니다.'); return { result: { ok: true, source: '데모 목록', count: demoHolidays().length, errors: [] }, cal: calAll() };
       case 'cal.companyHolidays':
         if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
         store.cal.companyHolidays = (req.list || []).filter(function (h) { return /^\d{4}-\d\d-\d\d$/.test(h.date); }); save(); return calAll();

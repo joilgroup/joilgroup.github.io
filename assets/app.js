@@ -5217,7 +5217,7 @@
             '<td class="left"><span class="lv-kind' + (/근무/.test(l.kind) ? ' work' : '') + '">' + esc(l.kind) + '</span></td><td class="num">' + leaveDays(l, holi) + '</td><td class="left small">' + esc(l.memo) + '</td>' +
             '<td class="left small muted">' + esc(l.by) + '</td><td>' + (canEdit ? '<button class="btn btn-sm btn-ghost" data-lv="' + esc(l.id) + '">수정</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>' : '<p class="muted small">기록이 없어요.</p>') + '</div>' +
-      (adm ? '<div class="card" style="margin-top:16px"><div class="row-between"><h3>회사 휴무일 <span class="muted small">공휴일 외에 회사가 쉬는 날 (창립기념일 등)</span></h3><button class="btn btn-sm" id="chAdd">＋ 추가</button></div>' +
+      (adm ? '<div class="card" style="margin-top:16px"><div class="row-between"><h3>회사 휴무일 <span class="muted small">공휴일 외에 회사가 쉬는 날 (창립기념일 등)</span></h3><span class="actions"><button class="btn btn-sm btn-ghost" id="hoRe">공휴일 다시 받기</button><button class="btn btn-sm" id="chAdd">＋ 추가</button></span></div>' +
         ((d.companyHolidays || []).length ? '<ul class="rule-list">' + d.companyHolidays.map(function (h, i) { return '<li><span><b>' + esc(h.date) + '</b> ' + esc(h.name) + '</span><button class="btn btn-sm btn-ghost" data-ch="' + i + '">삭제</button></li>'; }).join('') + '</ul>' : '<p class="muted small" style="margin:6px 0 0">없어요.</p>') + '</div>' : '');
     $('#lvY').onchange = function () { c.year = this.value; calLeave(); };
     $('#lvAdd').onclick = function () { editLeave({ userId: who || state.user.id }); };
@@ -5239,6 +5239,15 @@
           };
         }
       });
+    };
+    var re = $('#hoRe'); if (re) re.onclick = function () {
+      busy(re, true, '받는 중…');
+      api('cal.refreshHolidays').then(function (r) {
+        setCalData(r.cal); drawCal();
+        var x = r.result;
+        if (x.ok) toast('공휴일 ' + x.count + '개를 받았어요. (' + x.source + ')');
+        else modal({ eyebrow: '공휴일', title: '구글 캘린더에서 받지 못했어요', body: '<p style="margin:0 0 8px">지금은 <b>' + esc(x.source) + '</b>을(를) 쓰고 있어요.</p><p class="small muted" style="margin:0 0 8px">' + x.errors.map(esc).join('<br>') + '</p><p class="small" style="margin:0">서버 구글 시트 메뉴 <b>조일그룹 시스템 → 공휴일 받기 (캘린더 권한)</b>을 한 번 눌러 권한을 허용한 뒤, 새 버전으로 배포해 주세요.</p>', foot: '<button class="btn btn-primary" data-close>확인</button>' });
+      }).catch(function (err) { busy(re, false); toast(err.message, 'err'); });
     };
     var ch = $('#chAdd'); if (ch) ch.onclick = function () {
       modal({

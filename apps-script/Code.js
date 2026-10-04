@@ -35,6 +35,7 @@ function onOpen() {
     .addItem('관리자 비밀번호 초기화', 'resetAdminPassword')
     .addItem('유가 자동 기록 켜기', 'installDieselTrigger')
     .addItem('서류함 준비 (드라이브 권한)', 'setupDocs')
+    .addItem('공휴일 받기 (캘린더 권한)', 'setupHolidays')
     .addToUi();
 }
 
@@ -128,6 +129,7 @@ function handle_(req) {
     case 'cal.leaveSave': return leaveSave_(session, req);
     case 'cal.leaveDelete': return leaveDelete_(session, req.id);
     case 'cal.grantsSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return grantsSave_(session, req);
+    case 'cal.refreshHolidays': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return { result: refreshHolidays_(), cal: calAll_(session) };
     case 'cal.companyHolidays': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); saveCompanyHolidays_(req.list); return calAll_(session);
   }
 
@@ -1213,24 +1215,77 @@ function findRow_(sheet, header, id) {
 }
 function td_(v) { return textDate_(v); }
 
-/** 대한민국 공휴일: 구글 공개 캘린더 → 12시간 캐시 · 받은 값은 시트에 보관(실패하면 시트 값 사용) */
+var KR_HOLIDAY_CAL = 'ko.south_korea#holiday@group.v.calendar.google.com';
+/** 구글 캘린더를 못 읽을 때 쓰는 기본 목록 (법정 공휴일·대체공휴일) */
+var KR_HOLIDAY_BUILTIN = [
+  ['2026-01-01', '신정'], ['2026-02-16', '설날 연휴'], ['2026-02-17', '설날'], ['2026-02-18', '설날 연휴'], ['2026-03-01', '삼일절'], ['2026-03-02', '대체공휴일(삼일절)'],
+  ['2026-05-05', '어린이날'], ['2026-05-24', '부처님오신날'], ['2026-05-25', '대체공휴일(부처님오신날)'], ['2026-06-03', '전국동시지방선거'], ['2026-06-06', '현충일'],
+  ['2026-08-15', '광복절'], ['2026-08-17', '대체공휴일(광복절)'], ['2026-09-24', '추석 연휴'], ['2026-09-25', '추석'], ['2026-09-26', '추석 연휴'],
+  ['2026-10-03', '개천절'], ['2026-10-05', '대체공휴일(개천절)'], ['2026-10-09', '한글날'], ['2026-12-25', '기독탄신일'],
+  ['2027-01-01', '신정'], ['2027-02-06', '설날 연휴'], ['2027-02-07', '설날'], ['2027-02-08', '설날 연휴'], ['2027-02-09', '대체공휴일(설날)'], ['2027-03-01', '삼일절'],
+  ['2027-05-05', '어린이날'], ['2027-05-13', '부처님오신날'], ['2027-06-06', '현충일'], ['2027-08-15', '광복절'], ['2027-08-16', '대체공휴일(광복절)'],
+  ['2027-09-14', '추석 연휴'], ['2027-09-15', '추석'], ['2027-09-16', '추석 연휴'], ['2027-10-03', '개천절'], ['2027-10-04', '대체공휴일(개천절)'],
+  ['2027-10-09', '한글날'], ['2027-10-11', '대체공휴일(한글날)'], ['2027-12-25', '기독탄신일'], ['2027-12-27', '대체공휴일(기독탄신일)']
+];
+
+/** 구글 캘린더 "대한민국의 휴일"을 직접 읽기 (캘린더 권한 필요) */
+function holidaysFromCalendar_() {
+  var cal = CalendarApp.getCalendarById(KR_HOLIDAY_CAL);
+  if (!cal) { try { cal = CalendarApp.subscribeToCalendar(KR_HOLIDAY_CAL, { hidden: true }); } catch (e) { cal = null; } }
+  if (!cal) throw new Error('"대한민국의 휴일" 캘린더를 찾지 못했습니다.');
+  var y = Number(Utilities.formatDate(new Date(), TZ, 'yyyy'));
+  var events = cal.getEvents(new Date(y - 1, 0, 1), new Date(y + 2, 0, 1)), out = [];
+  events.forEach(function (ev) {
+    if (!ev.isAllDayEvent()) return;
+    var d = ev.getAllDayStartDate(), e = ev.getAllDayEndDate(), desc = String(ev.getDescription() || '');
+    for (var t = new Date(d.getTime()); t < e; t = new Date(t.getTime() + 86400000)) out.push({ date: ymd_(t), name: ev.getTitle(), off: !/기념일|observance/i.test(desc) });
+  });
+  return out;
+}
+function holidaysFromIcs_() {
+  var res = UrlFetchApp.fetch(KR_HOLIDAY_ICS, { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) throw new Error('응답 코드 ' + res.getResponseCode());
+  return parseHolidayIcs_(res.getContentText());
+}
+function holidayDedupe_(list) {
+  var seen = {};
+  return list.filter(function (h) { var k = h.date + h.name; if (seen[k]) return false; seen[k] = true; return true; }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+}
+/** 공휴일 받기: 구글 캘린더 → 공개 ics → (실패) 시트에 저장된 목록 → 기본 목록. 결과 설명도 같이 돌려줌 */
+function loadHolidays_() {
+  var list = null, source = '', errs = [];
+  try { list = holidaysFromCalendar_(); source = '구글 캘린더'; } catch (e) { errs.push('캘린더: ' + e.message); }
+  if (!list || !list.length) { try { list = holidaysFromIcs_(); source = '공개 캘린더 주소(ics)'; } catch (e) { errs.push('ics: ' + e.message); } }
+  var sh = cacheSheet_(SHEET_HOLI, HOLI_HEADER);
+  if (list && list.length) {
+    list = holidayDedupe_(list);
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, HOLI_HEADER.length).clearContent();
+    sh.getRange(2, 1, list.length, 3).setValues(list.map(function (h) { return ["'" + h.date, h.name, h.off ? '공휴일' : '기념일']; }));
+    return { list: list, source: source, ok: true, errors: errs };
+  }
+  list = rowsOf_(SHEET_HOLI, HOLI_HEADER).map(function (r) { return { date: td_(r[0]), name: String(r[1]), off: String(r[2]) !== '기념일' }; });
+  if (list.length) return { list: list, source: '시트에 저장된 목록', ok: false, errors: errs };
+  return { list: KR_HOLIDAY_BUILTIN.map(function (h) { return { date: h[0], name: h[1], off: true }; }), source: '기본 목록(2026~2027)', ok: false, errors: errs };
+}
+/** 12시간 캐시 · 제대로 못 받았으면 10분만 캐시해서 곧 다시 시도 */
 function krHolidays_() {
   var cache = CacheService.getScriptCache(), hit = cache.get('KR_HOLI');
   if (hit) return JSON.parse(hit);
-  var list = null;
-  try {
-    var res = UrlFetchApp.fetch(KR_HOLIDAY_ICS, { muteHttpExceptions: true });
-    if (res.getResponseCode() === 200) list = parseHolidayIcs_(res.getContentText());
-  } catch (e) { list = null; }
-  var sh = cacheSheet_(SHEET_HOLI, HOLI_HEADER);
-  if (list && list.length) {
-    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, HOLI_HEADER.length).clearContent();
-    sh.getRange(2, 1, list.length, 3).setValues(list.map(function (h) { return ["'" + h.date, h.name, h.off ? '공휴일' : '기념일']; }));
-  } else {
-    list = rowsOf_(SHEET_HOLI, HOLI_HEADER).map(function (r) { return { date: td_(r[0]), name: String(r[1]), off: String(r[2]) !== '기념일' }; });
-  }
-  try { cache.put('KR_HOLI', JSON.stringify(list), 43200); } catch (e) { /* 생략 */ }
-  return list;
+  var r = loadHolidays_();
+  try { cache.put('KR_HOLI', JSON.stringify(r.list), r.ok ? 43200 : 600); } catch (e) { /* 생략 */ }
+  return r.list;
+}
+/** 관리자: 지금 다시 받기 */
+function refreshHolidays_() {
+  CacheService.getScriptCache().remove('KR_HOLI');
+  var r = loadHolidays_();
+  try { CacheService.getScriptCache().put('KR_HOLI', JSON.stringify(r.list), r.ok ? 43200 : 600); } catch (e) { /* 생략 */ }
+  return { ok: r.ok, source: r.source, count: r.list.length, errors: r.errors };
+}
+/** 편집기·메뉴에서 실행: 캘린더 권한 승인 + 결과 확인 */
+function setupHolidays() {
+  var r = refreshHolidays_();
+  notify_(r.ok ? '공휴일 ' + r.count + '개를 받았습니다. (' + r.source + ')' : '공휴일을 받지 못했습니다. 지금은 ' + r.source + '을(를) 씁니다.\n' + r.errors.join('\n'));
 }
 function parseHolidayIcs_(text) {
   var lines = String(text).replace(/\r\n[ \t]/g, '').split(/\r?\n/), out = [], ev = null;
