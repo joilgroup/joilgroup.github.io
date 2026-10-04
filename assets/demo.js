@@ -38,7 +38,7 @@
     return out;
   })();
   function dieselStatus() { return { count: dieselRows.length, first: dieselRows[0][0], last: dieselRows[dieselRows.length - 1][0], lastPrice: dieselRows[dieselRows.length - 1][1], triggerOn: false, hasKey: !!store.keys.opinet }; } // 분석 데이터는 용량이 커서 메모리에만 (새로고침하면 사라짐)
-  function permsOf(u) { return u.role === 'admin' ? ['quote', 'analysis', 'admin'] : (u.perms || ['quote']); }
+  function permsOf(u) { return u.role === 'admin' ? ['quote', 'analysis', 'search', 'admin'] : (u.perms || ['quote']); }
   function needPerm(me, p) { if (me.perms.indexOf(p) === -1) fail(p === 'analysis' ? '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.' : '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.'); }
 
   function loadSessions() { try { return JSON.parse(sessionStorage.getItem('joil-demo-sessions') || '{}'); } catch (e) { return {}; } }
@@ -230,7 +230,8 @@
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
       'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials'].indexOf(req.action) !== -1) needPerm(me, 'quote');
-    if (req.action === 'analysis.index' || req.action === 'analysis.load' || /^notes\./.test(req.action)) needPerm(me, 'analysis');
+    if (req.action === 'analysis.index' || req.action === 'analysis.load') { if (me.perms.indexOf('analysis') === -1 && me.perms.indexOf('search') === -1) needPerm(me, 'analysis'); }
+    if (/^notes\./.test(req.action)) needPerm(me, 'analysis');
     if (/^reqs\./.test(req.action)) needPerm(me, 'quote');
     switch (req.action) {
       case 'analysis.index':

@@ -17,14 +17,14 @@ var TZ = 'Asia/Seoul';
 var USER_COLS = ['아이디', '이름', '권한', '사용여부', '비밀번호해시', '솔트', '비밀번호변경필요', '생성일', '마지막로그인', '메뉴권한'];
 
 /* 메뉴 권한: quote(견적 계산·조회기록·견적모음), analysis(매출매입 분석). 관리자는 전부. */
-var PERMS = ['quote', 'analysis'];
+var PERMS = ['quote', 'analysis', 'search'];
 function permsOf_(role, raw) {
-  if (role === 'admin') return ['quote', 'analysis', 'admin'];
+  if (role === 'admin') return ['quote', 'analysis', 'search', 'admin'];
   if (raw == null || raw === '') return ['quote']; // 예전에 만든 계정은 견적만
   return String(raw).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return PERMS.indexOf(x) !== -1; });
 }
 function requirePerm_(session, perm) {
-  if (session.perms.indexOf(perm) === -1) throw new Error(perm === 'analysis' ? '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.' : '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.');
+  if (session.perms.indexOf(perm) === -1) throw new Error({ analysis: '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.', search: '배차검색 권한이 없습니다. 관리자에게 요청하세요.' }[perm] || '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.');
 }
 
 /* ───────────── 메뉴 & 초기 설정 ───────────── */
@@ -149,7 +149,9 @@ function handle_(req) {
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
     'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'custs.list', 'custs.save', 'custs.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
-  if (action === 'analysis.index' || action === 'analysis.load' || /^notes\./.test(action)) requirePerm_(session, 'analysis');
+  // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
+  if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
+  if (/^notes\./.test(action)) requirePerm_(session, 'analysis');
   switch (action) {
     case 'analysis.index': return analysisIndex_(session);
     case 'analysis.load': return analysisLoad_(req.keys);

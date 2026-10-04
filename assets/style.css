@@ -1020,3 +1020,15 @@ label.chk input { width: 18px; height: 18px; accent-color: var(--green); cursor:
 .staff-table td { vertical-align: middle; }
 .ot-one { padding: 2px 8px; font-size: 11.5px; margin-left: 4px; }
 @media (max-width: 900px) { .notice-list, .wk-grid, .cust-sec { grid-template-columns: minmax(0, 1fr); } .wk-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* 배차검색 */
+.sr-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; }
+.sr-f { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); }
+.sr-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.sr-bar .spacer { flex: 1; }
+.sr-sum td.sr-st { white-space: nowrap; } .sr-sum td.sr-st small { display: block; color: var(--muted); font-size: 11.5px; }
+.sr-tbl mark { background: color-mix(in srgb, var(--yellow) 55%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.sr-tbl td.nowrap { white-space: nowrap; }
+.sr-pick { border: 0; background: transparent; padding: 0; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.sr-pick:hover { color: var(--orange); text-decoration: underline; }
+@media (max-width: 900px) { .sr-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
