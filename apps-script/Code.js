@@ -129,6 +129,9 @@ function handle_(req) {
     case 'cal.leaveSave': return leaveSave_(session, req);
     case 'cal.leaveDelete': return leaveDelete_(session, req.id);
     case 'cal.staffSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return staffSave_(session, req);
+    case 'cal.dutyRuleSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return dutyRuleSave_(session, req);
+    case 'cal.dutyRuleDelete': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return dutyRuleDelete_(session, req.id);
+    case 'cal.dutyOverride': return dutyOverride_(session, req);
     case 'cal.import': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return calImport_(session, req);
     case 'cal.grantsSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return grantsSave_(session, req);
     case 'cal.refreshHolidays': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return { result: refreshHolidays_(), cal: calAll_(session) };
@@ -1204,6 +1207,8 @@ var LEAVE_ALIAS = { '반차(오전)': '오전 반차', '반차(오후)': '오후
 function isWorkKind_(k) { return /근무|당직/.test(k); }
 var SHEET_GRANTS = '연차부여';
 var GRANT_HEADER = ['연도', '아이디', '이름', '부여일수'];
+var SHEET_DUTY_OVR = '당직변경';
+var DUTY_OVR_HEADER = ['규칙ID', '주시작', '아이디', '이름', '시간', '취소', '메모', '등록자', '등록일시'];
 var SHEET_HOLI = '공휴일';
 var HOLI_HEADER = ['날짜', '이름', '구분'];
 var KR_HOLIDAY_ICS = 'https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics';
@@ -1340,7 +1345,9 @@ function calAll_(session) {
   });
   var grants = rowsOf_(SHEET_GRANTS, GRANT_HEADER).map(function (r) { return { year: String(r[0]), userId: String(r[1]), name: String(r[2]), days: Number(r[3]) || 0 }; });
   var users = calUsers_();
-  return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: users, holidays: krHolidays_(), companyHolidays: companyHolidays_(), today: ymd_(new Date()) };
+  var dutyOvr = rowsOf_(SHEET_DUTY_OVR, DUTY_OVR_HEADER).map(function (r) { return { ruleId: String(r[0]), week: td_(r[1]), userId: String(r[2] || ''), name: String(r[3] || ''), hours: r[4] === '' ? null : Number(r[4]), cancel: String(r[5]) === 'Y', memo: String(r[6] || ''), by: String(r[7] || ''), at: fmt_(r[8]) }; });
+  return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: users, holidays: krHolidays_(), companyHolidays: companyHolidays_(), today: ymd_(new Date()),
+    dutyRules: dutyRules_(), dutyOverrides: dutyOvr };
 }
 
 function eventSave_(session, req) {
@@ -1502,6 +1509,48 @@ function calImport_(session, req) {
     if (res.staff) PropertiesService.getScriptProperties().setProperty('CAL_STAFF', JSON.stringify(staff));
     return { result: res, cal: calAll_(session) };
   } finally { lock.releaseLock(); }
+}
+/* ── 당직 순번 규칙 ──
+ * { id, name, members:[{id,name}] (첫 사람이 시작 주 담당), start(월요일), mode:'week'|'days', hours, days:[0..6], holidays:bool, active }
+ * week: 월~일 한 주를 통째로 (시간은 주당) · days: 그 주의 정해진 요일(+공휴일)마다 하루씩 (시간은 하루당) */
+function dutyRules_() { return parseJson_(PropertiesService.getScriptProperties().getProperty('DUTY_RULES'), []); }
+function mondayOf_(s) { var d = new Date(Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10))), w = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - w * 86400000).toISOString().slice(0, 10); }
+function dutyRuleSave_(session, req) {
+  var r = req.rule || {}, list = dutyRules_();
+  var name = String(r.name || '').trim().slice(0, 30); if (!name) throw new Error('규칙 이름을 넣으세요.');
+  var users = calUsers_(), byName = {}; users.forEach(function (u) { byName[u.name] = u.id; });
+  var members = (r.members || []).map(function (m) { var n = String((m && m.name) || m || '').trim(); if (!n) return null; if (!byName[n]) throw new Error('"' + n + '"은(는) 계정이나 직원 명단에 없습니다. 먼저 직원 명단에 추가하세요.'); return { id: byName[n], name: n }; }).filter(Boolean);
+  if (members.length < 1) throw new Error('순번에 들어갈 사람을 한 명 이상 넣으세요.');
+  var mode = r.mode === 'days' ? 'days' : 'week', hours = Number(r.hours);
+  if (!(hours >= 0 && hours <= 100)) throw new Error('시간을 확인하세요.');
+  var days = (r.days || []).map(Number).filter(function (x) { return x >= 0 && x <= 6; });
+  if (mode === 'days' && !days.length && !r.holidays) throw new Error('요일이나 공휴일을 하나 이상 고르세요.');
+  var o = { id: r.id || 'R' + Utilities.getUuid().replace(/-/g, '').slice(0, 8), name: name, members: members, start: mondayOf_(checkDate_(r.start, '시작 주')), mode: mode, hours: hours, days: days, holidays: !!r.holidays, active: r.active !== false };
+  var i = -1; list.forEach(function (x, k) { if (x.id === o.id) i = k; });
+  if (i === -1) list.push(o); else list[i] = o;
+  PropertiesService.getScriptProperties().setProperty('DUTY_RULES', JSON.stringify(list));
+  return calAll_(session);
+}
+function dutyRuleDelete_(session, id) {
+  PropertiesService.getScriptProperties().setProperty('DUTY_RULES', JSON.stringify(dutyRules_().filter(function (x) { return x.id !== id; })));
+  return calAll_(session);
+}
+/** 한 주만 바꾸기 (다른 사람·시간·취소) · 관리자나 그 규칙의 순번에 있는 사람 */
+function dutyOverride_(session, req) {
+  var rule = dutyRules_().filter(function (x) { return x.id === req.ruleId; })[0]; if (!rule) throw new Error('규칙을 찾을 수 없습니다.');
+  var mine = rule.members.some(function (m) { return m.id === session.id || m.name === session.name; });
+  if (session.role !== 'admin' && !mine) throw new Error('관리자나 이 당직 순번에 있는 사람만 바꿀 수 있습니다.');
+  var week = mondayOf_(checkDate_(req.week, '주'));
+  var sh = cacheSheet_(SHEET_DUTY_OVR, DUTY_OVR_HEADER), rows = rowsOf_(SHEET_DUTY_OVR, DUTY_OVR_HEADER);
+  for (var i = rows.length - 1; i >= 0; i--) if (String(rows[i][0]) === rule.id && td_(rows[i][1]) === week) sh.deleteRow(i + 2);
+  if (!req.clear) {
+    var u = null;
+    if (!req.cancel) { u = calUsers_().filter(function (x) { return x.id === req.userId || x.name === req.name; })[0]; if (!u) throw new Error('바꿀 사람을 고르세요.'); }
+    var h = req.hours === '' || req.hours == null ? '' : Number(req.hours);
+    if (h !== '' && !(h >= 0 && h <= 100)) throw new Error('시간을 확인하세요.');
+    sh.appendRow([rule.id, "'" + week, u ? u.id : '', u ? u.name : '', h, req.cancel ? 'Y' : '', String(req.memo || '').slice(0, 200), session.name, now_()]);
+  }
+  return calAll_(session);
 }
 function leaveDelete_(session, id) {
   var f = findRow_(SHEET_LEAVES, LEAVE_HEADER, id); if (!f) throw new Error('기록을 찾을 수 없습니다.');

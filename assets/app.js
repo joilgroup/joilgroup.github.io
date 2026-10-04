@@ -4977,75 +4977,213 @@
     if (c.tab === 'tasks') calTasks(); else if (c.tab === 'leave') calLeave(); else calMonth();
   }
 
-  /** 하루에 보일 항목들 */
-  function dayItems(s, holi, occ) {
-    var c = state.cal, d = c.data, sh = c.show, out = [];
-    if (sh.holi) (holi[s] || []).forEach(function (h) { out.push({ k: h.off ? 'holi' : 'obs', t: h.name }); });
-    if (sh.leave) d.leaves.forEach(function (l) {
-      if (s < l.start || s > l.end) return;
-      if (!isWork(l.kind) && l.start !== l.end && isOff(s, holi)) return;
-      out.push({ k: isWork(l.kind) ? 'work' : 'leave', t: l.name + ' ' + l.kind + (l.hours && l.start === s ? ' ' + l.hours + 'h' : ''), ref: l });
+  /* ── 당직 순번 규칙 → 그 기간의 당직 (화면에서 계산) ── */
+  function mondayOf(s) { return dAdd(s, -((dDow(s) + 6) % 7)); }
+  function dutyEntries(from, to) {
+    var d = state.cal.data, holi = calHoli(), out = [];
+    var real = {}; d.leaves.forEach(function (l) { if (l.kind === '당직') real[l.name + '|' + l.start] = 1; });
+    var ovr = {}; (d.dutyOverrides || []).forEach(function (o) { ovr[o.ruleId + '|' + o.week] = o; });
+    (d.dutyRules || []).forEach(function (r) {
+      if (!r.active || !r.members.length) return;
+      var w = mondayOf(from) < r.start ? r.start : mondayOf(from);
+      for (; w <= to; w = dAdd(w, 7)) {
+        var n = Math.round((dU(w) - dU(r.start)) / 604800000), m = r.members[((n % r.members.length) + r.members.length) % r.members.length];
+        var o = ovr[r.id + '|' + w]; if (o && o.cancel) continue;
+        var who = o && o.name ? { id: o.userId, name: o.name } : m, h = o && o.hours != null ? o.hours : r.hours;
+        var base = { kind: '당직', rule: r, week: w, ovr: o || null, name: who.name, userId: who.id, hours: h, memo: (o && o.memo) || '', label: r.name, virtual: true, by: '순번 규칙' };
+        if (r.mode === 'week') {
+          if (!real[who.name + '|' + w]) out.push(Object.assign({ id: 'R' + r.id + w, start: w, end: dAdd(w, 6) }, base));
+        } else for (var k = 0; k < 7; k++) {
+          var day = dAdd(w, k), hol = (holi[day] || []).some(function (x) { return x.off; });
+          if ((r.days.indexOf(dDow(day)) !== -1 || (r.holidays && hol)) && !real[who.name + '|' + day]) out.push(Object.assign({ id: 'R' + r.id + day, start: day, end: day }, base));
+        }
+      }
     });
-    if (sh.task) (occ[s] || []).forEach(function (o) { out.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, ref: o }); });
-    if (sh.req) (state.reqs.list || []).forEach(function (r) { if (r.due === s && ['접수', '검토중'].indexOf(r.status) !== -1) out.push({ k: 'req', t: '회신 ' + r.cust, ref: r }); });
-    if (sh.doc) (state.docs.list || []).forEach(function (x) { if (x.expires === s) out.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, ref: x }); });
-    if (sh.event) d.events.forEach(function (e) { if (s >= e.start && s <= e.end) out.push({ k: 'event', t: e.title, ref: e }); });
+    return out.filter(function (l) { return l.end >= from && l.start <= to; });
+  }
+  /** 기간과 겹치는 휴가·근무 (+ 순번 당직) */
+  function leavesIn(from, to) {
+    return state.cal.data.leaves.filter(function (l) { return l.end >= from && l.start <= to; }).concat(dutyEntries(from, to));
+  }
+  function leaveKey(l) { return l.kind === '당직' ? 'duty' : isWork(l.kind) ? 'work' : 'leave'; }
+  function leaveLabel(l) { return l.kind === '당직' ? (l.label || (l.memo && l.memo.length <= 10 ? l.memo : '당직')) + ' ' + l.name : l.name + ' ' + l.kind + (l.hours && isWork(l.kind) ? ' ' + l.hours + 'h' : ''); }
+  function calShow(k) { var v = state.cal.show[k]; return v == null ? true : v; }
+
+  /** 하루 목록 (날짜 팝업용) */
+  function dayItems(s, holi, occ) {
+    var d = state.cal.data, out = [];
+    (holi[s] || []).forEach(function (h) { out.push({ k: h.off ? 'holi' : 'obs', t: h.name }); });
+    leavesIn(s, s).forEach(function (l) { out.push({ k: leaveKey(l), t: leaveLabel(l) + (l.start !== l.end ? ' (' + l.start.slice(5).replace('-', '/') + '~' + l.end.slice(5).replace('-', '/') + ')' : ''), ref: l }); });
+    (occ[s] || []).forEach(function (o) { out.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, ref: o }); });
+    (state.reqs.list || []).forEach(function (r) { if (r.due === s && ['접수', '검토중'].indexOf(r.status) !== -1) out.push({ k: 'req', t: '회신 ' + r.cust, ref: r }); });
+    (state.docs.list || []).forEach(function (x) { if (x.expires === s) out.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, ref: x }); });
+    d.events.forEach(function (e) { if (s >= e.start && s <= e.end) out.push({ k: 'event', t: e.title, ref: e }); });
     return out;
   }
 
+  var CAL_LANES = 4;
   function calMonth() {
     var c = state.cal, d = c.data, ym = c.ym, holi = calHoli();
     var y = +ym.slice(0, 4), m = +ym.slice(5, 7), first = ym + '-01', last = ym + '-' + pad2(dim(y, m));
-    var gStart = dAdd(first, -dDow(first)), gEnd = dAdd(last, 6 - dDow(last));
-    var occ = {}; allOccurrences(gStart, gEnd, c.mine).forEach(function (o) { (occ[o.date] = occ[o.date] || []).push(o); });
-    var cells = '';
-    for (var s = gStart; s <= gEnd; s = dAdd(s, 1)) {
-      var w = dDow(s), items = dayItems(s, holi, occ), offH = (holi[s] || []).some(function (h) { return h.off; });
-      cells += '<div class="cal-cell' + (s.slice(0, 7) !== ym ? ' out' : '') + (s === d.today ? ' today' : '') + (w === 0 || offH ? ' sun' : w === 6 ? ' sat' : '') + '" data-d="' + s + '">' +
-        '<div class="cal-num">' + (+s.slice(8)) + '</div>' +
-        items.slice(0, 4).map(function (it) { return '<div class="cal-it k-' + it.k.replace(' ', ' k-') + '" title="' + esc(it.t) + '">' + esc(it.t) + '</div>'; }).join('') +
-        (items.length > 4 ? '<div class="cal-more">+' + (items.length - 4) + '</div>' : '') + '</div>';
+    var col = function (x) { return (dDow(x) + 6) % 7; }; // 월요일 시작
+    var gStart = dAdd(first, -col(first)), gEnd = dAdd(last, 6 - col(last));
+    // 막대로 그릴 항목 (기간)
+    var items = [], P = { duty: 0, leave: 1, work: 2, event: 3, task: 4, req: 5, doc: 6 };
+    leavesIn(gStart, gEnd).forEach(function (l) { var k = leaveKey(l); if (calShow(k)) items.push({ k: k, t: leaveLabel(l), s: l.start, e: l.end }); });
+    if (calShow('event')) d.events.forEach(function (e) { if (e.end >= gStart && e.start <= gEnd) items.push({ k: 'event', t: e.title, s: e.start, e: e.end }); });
+    if (calShow('task')) allOccurrences(gStart, gEnd, c.mine).forEach(function (o) { items.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, s: o.date, e: o.date }); });
+    if (calShow('req')) (state.reqs.list || []).forEach(function (r) { if (r.due && ['접수', '검토중'].indexOf(r.status) !== -1) items.push({ k: 'req', t: '회신 ' + r.cust, s: r.due, e: r.due }); });
+    if (calShow('doc')) (state.docs.list || []).forEach(function (x) { if (x.expires) items.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, s: x.expires, e: x.expires }); });
+    // 같은 사람·같은 종류가 이어진 날이면 막대 하나로 (예: 토·일 당직, 이어서 쓴 연차)
+    items.sort(function (a, b) { return a.k + a.t < b.k + b.t ? -1 : a.k + a.t > b.k + b.t ? 1 : a.s < b.s ? -1 : 1; });
+    items = items.reduce(function (out, it) {
+      var p = out[out.length - 1];
+      if (p && /^(duty|leave|work)$/.test(it.k) && p.k === it.k && p.t === it.t && it.s <= dAdd(p.e, 1)) { if (it.e > p.e) p.e = it.e; return out; }
+      out.push(Object.assign({}, it)); return out;
+    }, []);
+    var weeks = '';
+    for (var w = gStart; w <= gEnd; w = dAdd(w, 7)) {
+      var we = dAdd(w, 6), segs = [];
+      items.forEach(function (it) {
+        if (it.e < w || it.s > we) return;
+        var cs = it.s < w ? w : it.s, ce = it.e > we ? we : it.e;
+        segs.push({ it: it, c: col(cs), n: Math.round((dU(ce) - dU(cs)) / 86400000) + 1, l: it.s < w, r: it.e > we });
+      });
+      segs.sort(function (a, b) { return (a.it.k === 'duty' ? 0 : 1) - (b.it.k === 'duty' ? 0 : 1) || b.n - a.n || (P[a.it.k.split(' ')[0]] - P[b.it.k.split(' ')[0]]) || a.c - b.c; });
+      var lanes = [], more = [0, 0, 0, 0, 0, 0, 0], bars = '';
+      segs.forEach(function (sg) {
+        var L = 0;
+        for (; L < CAL_LANES; L++) { var ok = true; for (var i = sg.c; i < sg.c + sg.n; i++) if (lanes[L] && lanes[L][i]) { ok = false; break; } if (ok) break; }
+        if (L >= CAL_LANES) { for (var j = sg.c; j < sg.c + sg.n; j++) more[j]++; return; }
+        lanes[L] = lanes[L] || []; for (var q = sg.c; q < sg.c + sg.n; q++) lanes[L][q] = 1;
+        bars += '<div class="cal-bar k-' + sg.it.k.replace(' ', ' k-') + (sg.l ? ' cl' : '') + (sg.r ? ' cr' : '') + '" style="grid-column:' + (sg.c + 1) + ' / span ' + sg.n + ';grid-row:' + (L + 2) + '">' + esc(sg.it.t) + '</div>';
+      });
+      var cells = '';
+      for (var k = 0; k < 7; k++) {
+        var s = dAdd(w, k), hs = calShow('holi') ? (holi[s] || []) : [], offH = (holi[s] || []).some(function (h) { return h.off; });
+        cells += '<div class="cal-cell' + (s.slice(0, 7) !== ym ? ' out' : '') + (s === d.today ? ' today' : '') + (k === 6 || offH ? ' sun' : k === 5 ? ' sat' : '') + '" style="grid-column:' + (k + 1) + '" data-d="' + s + '">' +
+          '<div class="cal-head"><span class="cal-num">' + (+s.slice(8)) + '</span>' + (hs.length ? '<span class="cal-hname' + (hs.some(function (h) { return h.off; }) ? '' : ' obs') + '">' + esc(hs.map(function (h) { return h.name; }).join(' · ')) + '</span>' : '') + '</div></div>';
+        if (more[k]) bars += '<div class="cal-more" style="grid-column:' + (k + 1) + ';grid-row:' + (CAL_LANES + 2) + '">+' + more[k] + '</div>';
+      }
+      weeks += '<div class="cal-week">' + cells + bars + '</div>';
     }
-    var chip = function (k, label) { return '<button type="button" class="chip cal-f k-' + k + (c.show[k] ? ' on' : '') + '" data-f="' + k + '">' + label + '</button>'; };
+    var chip = function (k, label) { return '<button type="button" class="chip cal-f k-' + k + (calShow(k) ? ' on' : '') + '" data-f="' + k + '">' + label + '</button>'; };
     $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px">' +
       '<div class="cal-nav"><button class="btn btn-sm" id="cmPrev">◀</button><h2>' + y + '년 ' + m + '월</h2><button class="btn btn-sm" id="cmNext">▶</button><button class="btn btn-sm btn-ghost" id="cmToday">오늘</button></div>' +
       '<div class="actions"><label class="toggle small"><input type="checkbox" id="cmMine"' + (c.mine ? ' checked' : '') + '><span class="track"></span>내 할 일만</label><button class="btn btn-sm btn-primary" id="cmAdd">＋ 일정</button></div></div>' +
-      '<div class="chips cal-filters">' + chip('holi', '공휴일') + chip('leave', '휴가·근무') + chip('task', '할 일') + (can('quote') ? chip('req', '견적 회신') + chip('doc', '서류 만료') : '') + chip('event', '일정') + '</div>' +
-      '<div class="cal-grid">' + WD.map(function (x, i) { return '<div class="cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + x + '</div>'; }).join('') + cells + '</div>' +
-      '<p class="hint" style="margin:10px 0 0">날짜를 누르면 그날 일정을 보고 추가할 수 있어요 · 공휴일은 구글 캘린더 "대한민국의 휴일" 기준' + (state.user.role === 'admin' ? ' · 회사 휴무일은 휴가·근무 탭 아래에서 추가' : '') + '</p></div>';
+      '<div class="chips cal-filters">' + chip('holi', '공휴일') + chip('duty', '당직') + chip('leave', '휴가') + chip('work', '추가근무') + chip('task', '할 일') + (can('quote') ? chip('req', '견적 회신') + chip('doc', '서류 만료') : '') + chip('event', '일정') + '</div>' +
+      '<div class="cal-grid2"><div class="cal-wds">' + [1, 2, 3, 4, 5, 6, 0].map(function (i) { return '<div class="cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + WD[i] + '</div>'; }).join('') + '</div>' + weeks + '</div>' +
+      '<p class="hint" style="margin:10px 0 0">날짜를 누르면 그날 일정을 보고 추가할 수 있어요 · 공휴일은 구글 캘린더 "대한민국의 휴일" 기준 · 당직 순번은 휴가·근무 탭에서 정해요</p></div>';
     $('#cmPrev').onclick = function () { c.ym = ymAdd(c.ym, -1); calMonth(); };
     $('#cmNext').onclick = function () { c.ym = ymAdd(c.ym, 1); calMonth(); };
     $('#cmToday').onclick = function () { c.ym = d.today.slice(0, 7); calMonth(); };
     $('#cmMine').onchange = function () { c.mine = this.checked; calMonth(); };
     $('#cmAdd').onclick = function () { editEvent({ start: d.today }); };
-    $$('.cal-f').forEach(function (b) { b.onclick = function () { c.show[b.dataset.f] = !c.show[b.dataset.f]; local('set', 'joil-calshow', c.show); calMonth(); }; });
+    $$('.cal-f').forEach(function (b) { b.onclick = function () { c.show[b.dataset.f] = !calShow(b.dataset.f); local('set', 'joil-calshow', c.show); calMonth(); }; });
     $$('.cal-cell').forEach(function (cell) { cell.onclick = function () { openDay(cell.dataset.d); }; });
   }
 
   function openDay(s) {
-    var c = state.cal, holi = calHoli();
+    var holi = calHoli();
     var occ = {}; allOccurrences(s, s, false).forEach(function (o) { (occ[o.date] = occ[o.date] || []).push(o); });
-    var saveShow = c.show; c.show = { holi: true, leave: true, task: true, req: true, doc: true, event: true };
-    var items = dayItems(s, holi, occ); c.show = saveShow;
+    var items = dayItems(s, holi, occ);
+    var canDuty = function (l) { return l.virtual && (state.user.role === 'admin' || l.rule.members.some(function (m) { return m.id === state.user.id || m.name === state.user.name; })); };
     var close = modal({
       eyebrow: s.slice(0, 4) + '년 ' + (+s.slice(5, 7)) + '월', title: (+s.slice(8)) + '일 (' + WD[dDow(s)] + ')',
       body: (items.length ? '<ul class="day-list">' + items.map(function (it, i) {
         var act = '';
         if (/^task/.test(it.k)) act = '<label class="chk"><input type="checkbox" data-task="' + i + '"' + (it.ref.done ? ' checked' : '') + '>' + (it.ref.done ? ' 완료 · ' + esc(it.ref.done.by) : ' 완료') + '</label>';
         if (it.k === 'event') act = '<button class="btn btn-sm btn-ghost" data-ev="' + i + '">수정</button>';
-        if (it.k === 'leave' || it.k === 'work') act = '<span class="small muted">' + esc(it.ref.memo || '') + '</span>';
-        return '<li class="k-' + it.k.replace(' ', ' k-') + '"><span class="dot"></span><span class="txt">' + esc(it.t) + (it.ref && it.ref.task && it.ref.task.assignee ? ' <span class="small muted">· ' + esc(it.ref.task.assignee) + '</span>' : '') + (it.ref && it.ref.memo && it.k === 'event' ? '<br><span class="small muted">' + esc(it.ref.memo) + '</span>' : '') + '</span>' + act + '</li>';
+        if (it.k === 'duty' && canDuty(it.ref)) act = '<button class="btn btn-sm btn-ghost" data-duty="' + i + '">' + (it.ref.rule.mode === 'week' ? '이 주' : '이번 주말') + ' 바꾸기</button>';
+        else if (/^(leave|work|duty)$/.test(it.k)) act = '<span class="small muted">' + esc((it.ref.hours && isWork(it.ref.kind) ? it.ref.hours + '시간 ' : '') + (it.ref.memo || '')) + '</span>';
+        return '<li class="k-' + it.k.replace(' ', ' k-') + '"><span class="dot"></span><span class="txt">' + esc(it.t) + (it.ref && it.ref.task && it.ref.task.assignee ? ' <span class="small muted">· ' + esc(it.ref.task.assignee) + '</span>' : '') + (it.ref && it.ref.ovr ? ' <span class="small muted">· 바뀜</span>' : '') + (it.ref && it.ref.memo && it.k === 'event' ? '<br><span class="small muted">' + esc(it.ref.memo) + '</span>' : '') + '</span>' + act + '</li>';
       }).join('') + '</ul>' : '<p class="muted">일정이 없어요.</p>'),
       foot: '<button class="btn btn-sm" id="dyEv">＋ 일정</button><button class="btn btn-sm" id="dyTask">＋ 할 일</button><button class="btn btn-sm" id="dyLeave">＋ 휴가·근무</button><button class="btn" data-close>닫기</button>',
       onMount: function (m, closeFn) {
         $$('[data-task]', m).forEach(function (cb) { cb.onchange = function () { var o = items[+cb.dataset.task].ref; calSave('cal.taskDone', { id: o.task.id, date: o.base, undo: !cb.checked }, cb.checked ? '완료로 표시했어요.' : '완료를 취소했어요.').then(function () { closeFn(); openDay(s); }); }; });
         $$('[data-ev]', m).forEach(function (b) { b.onclick = function () { closeFn(); editEvent(items[+b.dataset.ev].ref); }; });
+        $$('[data-duty]', m).forEach(function (b) { b.onclick = function () { closeFn(); editDutyWeek(items[+b.dataset.duty].ref); }; });
         $('#dyEv', m).onclick = function () { closeFn(); editEvent({ start: s }); };
         $('#dyTask', m).onclick = function () { closeFn(); editTask({ rule: { type: 'once', date: s } }); };
         $('#dyLeave', m).onclick = function () { closeFn(); editLeave({ start: s, end: s }); };
       }
     });
     return close;
+  }
+
+  /** 순번 당직 한 주만 바꾸기 */
+  function editDutyWeek(l) {
+    var r = l.rule, users = state.cal.data.users, cur = l.ovr;
+    var names = r.members.map(function (x) { return x.name; }).concat(users.map(function (u) { return u.name; }).filter(function (n) { return !r.members.some(function (x) { return x.name === n; }); }));
+    modal({
+      eyebrow: r.name, title: l.week.slice(5).replace('-', '/') + ' ~ ' + dAdd(l.week, 6).slice(5).replace('-', '/') + ' 주 바꾸기',
+      body: '<div class="field"><label>담당</label><select class="input" id="dwN">' + names.map(function (n) { return '<option' + (n === l.name ? ' selected' : '') + '>' + esc(n) + '</option>'; }).join('') + '</select></div>' +
+        '<div class="field"><label>시간 ' + (r.mode === 'week' ? '(그 주)' : '(하루당)') + '</label><input class="input num" id="dwH" inputmode="decimal" value="' + esc(l.hours) + '"></div>' +
+        '<div class="field"><label>메모</label><input class="input" id="dwM" maxlength="200" value="' + esc(l.memo || '') + '" placeholder="예) 휴가로 교대"></div>' +
+        (cur ? '<p class="hint" style="margin:0">이미 바꾼 주예요 · ' + esc(cur.by) + ' ' + esc(cur.at) + '</p>' : ''),
+      foot: (cur ? '<button class="btn btn-sm btn-ghost" id="dwClr" style="margin-right:auto">원래 순번으로</button>' : '') + '<button class="btn btn-danger btn-sm" id="dwCancel">이 주 당직 없음</button><button class="btn" data-close>취소</button><button class="btn btn-primary" id="dwSave">저장</button>',
+      onMount: function (m, close) {
+        var send = function (p, msg) { calSave('cal.dutyOverride', Object.assign({ ruleId: r.id, week: l.week }, p), msg).then(close).catch(function (err) { toast(err.message, 'err'); }); };
+        $('#dwSave', m).onclick = function () { send({ name: $('#dwN', m).value, hours: $('#dwH', m).value.trim() === '' ? '' : Number($('#dwH', m).value), memo: $('#dwM', m).value }, '이 주 당직을 바꿨어요.'); };
+        $('#dwCancel', m).onclick = function () { if (confirm('이 주 ' + r.name + '을(를) 없는 것으로 할까요?')) send({ cancel: true, memo: $('#dwM', m).value }, '이 주는 당직 없음으로 했어요.'); };
+        var clr = $('#dwClr', m); if (clr) clr.onclick = function () { send({ clear: true }, '원래 순번으로 되돌렸어요.'); };
+      }
+    });
+  }
+
+  /** 당직 순번 카드 (휴가·근무 탭) */
+  function dutyCardHtml() {
+    var d = state.cal.data, adm = state.user.role === 'admin', rules = d.dutyRules || [], today = d.today, w0 = mondayOf(today);
+    var who = function (r, w) { if (w < r.start) return '시작 전'; var e = dutyEntries(w, dAdd(w, 6)).filter(function (x) { return x.rule.id === r.id; })[0]; return e ? e.name + (e.ovr ? '*' : '') : '없음'; };
+    var ovrs = (d.dutyOverrides || []).filter(function (o) { return o.week >= dAdd(w0, -28); }).sort(function (a, b) { return a.week < b.week ? -1 : 1; });
+    return '<div class="card" style="margin-top:16px"><div class="row-between"><div><div class="eyebrow">Duty · 당직 순번</div><h3 style="margin:0">당직 순번 규칙</h3></div>' + (adm ? '<button class="btn btn-sm" id="drAdd">＋ 규칙 추가</button>' : '') + '</div>' +
+      (rules.length ? '<ul class="rule-list duty-rules" style="margin-top:10px">' + rules.map(function (r) {
+        return '<li class="' + (r.active ? '' : 'off') + '"><span><b>' + esc(r.name) + '</b><small>' + r.members.map(function (x) { return esc(x.name); }).join(' → ') + ' · ' + (r.mode === 'week' ? '월~일 한 주, 주당 ' + r.hours + '시간' : [1, 2, 3, 4, 5, 6, 0].filter(function (k) { return r.days.indexOf(k) !== -1; }).map(function (k) { return WD[k]; }).join('·') + (r.holidays ? (r.days.length ? '·' : '') + '공휴일' : '') + ' 하루 ' + r.hours + '시간') + ' · ' + esc(r.start) + ' 주부터' + (r.active ? '' : ' · 꺼짐') + '</small>' +
+          (r.active ? '<small>이번 주 <b>' + esc(who(r, w0)) + '</b> · 다음 주 ' + esc(who(r, dAdd(w0, 7))) + ' · 그다음 ' + esc(who(r, dAdd(w0, 14))) + '</small>' : '') + '</span>' +
+          (adm ? '<button class="btn btn-sm btn-ghost" data-dr="' + esc(r.id) + '">수정</button>' : '') + '</li>';
+      }).join('') + '</ul>' : '<p class="muted small" style="margin:8px 0 0">아직 규칙이 없어요.' + (adm ? ' "＋ 규칙 추가"로 당직 순번을 넣으면 달력과 추가근무 집계에 자동으로 들어가요.' : '') + '</p>') +
+      (ovrs.length ? '<details style="margin-top:10px"><summary class="small">바꾼 주 ' + ovrs.length + '건</summary><ul class="rule-list" style="margin-top:6px">' + ovrs.map(function (o) {
+        var r = rules.filter(function (x) { return x.id === o.ruleId; })[0];
+        return '<li><span><b>' + esc((r ? r.name : '(지운 규칙)') + ' · ' + o.week.slice(5).replace('-', '/') + ' 주') + '</b><small>' + (o.cancel ? '당직 없음' : esc(o.name) + (o.hours != null ? ' · ' + o.hours + '시간' : '')) + (o.memo ? ' · ' + esc(o.memo) : '') + ' · ' + esc(o.by) + '</small></span>' +
+          (r && (adm || r.members.some(function (m) { return m.id === state.user.id || m.name === state.user.name; })) ? '<button class="btn btn-sm btn-ghost" data-dclr="' + esc(o.ruleId + '|' + o.week) + '">되돌리기</button>' : '') + '</li>';
+      }).join('') + '</ul></details>' : '') +
+      '<p class="hint" style="margin:8px 0 0">순번 당직은 따로 등록하지 않아도 달력과 추가근무(당직)에 자동으로 들어가요 · 오늘까지 시작한 주만 집계 · 한 주만 바꾸려면 달력에서 그 날짜를 눌러 "바꾸기"</p></div>';
+  }
+  function bindDutyCard() {
+    var d = state.cal.data;
+    var add = $('#drAdd'); if (add) add.onclick = function () { editDutyRule({}); };
+    $$('[data-dr]').forEach(function (b) { b.onclick = function () { editDutyRule(d.dutyRules.filter(function (r) { return r.id === b.dataset.dr; })[0]); }; });
+    $$('[data-dclr]').forEach(function (b) { b.onclick = function () { var p = b.dataset.dclr.split('|'); calSave('cal.dutyOverride', { ruleId: p[0], week: p[1], clear: true }, '원래 순번으로 되돌렸어요.').catch(function (err) { toast(err.message, 'err'); }); }; });
+  }
+  function editDutyRule(r) {
+    var isNew = !r.id, d = state.cal.data, mode = r.mode || 'week', days = r.days || [6, 0];
+    modal({
+      eyebrow: '당직 순번', title: isNew ? '당직 규칙 추가' : '당직 규칙 수정',
+      body: '<div class="field"><label>이름</label><input class="input" id="drN" maxlength="30" value="' + esc(r.name || '') + '" placeholder="예) 주간 당직"></div>' +
+        '<div class="field"><label>순번 (한 줄에 한 명, 위에서부터 차례로)</label><textarea class="input memo" id="drM" style="min-height:110px">' + esc((r.members || []).map(function (x) { return x.name; }).join('\n')) + '</textarea>' +
+        '<span class="hint">넣을 수 있는 이름: ' + d.users.map(function (u) { return esc(u.name); }).join(', ') + ' · 첫 번째 사람이 시작 주 담당</span></div>' +
+        '<div class="qd-two"><div class="field"><label>시작 주 <span class="muted">(그 주 월요일로 맞춰요)</span></label><input class="input" type="date" id="drS" value="' + esc(r.start || mondayOf(d.today)) + '"></div>' +
+        '<div class="field"><label>사용</label><label class="toggle"><input type="checkbox" id="drOn"' + (r.active !== false ? ' checked' : '') + '><span class="track"></span>켜짐</label></div></div>' +
+        '<div class="field"><label>방식</label><div class="segmented" id="drMode"><button type="button" data-v="week" class="' + (mode === 'week' ? 'on' : '') + '">월~일 한 주 통째로</button><button type="button" data-v="days" class="' + (mode === 'days' ? 'on' : '') + '">정한 요일마다 하루씩</button></div></div>' +
+        '<div class="field dr-days"><label>요일</label><div class="chips" id="drD">' + [1, 2, 3, 4, 5, 6, 0].map(function (i) { return '<button type="button" class="chip' + (days.indexOf(i) !== -1 ? ' on' : '') + '" data-v="' + i + '">' + WD[i] + '</button>'; }).join('') + '<button type="button" class="chip' + (r.holidays ? ' on' : '') + '" data-v="h">공휴일</button></div></div>' +
+        '<div class="field"><label id="drHl">시간</label><input class="input num" id="drH" inputmode="decimal" value="' + esc(r.hours != null ? r.hours : 2) + '"></div>',
+      foot: (!isNew ? '<button class="btn btn-danger btn-sm" id="drDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="drSave">저장</button>',
+      onMount: function (m, close) {
+        var sync = function () { var md = $('#drMode button.on', m).dataset.v; $('.dr-days', m).classList.toggle('hidden', md !== 'days'); $('#drHl', m).textContent = md === 'days' ? '시간 (하루당)' : '시간 (주당)'; };
+        $$('#drMode button', m).forEach(function (b) { b.onclick = function () { $$('#drMode button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); sync(); }; });
+        $$('#drD .chip', m).forEach(function (b) { b.onclick = function () { b.classList.toggle('on'); }; });
+        sync();
+        $('#drSave', m).onclick = function () {
+          var sel = $$('#drD .chip.on', m).map(function (b) { return b.dataset.v; });
+          var rule = { id: r.id || '', name: $('#drN', m).value.trim(), members: $('#drM', m).value.split('\n').map(function (x) { return x.trim(); }).filter(Boolean),
+            start: $('#drS', m).value, active: $('#drOn', m).checked, mode: $('#drMode button.on', m).dataset.v, hours: Number($('#drH', m).value),
+            days: sel.filter(function (x) { return x !== 'h'; }).map(Number), holidays: sel.indexOf('h') !== -1 };
+          var btn = this; busy(btn, true, '저장 중…');
+          calSave('cal.dutyRuleSave', { rule: rule }, '저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+        var del = $('#drDel', m); if (del) del.onclick = function () { if (!confirm('이 규칙을 지울까요? (규칙으로 생긴 당직이 달력과 집계에서 빠져요)')) return; calSave('cal.dutyRuleDelete', { id: r.id }, '삭제했어요.').then(close).catch(function (err) { toast(err.message, 'err'); }); };
+      }
+    });
   }
 
   function editEvent(e) {
@@ -5214,9 +5352,9 @@
   }
   /** 월별 추가근무 (시작일이 속한 달 기준) */
   function otMonth(ym) {
-    var by = {};
-    state.cal.data.leaves.forEach(function (l) {
-      if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 7) !== ym) return;
+    var by = {}, today = state.cal.data.today;
+    leavesIn(ym + '-01', ym + '-31').forEach(function (l) {
+      if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 7) !== ym || (l.virtual && l.start > today)) return;
       var s = by[l.name] || (by[l.name] = { name: l.name, total: 0, list: [] });
       OT_KINDS.forEach(function (k) { s[k] = s[k] || { n: 0, h: 0 }; });
       s[l.kind].n++; s[l.kind].h += l.hours || 0; s.total += l.hours || 0; s.list.push(l);
@@ -5238,9 +5376,10 @@
     if (!c.otm || c.otm.slice(0, 4) !== yr) c.otm = yr === d.today.slice(0, 4) ? d.today.slice(0, 7) : yr + '-12';
     var people = calPeople();
     var inYear = d.leaves.filter(function (l) { return l.start.slice(0, 4) === yr || l.end.slice(0, 4) === yr; });
+    var dutyYear = dutyEntries(yr + '-01-01', yr + '-12-31').filter(function (l) { return l.start.slice(0, 4) === yr && l.start <= d.today; });
     var grant = {}; d.grants.forEach(function (g) { if (g.year === yr) grant[g.name] = g.days; });
     var stat = {}; people.forEach(function (p) { stat[p.name] = { p: p, used: 0, other: 0, ot: 0, otN: 0 }; });
-    inYear.forEach(function (l) {
+    inYear.concat(dutyYear).forEach(function (l) {
       var s = stat[l.name]; if (!s) return;
       if (OT_KINDS.indexOf(l.kind) !== -1) { if (l.start.slice(0, 4) === yr) { s.ot += l.hours || 0; s.otN++; } }
       else if (l.kind === '연차' || /반차/.test(l.kind)) s.used += leaveDays(l, holi); else s.other += leaveDays(l, holi);
@@ -5251,7 +5390,7 @@
     var list = inYear.filter(function (l) { return !who || l.name === who; }).sort(function (a, b) { return a.start < b.start ? 1 : -1; });
     // 월별 추가근무
     var om = otMonth(c.otm), omNames = Object.keys(om).sort(), mon = +c.otm.slice(5);
-    var matrix = {}; d.leaves.forEach(function (l) { if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 4) !== yr) return; var r = matrix[l.name] || (matrix[l.name] = {}); var k = +l.start.slice(5, 7); r[k] = (r[k] || 0) + (l.hours || 0); });
+    var matrix = {}; d.leaves.concat(dutyYear).forEach(function (l) { if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 4) !== yr) return; var r = matrix[l.name] || (matrix[l.name] = {}); var k = +l.start.slice(5, 7); r[k] = (r[k] || 0) + (l.hours || 0); });
     var mNames = Object.keys(matrix).sort();
     var cell = function (s) { return s.n ? '<b>' + hrs(s.h) + '</b><small> h · ' + s.n + '건</small>' : '<span class="muted">–</span>'; };
 
@@ -5263,7 +5402,7 @@
         var s = stat[p.name], g = grant[p.name], rem = g != null ? g - s.used : null;
         return '<tr class="' + (who === p.name ? 'sel' : '') + '" data-p="' + esc(p.name) + '"><td class="left"><b>' + esc(p.name) + '</b>' + (p.nameOnly ? ' <span class="muted small">계정 없음</span>' : '') + '</td><td class="num">' + (g != null ? g : '<span class="muted">–</span>') + '</td><td class="num">' + s.used + '</td>' +
           '<td class="num' + (rem != null && rem < 0 ? ' neg' : '') + '">' + (rem != null ? '<b>' + rem + '</b>' : '<span class="muted">–</span>') + '</td><td class="num">' + (s.other || '–') + '</td><td class="num">' + (s.otN ? hrs(s.ot) + '시간 <span class="muted small">' + s.otN + '건</span>' : '–') + '</td></tr>';
-      }).join('') + '</tbody></table></div><p class="hint" style="margin:8px 0 0">사용 = 연차 + 반차(0.5) · 주말·공휴일 제외 · 추가근무 = 야간근무 + 휴일근무 + 당직 · 이름을 누르면 그 사람 기록만 보여요</p></div>' +
+      }).join('') + '</tbody></table></div><p class="hint" style="margin:8px 0 0">사용 = 연차 + 반차(0.5) · 주말·공휴일 제외 · 추가근무 = 야간근무 + 휴일근무 + 당직(순번 규칙 포함, 오늘까지) · 이름을 누르면 그 사람 기록만 보여요</p></div>' +
 
       '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Overtime · 월별 추가근무</div>' +
       '<div class="cal-nav"><button class="btn btn-sm" id="otPrev"' + (mon <= 1 ? ' disabled' : '') + '>◀</button><h2>' + yr + '년 ' + mon + '월</h2><button class="btn btn-sm" id="otNext"' + (mon >= 12 ? ' disabled' : '') + '>▶</button></div></div>' +
@@ -5277,6 +5416,7 @@
         '</tbody></table></div>' : '') +
       '<p class="hint" style="margin:8px 0 0">시작일이 속한 달로 집계해요 (월을 넘기는 당직은 시작한 달)</p></div>' +
 
+      dutyCardHtml() +
       '<div class="card" style="margin-top:16px"><div class="row-between"><h3>' + (who ? esc(who) + ' 기록' : '전체 기록') + ' <span class="muted small">' + list.length + '건</span></h3>' + (who ? '<button class="btn btn-sm btn-ghost" id="lvAll">전체 보기</button>' : '') + '</div>' +
       (list.length ? '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">기간</th><th class="left">이름</th><th class="left">종류</th><th>일수 · 시간</th><th class="left">메모</th><th class="left">등록</th><th></th></tr></thead><tbody>' +
         list.slice(0, c.lvMore ? list.length : 40).map(function (l) {
@@ -5293,6 +5433,7 @@
     $$('tr[data-p]').forEach(function (tr) { tr.onclick = function () { c.person = c.person === tr.dataset.p ? '' : tr.dataset.p; calLeave(); }; });
     $$('tr[data-otp]').forEach(function (tr) { tr.onclick = function () { c.person = tr.dataset.otp; calLeave(); }; });
     var all = $('#lvAll'); if (all) all.onclick = function () { c.person = ''; calLeave(); };
+    bindDutyCard();
     var more = $('#lvMore'); if (more) more.onclick = function () { c.lvMore = true; calLeave(); };
     $('#otPrev').onclick = function () { c.otm = ymAdd(c.otm, -1); calLeave(); };
     $('#otNext').onclick = function () { c.otm = ymAdd(c.otm, 1); calLeave(); };
@@ -5441,18 +5582,20 @@
     var el = $('#hcToday'); if (!el || !state.cal.data) return;
     var d = state.cal.data, today = d.today, holi = calHoli();
     var list = allOccurrences(dAdd(today, -90), today, true).filter(function (o) { return !o.done; });
-    var off = d.leaves.filter(function (l) { return today >= l.start && today <= l.end; });
+    var off = d.leaves.filter(function (l) { return today >= l.start && today <= l.end && !isWork(l.kind); });
+    var wk = mondayOf(today), duty = {}; leavesIn(wk, dAdd(wk, 6)).forEach(function (l) { if (l.kind !== '당직') return; var k = l.label || '당직'; duty[k] = duty[k] || []; if (duty[k].indexOf(l.name) === -1) duty[k].push(l.name); });
     var hol = (holi[today] || []).filter(function (h) { return h.off; });
     el.innerHTML = '<div class="row-between"><div class="eyebrow">Today · 오늘 할 일</div><button class="btn btn-sm btn-ghost" data-go="cal">일정</button></div>' +
       (hol.length ? '<p class="small" style="margin:6px 0 0">🔴 ' + esc(hol.map(function (h) { return h.name; }).join(', ')) + '</p>' : '') +
       (list.length ? '<ul class="task-list mini">' + list.slice(0, 6).map(function (o) { return taskRowHtml(o, today); }).join('') + '</ul>' + (list.length > 6 ? '<p class="hint" style="margin:4px 0 0">외 ' + (list.length - 6) + '개</p>' : '')
         : '<p class="muted small" style="margin:8px 0 0">오늘까지 할 일이 없어요. 👍</p>') +
+      (Object.keys(duty).length ? '<p class="small" style="margin:10px 0 0">🛡 이번 주 ' + Object.keys(duty).map(function (k) { return esc(k) + ' <b>' + esc(duty[k].join(', ')) + '</b>'; }).join(' · ') + '</p>' : '') +
       (off.length ? '<p class="small" style="margin:10px 0 0">🌴 ' + off.map(function (l) { return esc(l.name + ' ' + l.kind); }).join(' · ') + '</p>' : '');
     bindTaskChecks(el); bindHomeGo(el);
   }
 
   function newCalState() {
-    return { data: null, tab: 'month', ym: '', year: '', mine: false, person: '', doneMap: {}, show: local('get', 'joil-calshow') || { holi: true, leave: true, task: true, req: true, doc: true, event: true } };
+    return { data: null, tab: 'month', ym: '', year: '', mine: false, person: '', doneMap: {}, show: local('get', 'joil-calshow') || {} };
   }
 
   /* ───────── 서류함 ───────── */
@@ -6248,11 +6391,12 @@
       '<b>날씨</b>: 경기·충청·전라·강원·경상 도별 오늘·내일·모레 날씨. 눈·많은 비·강풍처럼 운행에 영향을 줄 날씨는 맨 위 "운행 주의"에 모아 보여요.'
     ].concat(adm ? ['뉴스 키워드(모을 키워드·관심 업체·제외 단어)는 뉴스 탭의 <b>키워드 설정</b>에서 바꿉니다.'] : [])]);
     sec.unshift(['cal', '일정 · 할 일 · 휴가', [
-      '<b>달력</b>: 공휴일(구글 캘린더 "대한민국의 휴일"), 휴가·근무, 할 일' + (hq ? ', 견적 회신 기한, 서류 만료일' : '') + ', 일정을 한 달 단위로 봐요. 위쪽 칩으로 보일 것만 고를 수 있어요.',
+      '<b>달력</b>: 월요일부터 시작해요. 공휴일(구글 캘린더 "대한민국의 휴일"), 당직, 휴가, 추가근무, 할 일' + (hq ? ', 견적 회신 기한, 서류 만료일' : '') + ', 일정을 한 달 단위로 봐요. 위쪽 칩으로 보일 것만 고를 수 있어요.',
       '날짜를 누르면 그날 항목을 보고 바로 <b>일정 · 할 일 · 휴가·근무</b>를 추가할 수 있어요. 일정은 팀 전체가 보고, "나만 보기"를 켜면 나만 봐요.',
       '<b>할 일</b>: 업체별로 일회·매월 말일·매월 N일·매주·매년 반복을 정해요. 기한이 주말·공휴일이면 앞 영업일(또는 다음 영업일)로 당겨져요.',
       '체크하면 목록에서 사라지고 <b>완료 기록</b>에 누가 언제 했는지 남아요. 잘못 체크했으면 완료 기록에서 되돌리기.',
       '<b>휴가·근무</b>: 연차·반차·병가·경조·공가·대체휴무와 야간근무·휴일근무를 등록해요. 반차는 0.5일, 연차는 주말·공휴일을 빼고 셉니다.' + (adm ? ' 관리자는 사람별 <b>연차 부여 일수</b>와 <b>회사 휴무일</b>을 정할 수 있어요.' : ''),
+      '<b>당직 순번</b>: 휴가·근무 탭의 "당직 순번 규칙"에 순서·시작 주·시간을 정해 두면 앞으로의 당직이 달력에 자동으로 나오고 추가근무(당직)에도 들어가요. 한 주만 바꾸려면 달력에서 그 날짜를 눌러 "바꾸기".',
       '<b>추가근무</b>: 야간근무·휴일근무·당직에 시작·종료 시각과 시간을 넣으면 <b>월별 추가근무</b> 표에 사람별 시간 합계가 나와요. 월말에 그 달을 골라 <b>엑셀</b>로 받으면 요약·상세가 들어 있어요.'
     ].concat(adm ? ['관리자: <b>직원 명단</b>에서 계정 없는 직원을 이름으로 추가하고, <b>엑셀 가져오기</b>로 예전 기록(휴가근무·일정·연차부여 시트)을 한 번에 넣을 수 있어요. 같은 기록은 건너뛰어요.'] : [])]);
     sec.push(['account', '계정 · 보안', [

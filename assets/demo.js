@@ -53,7 +53,7 @@
   /* 일정: 데모용 공휴일 (실제 서버는 구글 캘린더 "대한민국의 휴일"에서 가져옴) */
   function calStore() {
     store.cal = store.cal || {};
-    ['events', 'tasks', 'done', 'leaves', 'grants', 'companyHolidays', 'staff'].forEach(function (k) { store.cal[k] = store.cal[k] || []; });
+    ['events', 'tasks', 'done', 'leaves', 'grants', 'companyHolidays', 'staff', 'dutyRules', 'dutyOvr'].forEach(function (k) { store.cal[k] = store.cal[k] || []; });
     return store.cal;
   }
   function calId(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
@@ -86,7 +86,7 @@
     var c = calStore(), d = new Date();
     return { events: c.events.filter(function (e) { return !e.private || e.ownerId === (curMe || {}).id; }), tasks: c.tasks, done: c.done, leaves: c.leaves,
       grants: c.grants.map(function (g) { var u = calUsers().filter(function (x) { return x.id === g.userId; })[0]; return Object.assign({}, g, { name: u ? u.name : (g.name || g.userId) }); }),
-      users: calUsers(), holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
+      users: calUsers(), dutyRules: c.dutyRules, dutyOverrides: c.dutyOvr, holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
   }
   var curMe = null;
   function notesSorted() { return (store.notes || []).slice().sort(function (a, b) { return a.month < b.month ? 1 : -1; }); }
@@ -370,6 +370,20 @@
         (req.events || []).forEach(function (e) { if (!e.title || ek[e.title + '|' + e.start]) { res.skipped++; return; } ek[e.title + '|' + e.start] = 1; cs.events.push({ id: calId('C'), start: e.start, end: e.end || e.start, title: e.title, memo: e.memo || '', private: false, ownerId: me.id, owner: me.name, at: today() }); res.events++; });
         (req.grants || []).forEach(function (g) { var id = whoId(g.name); cs.grants = cs.grants.filter(function (x) { return !(x.year === String(g.year) && x.userId === id); }); cs.grants.push({ year: String(g.year), userId: id, name: g.name, days: Number(g.days) || 0 }); res.grants++; });
         save(); return { result: res, cal: calAll() };
+      case 'cal.dutyRuleSave':
+        if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
+        var dr = req.rule || {}, ul = calUsers(); if (!String(dr.name || '').trim()) fail('규칙 이름을 넣으세요.');
+        var mem = (dr.members || []).map(function (n) { var u = ul.filter(function (x) { return x.name === n; })[0]; if (!u) fail('"' + n + '"은(는) 계정이나 직원 명단에 없습니다. 먼저 직원 명단에 추가하세요.'); return { id: u.id, name: u.name }; });
+        if (!mem.length) fail('순번에 들어갈 사람을 한 명 이상 넣으세요.');
+        var sd = new Date(dr.start + 'T00:00:00Z'); sd = new Date(sd.getTime() - ((sd.getUTCDay() + 6) % 7) * 86400000);
+        var ro = { id: dr.id || calId('R'), name: dr.name.trim(), members: mem, start: sd.toISOString().slice(0, 10), mode: dr.mode === 'days' ? 'days' : 'week', hours: Number(dr.hours) || 0, days: dr.days || [], holidays: !!dr.holidays, active: dr.active !== false };
+        var cr = calStore(); cr.dutyRules = cr.dutyRules.filter(function (x) { return x.id !== ro.id; }).concat([ro]); save(); return calAll();
+      case 'cal.dutyRuleDelete': if (me.role !== 'admin') fail('관리자만 할 수 있습니다.'); calStore().dutyRules = calStore().dutyRules.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
+      case 'cal.dutyOverride':
+        var co = calStore(); co.dutyOvr = co.dutyOvr.filter(function (o) { return !(o.ruleId === req.ruleId && o.week === req.week); });
+        if (!req.clear) { var ou = req.cancel ? null : calUsers().filter(function (x) { return x.name === req.name; })[0]; if (!req.cancel && !ou) fail('바꿀 사람을 고르세요.');
+          co.dutyOvr.push({ ruleId: req.ruleId, week: req.week, userId: ou ? ou.id : '', name: ou ? ou.name : '', hours: req.hours === '' || req.hours == null ? null : Number(req.hours), cancel: !!req.cancel, memo: req.memo || '', by: me.name, at: today() }); }
+        save(); return calAll();
       case 'cal.grantsSave':
         if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
         store.cal.grants = store.cal.grants.filter(function (g) { return g.year !== String(req.year); });
