@@ -237,6 +237,8 @@
     state.an = newAnState();
     state.cal = newCalState(); state.notices = null; state.custs = null; state.custView = null; state.srch = null;
     storage('del', 'joil-token');
+    routing.last = null;
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* 무시 */ }
   }
 
   function afterLogin(settings) {
@@ -248,10 +250,60 @@
       state.calc.dieselMode = state.pub.fuelMode === 'auto' ? 'auto' : 'manual';
       state.calc.dieselPrice = state.pub.manualPrice;
       state.calc.baseTon = state.pub.tons.indexOf(state.calc.baseTon) !== -1 ? state.calc.baseTon : state.pub.baseTon;
+      routing.last = null;
+      if (location.hash.length > 2) applyRoute(location.hash); // 새로고침해도 보던 화면 그대로
       render();
       if (state.user.mustChange) openChangePassword(true);
     });
   }
+
+
+  /* ───────── 뒤로가기 (브라우저 기록) ─────────
+   * 화면이 바뀔 때마다 주소 끝(#/info/diesel 같은)에 기록 → 뒤로/앞으로 버튼·마우스 측면 버튼으로 이전 화면 */
+  var routing = { last: null, restoring: false };
+  function routeOf() {
+    var v = state.view, p = [v], s = '';
+    if (v === 'info') s = state.info.tab;
+    else if (v === 'cal') s = state.cal.tab;
+    else if (v === 'admin') s = state.admin.tab;
+    else if (v === 'quotes') s = state.quotes.detail;
+    else if (v === 'reqs') s = state.reqs.detail;
+    else if (v === 'history') s = state.hist.detail;
+    else if (v === 'custs') s = state.custView && state.custView.sel;
+    if (s) p.push(s);
+    return '#/' + p.map(function (x) { return encodeURIComponent(x); }).join('/');
+  }
+  function syncRoute() {
+    if (!state.user || !state.pub || routing.restoring) return;
+    var r = routeOf(); if (r === routing.last) return;
+    try { if (routing.last == null) history.replaceState({ r: r }, '', r); else history.pushState({ r: r }, '', r); } catch (e) { /* 무시 */ }
+    routing.last = r;
+  }
+  /** 주소 → 화면 상태. 갈 수 없는 화면이면 false */
+  function applyRoute(r) {
+    var p = String(r || '').replace(/^#\/?/, '').split('/').filter(Boolean).map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
+    var v = p[0], s = p[1] || '';
+    if (!v || (v !== 'help' && !allViews().some(function (n) { return n[0] === v; }))) return false;
+    state.view = v;
+    if (v === 'info' && s) state.info.tab = s;
+    if (v === 'cal' && s) state.cal.tab = s;
+    if (v === 'admin' && s) state.admin.tab = s;
+    if (v === 'quotes' && (state.quotes.detail || '') !== s) { state.quotes.detail = s || null; state.quotes.detailData = null; if (!s) state.quotes.list = null; }
+    if (v === 'reqs' && (state.reqs.detail || '') !== s) { state.reqs.detail = s || null; state.reqs.data = null; if (!s) state.reqs.list = null; }
+    if (v === 'history' && (state.hist.detail || '') !== s) { state.hist.detail = s || null; state.hist.detailData = null; }
+    if (v === 'custs') { state.custView = state.custView || { q: '', sel: '' }; state.custView.sel = s; }
+    return true;
+  }
+  window.addEventListener('popstate', function (e) {
+    if (!state.user || !state.pub) return;
+    $$('.backdrop').forEach(function (b) { b.remove(); }); // 열린 창은 닫기
+    var pop = $('.nav-pop'); if (pop) pop.remove();
+    var r = (e.state && e.state.r) || location.hash;
+    routing.restoring = true;
+    try { if (applyRoute(r)) render(); } finally { routing.restoring = false; }
+    routing.last = routeOf();
+    if (routing.last !== r) { try { history.replaceState({ r: routing.last }, '', routing.last); } catch (er) { /* 무시 */ } }
+  });
 
   /* ───────── 렌더 ───────── */
 
@@ -366,6 +418,7 @@
     else if (state.view === 'custs') renderCusts();
     else if (state.view === 'search') renderSearch();
     else renderCalc();
+    syncRoute();
   }
 
   /* ───────── 로그인 ───────── */
@@ -1307,6 +1360,7 @@
   /* ───────── 조회기록 ───────── */
 
   function renderHistory() {
+    syncRoute();
     var h = state.hist;
     if (h.detail) return renderHistoryDetail();
     var isAdmin = state.user.role === 'admin';
@@ -1401,6 +1455,7 @@
   /* ───────── 견적모음 ───────── */
 
   function renderQuotes() {
+    syncRoute();
     var qs = state.quotes;
     if (qs.detail) return renderQuoteDetail();
     var isAdmin = state.user.role === 'admin';
@@ -3394,6 +3449,7 @@
   }
 
   function showAdminTab() {
+    syncRoute();
     var a = state.admin, tab = a.tab;
     var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials, staff: adminStaff };
     var ready = a.loaded && (tab !== 'tariff' || a.tariff);
@@ -4704,6 +4760,7 @@
   }
 
   function renderReqs() {
+    syncRoute();
     var rs = state.reqs;
     if (rs.detail) return renderReqDetail();
     $('#main').innerHTML =
@@ -5041,6 +5098,7 @@
     loadCal().then(function () { if (state.view === 'cal') drawCal(); }).catch(function (err) { $('#calBody').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
   }
   function drawCal() {
+    syncRoute();
     var c = state.cal; if (!c.data || !$('#calBody')) return;
     if (c.tab === 'tasks') calTasks(); else if (c.tab === 'leave') calLeave(); else if (c.tab === 'weekly') calWeekly(); else calMonth();
   }
@@ -5848,6 +5906,7 @@
   function todayYmd() { var t = new Date(); return t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()); }
   function custBadge(c) { var n = custDays(c); if (n == null) return ''; return n < 0 ? '<span class="badge exp-x">계약 만료</span>' : n <= 30 ? '<span class="badge exp-soon">만료 D-' + n + '</span>' : '<span class="badge off">~' + esc(c.end) + '</span>'; }
   function renderCusts() {
+    syncRoute();
     var cs = state.custView = state.custView || { q: '', sel: '' };
     if (cs.sel) return renderCustDetail();
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Customers · 거래처</div><h2>거래처</h2></div><div class="actions"><input class="input input-sm" id="ctQ" placeholder="이름·담당자 검색" value="' + esc(cs.q) + '" style="width:200px"><button class="btn btn-sm btn-primary" id="ctAdd">＋ 거래처 추가</button></div></div><div id="ctList" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
@@ -5886,6 +5945,7 @@
       } });
   }
   function renderCustDetail() {
+    syncRoute();
     var cs = state.custView, c = (state.custs || []).filter(function (x) { return x.id === cs.sel; })[0];
     if (!c) { cs.sel = ''; return renderCusts(); }
     var row = function (k, v) { return v ? '<div><span class="muted small">' + k + '</span><b>' + v + '</b></div>' : ''; };
@@ -6614,6 +6674,7 @@
   }
 
   function drawInfo() {
+    syncRoute();
     var inf = state.info, box = $('#infoBody'), tab = inf.tab;
     if (!inf[tab]) {
       box.innerHTML = '<div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div>';
@@ -6872,6 +6933,7 @@
     sec.push(['account', '계정 · 보안', [
       '오른쪽 위 <b>비밀번호</b>에서 언제든 바꿀 수 있습니다. 로그인은 브라우저 창을 닫으면 풀립니다.',
       '비밀번호를 5번 틀리면 10분 동안 잠깁니다. 잊어버렸다면 관리자에게 초기화를 요청하세요.',
+      '브라우저 <b>뒤로·앞으로</b> 버튼(마우스 측면 버튼)으로 이전 화면에 돌아갈 수 있어요. 새로고침해도 보던 화면이 그대로 나와요.',
       '화면이 이상하면 <b>Ctrl + F5</b>로 새로고침해 보세요.'
     ]]);
     $('#main').innerHTML =
