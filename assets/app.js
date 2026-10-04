@@ -5942,7 +5942,7 @@
       if (from && String(r[C.date]) < from) return false;
       return conds.every(function (c) {
         if (c.k === 'weight' && st.exactW) return srNorm(r[C.weight]) === c.terms.join('');
-        var v = c.k === 'cust' ? srNorm(r[C.cust]) + '|' + srNorm(r[C.disp]) : c.k === 'phone' ? String(r[C.phone] || '').replace(/\D/g, '') : srNorm(r[C[c.k]]);
+        var v = c.k === 'cust' ? srNorm(r[C.cust]) + '|' + srNorm(r[C.disp]) : c.k === 'phone' ? String(r[C.phone] || '').replace(/\D/g, '') : srNorm(r[c.k === 'note' ? C.etc : C[c.k]]); // 비고 = 분석 자료의 "기타1"
         return c.terms.every(function (t) { return v.indexOf(t) !== -1; });
       });
     });
@@ -6013,7 +6013,7 @@
             '<td class="left wrap">' + hl(r[C.from], 'from') + '</td><td class="left wrap">' + hl(r[C.to], 'to') + '</td><td class="left">' + hl(r[C.weight], 'weight') + '</td>' +
             '<td class="num">' + money(r[C.buys]) + '</td><td class="num">' + money(r[C.sales]) + '</td><td class="num' + (p < 0 ? ' neg' : '') + '">' + (r[C.sales] || r[C.buys] ? won(p) : '<span class="muted">–</span>') + '</td>' +
             '<td class="left"><button type="button" class="sr-pick" data-pk="car" data-v="' + esc(r[C.car]) + '">' + hl(r[C.car], 'car') + '</button></td><td class="left"><button type="button" class="sr-pick" data-pk="driver" data-v="' + esc(r[C.driver]) + '">' + hl(r[C.driver], 'driver') + '</button></td>' +
-            '<td class="left small nowrap">' + esc(r[C.phone]) + '</td><td class="left small wrap">' + hl(r[C.note], 'note') + '</td></tr>';
+            '<td class="left small nowrap">' + esc(r[C.phone]) + '</td><td class="left small wrap">' + hl(r[C.etc], 'note') + '</td></tr>';
         }).join('') + '</tbody></table></div>' + (cnt > shown.length ? '<div style="text-align:center;margin-top:10px"><button class="btn btn-sm" id="srMore">더 보기 (' + won(cnt - shown.length) + '건 남음)</button></div>' : '') +
         '<p class="hint" style="margin:8px 0 0">차량번호·기사명을 누르면 그 차/기사로 다시 검색해요</p>'
         : '<p class="muted" style="margin:0">조건에 맞는 배차가 없어요. 단어를 줄이거나 기간을 "전체"로 바꿔 보세요.</p>') + '</div>';
@@ -6022,7 +6022,7 @@
     var x = $('#srX'); if (x) x.onclick = function () {
       var btn = this; busy(btn, true, '…');
       downloadXlsx('배차검색_' + todayYmd() + '.xlsx', [{ name: '검색결과', widths: [12, 22, 24, 24, 8, 11, 11, 11, 14, 10, 15, 30],
-        rows: [['날짜', '매출처', '상차지', '하차지', '중량', '매입가', '청구가', '수익', '차량번호', '기사명', '전화', '비고']].concat(rows.map(function (r) { return [r[C.date], r[C.disp] || r[C.cust], r[C.from], r[C.to], r[C.weight], r[C.buys] || 0, r[C.sales] || 0, (r[C.sales] || 0) - (r[C.buys] || 0), r[C.car], r[C.driver], r[C.phone], r[C.note]]; })) },
+        rows: [['날짜', '매출처', '상차지', '하차지', '중량', '매입가', '청구가', '수익', '차량번호', '기사명', '전화', '비고']].concat(rows.map(function (r) { return [r[C.date], r[C.disp] || r[C.cust], r[C.from], r[C.to], r[C.weight], r[C.buys] || 0, r[C.sales] || 0, (r[C.sales] || 0) - (r[C.buys] || 0), r[C.car], r[C.driver], r[C.phone], r[C.etc]]; })) },
         { name: '조건', rows: [['항목', '값']].concat(SR_FIELDS.filter(function (f) { return st.f[f[0]]; }).map(function (f) { return [f[1], st.f[f[0]]]; })).concat([['중량', st.exactW ? '정확히 일치' : '포함'], ['기간', st.period === 'all' ? '전체' : '최근 ' + st.period + '개월']]) }])
         .catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
