@@ -260,7 +260,26 @@
 
   /* ───────── 뒤로가기 (브라우저 기록) ─────────
    * 화면이 바뀔 때마다 주소 끝(#/info/diesel 같은)에 기록 → 뒤로/앞으로 버튼·마우스 측면 버튼으로 이전 화면 */
-  var routing = { last: null, restoring: false };
+  var routing = { last: null, restoring: false, lastSub: '', typingAt: 0, pushAt: 0 };
+  document.addEventListener('input', function (e) { if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName) && e.target.type !== 'checkbox') routing.typingAt = Date.now(); }, true);
+  var pick = function (o) { var r = {}; Object.keys(o).forEach(function (k) { var v = o[k]; if (v != null && v !== '' && v !== false && !(Array.isArray(v) && !v.length) && !(typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) r[k] = v; }); return r; };
+  /** 화면 안에서 고른 것 (검색 조건·필터·선택) — 뒤로가기로 되돌릴 수 있게 */
+  var SUB = {
+    search: { get: function () { var st = srState(), f = {}; Object.keys(st.f).forEach(function (k) { if (st.f[k]) f[k] = st.f[k]; }); return pick({ f: f, x: st.exactW ? 1 : 0, p: st.period !== 'all' ? st.period : '' }); },
+      set: function (o) { var st = srState(); st.f = o.f || {}; st.exactW = !!o.x; st.period = o.p || 'all'; st.limit = 200; } },
+    analysis: { get: function () { var an = state.an; if (!an || !an.rows) return {}; return pick({ a: an.f.from, b: an.f.to, z: an.f.biz, s: an.f.sel, d: an.dim !== 'cust' ? an.dim : '', c: an.cmp !== 'prev' ? an.cmp : '' }); },
+      set: function (o) { var an = state.an; if (!an) return; if (o.a) an.f.from = o.a; if (o.b) an.f.to = o.b; an.f.biz = o.z || []; an.f.sel = o.s || {}; an.dim = o.d || 'cust'; an.cmp = o.c || 'prev'; an.detailPage = 0; an.groupLimit = 50; } },
+    quotes: { get: function () { var q = state.quotes; return q.detail ? {} : pick({ s: q.status, q: q.q }); }, set: function (o) { var q = state.quotes; q.status = o.s || ''; q.q = o.q || ''; } },
+    reqs: { get: function () { var r = state.reqs; return r.detail ? {} : pick({ s: r.status, b: r.biz, q: r.q }); }, set: function (o) { var r = state.reqs; r.status = o.s || ''; r.biz = o.b || ''; r.q = o.q || ''; } },
+    docs: { get: function () { var d = state.docs; return pick({ b: d.biz, c: d.cat, q: d.q }); }, set: function (o) { var d = state.docs; d.biz = o.b || ''; d.cat = o.c || ''; d.q = o.q || ''; } },
+    history: { get: function () { var h = state.hist; return h.detail ? {} : pick({ d: h.days !== 30 ? h.days : '', t: h.type, u: h.userId, q: h.q }); },
+      set: function (o) { var h = state.hist, nd = o.d || 30; if (h.days !== nd || h.type !== (o.t || '') || h.userId !== (o.u || '') || h.q !== (o.q || '')) h.logs = null; h.days = nd; h.type = o.t || ''; h.userId = o.u || ''; h.q = o.q || ''; } },
+    rates: { get: function () { var r = state.rates; return pick({ c: r.sel, q: r.q }); }, set: function (o) { var r = state.rates; if ((o.c || '') !== r.sel) { r.sel = o.c || ''; r.data = null; r.cmp = null; } r.q = o.q || ''; } },
+    info: { get: function () { var i = state.info; return i.tab === 'news' ? pick({ k: i.newsKw }) : {}; }, set: function (o) { state.info.newsKw = o.k || ''; } },
+    cal: { get: function () { var c = state.cal; return c.tab === 'leave' ? pick({ y: c.year, o: c.otm, p: c.person }) : c.tab === 'weekly' ? pick({ w: c.wk }) : c.tab === 'tasks' ? pick({ m: c.mine ? 1 : 0 }) : pick({ ym: c.ym, m: c.mine ? 1 : 0 }); },
+      set: function (o) { var c = state.cal; if (o.y) c.year = o.y; if (o.o) c.otm = o.o; c.person = o.p || ''; if (o.w) c.wk = o.w; if (o.ym) c.ym = o.ym; c.mine = !!o.m; } }
+  };
+  function subOf(v) { var h = SUB[v]; if (!h) return ''; try { var o = h.get(); return Object.keys(o).length ? JSON.stringify(o) : ''; } catch (e) { return ''; } }
   function routeOf() {
     var v = state.view, p = [v], s = '';
     if (v === 'info') s = state.info.tab;
@@ -271,16 +290,24 @@
     else if (v === 'history') s = state.hist.detail;
     else if (v === 'custs') s = state.custView && state.custView.sel;
     if (s) p.push(s);
-    return '#/' + p.map(function (x) { return encodeURIComponent(x); }).join('/');
+    var sub = subOf(v);
+    return '#/' + p.map(function (x) { return encodeURIComponent(x); }).join('/') + (sub ? '?' + encodeURIComponent(sub) : '');
   }
   function syncRoute() {
     if (!state.user || !state.pub || routing.restoring) return;
     var r = routeOf(); if (r === routing.last) return;
-    try { if (routing.last == null) history.replaceState({ r: r }, '', r); else history.pushState({ r: r }, '', r); } catch (e) { /* 무시 */ }
-    routing.last = r;
+    var base = r.split('?')[0], lastBase = routing.last && routing.last.split('?')[0], sub = r.split('?')[1] || '', now = Date.now();
+    // 같은 화면에서: 처음 조건이 정해지는 순간·글자 치는 중이면 기록을 덮어쓰기 (한 글자마다 쌓이지 않게)
+    var replace = routing.last == null || (base === lastBase && (!routing.lastSub || (now - routing.typingAt < 1500 && now - routing.pushAt < 4000 && routing.typedLast)));
+    try { if (replace) history.replaceState({ r: r }, '', r); else history.pushState({ r: r }, '', r); } catch (e) { /* 무시 */ }
+    if (!replace) routing.pushAt = now;
+    routing.typedLast = now - routing.typingAt < 1500;
+    routing.last = r; routing.lastSub = sub;
   }
   /** 주소 → 화면 상태. 갈 수 없는 화면이면 false */
   function applyRoute(r) {
+    var qi = String(r || '').indexOf('?'), subS = qi === -1 ? '' : String(r).slice(qi + 1);
+    r = qi === -1 ? r : String(r).slice(0, qi);
     var p = String(r || '').replace(/^#\/?/, '').split('/').filter(Boolean).map(function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } });
     var v = p[0], s = p[1] || '';
     if (!v || (v !== 'help' && !allViews().some(function (n) { return n[0] === v; }))) return false;
@@ -292,6 +319,7 @@
     if (v === 'reqs' && (state.reqs.detail || '') !== s) { state.reqs.detail = s || null; state.reqs.data = null; if (!s) state.reqs.list = null; }
     if (v === 'history' && (state.hist.detail || '') !== s) { state.hist.detail = s || null; state.hist.detailData = null; }
     if (v === 'custs') { state.custView = state.custView || { q: '', sel: '' }; state.custView.sel = s; }
+    if (SUB[v]) { var so = {}; if (subS) { try { so = JSON.parse(decodeURIComponent(subS)); } catch (e) { so = {}; } } try { SUB[v].set(so); } catch (e) { /* 무시 */ } }
     return true;
   }
   window.addEventListener('popstate', function (e) {
@@ -301,7 +329,7 @@
     var r = (e.state && e.state.r) || location.hash;
     routing.restoring = true;
     try { if (applyRoute(r)) render(); } finally { routing.restoring = false; }
-    routing.last = routeOf();
+    routing.last = routeOf(); routing.lastSub = routing.last.split('?')[1] || '';
     if (routing.last !== r) { try { history.replaceState({ r: routing.last }, '', routing.last); } catch (er) { /* 무시 */ } }
   });
 
@@ -1391,6 +1419,7 @@
   }
 
   function loadHistory() {
+    syncRoute();
     var h = state.hist;
     $$('#hDays button').forEach(function (b) { b.classList.toggle('on', Number(b.dataset.d) === h.days); });
     var list = $('#hList'); if (list) list.innerHTML = '<p class="muted"><span class="spinner dark"></span> 불러오는 중…</p>';
@@ -1488,6 +1517,7 @@
   }
 
   function drawQuoteList() {
+    syncRoute();
     var qs = state.quotes, isAdmin = state.user.role === 'admin';
     var list = $('#qList'); if (!list || !qs.list) return;
     var q = qs.q;
@@ -2894,6 +2924,7 @@
   }
 
   function drawAnalysisBody() {
+    syncRoute();
     var an = state.an, f = an.f;
     $('#anFrom').value = f.from; $('#anTo').value = f.to;
     // 선택 칩
@@ -4548,6 +4579,7 @@
   }
 
   function drawRateBody() {
+    syncRoute();
     var rs = state.rates, box = $('#rtBody'); if (!box) return;
     if (!rs.sel) { box.innerHTML = '<div class="card empty"><div><div class="big-stripes"></div><h3>업체를 고르거나 단가표를 올려 주세요</h3><p class="muted" style="margin:0">올린 단가는 우리 타리프와 비교하거나, 그 구간 그대로 새 견적을 낼 수 있어요.</p></div></div>'; return; }
     if (!rs.data || rs.data.cust !== rs.sel) {
@@ -4784,6 +4816,7 @@
       .catch(function (err) { var x = $('#rqList'); if (x) x.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
   }
   function drawReqs() {
+    syncRoute();
     var rs = state.reqs, el = $('#rqList'); if (!el || !rs.list) return;
     var counts = {}; rs.list.forEach(function (r) { counts[r.status] = (counts[r.status] || 0) + 1; });
     $$('#rqSt button').forEach(function (b) { var n = b.dataset.s ? counts[b.dataset.s] || 0 : rs.list.length; b.innerHTML = (b.dataset.s || '전체') + ' <span class="cnt">' + n + '</span>'; });
@@ -5150,6 +5183,7 @@
 
   var CAL_LANES = 4;
   function calMonth() {
+    syncRoute();
     var c = state.cal, d = c.data, ym = c.ym, holi = calHoli();
     var y = +ym.slice(0, 4), m = +ym.slice(5, 7), first = ym + '-01', last = ym + '-' + pad2(dim(y, m));
     var col = function (x) { return (dDow(x) + 6) % 7; }; // 월요일 시작
@@ -5397,6 +5431,7 @@
   }
 
   function calTasks() {
+    syncRoute();
     var c = state.cal, d = c.data, today = d.today;
     var all = allOccurrences(dAdd(today, -90), dAdd(today, 31), c.mine).filter(function (o) { return !o.done; });
     var late = all.filter(function (o) { return o.date < today; }), now = all.filter(function (o) { return o.date === today; }),
@@ -5581,6 +5616,7 @@
   }
 
   function calLeave() {
+    syncRoute();
     var c = state.cal, d = c.data, yr = c.year, holi = calHoli(), adm = state.user.role === 'admin';
     if (!c.otm || c.otm.slice(0, 4) !== yr) c.otm = yr === d.today.slice(0, 4) ? d.today.slice(0, 7) : yr + '-12';
     var people = calPeople();
@@ -5802,6 +5838,7 @@
 
   /* ───────── 주간 업무 요약 (일정 탭) ───────── */
   function calWeekly() {
+    syncRoute();
     var c = state.cal, d = c.data;
     c.wk = c.wk || mondayOf(d.today);
     c.weekly = c.weekly || {};
@@ -5999,6 +6036,7 @@
       return { k: x[0], terms: terms };
     });
     var out = rows.filter(function (r) {
+      if (r[C.hidden]) return false; // 매출처 설정에서 숨긴 업체는 검색에도 안 나옴
       if (from && String(r[C.date]) < from) return false;
       return conds.every(function (c) {
         if (c.k === 'weight' && st.exactW) return srNorm(r[C.weight]) === c.terms.join('');
@@ -6008,20 +6046,6 @@
     });
     out.sort(function (a, b) { return a[C.date] < b[C.date] ? 1 : a[C.date] > b[C.date] ? -1 : 0; });
     return { rows: out, active: conds.length > 0 };
-  }
-  /** 오더가 많은 상차지·하차지·중량 조합 TOP 5 + 자주 나온 금액 3개 (0원 제외) */
-  function srSummary(rows) {
-    var by = {};
-    rows.forEach(function (r) {
-      var k = [r[C.from], r[C.to], r[C.weight]].map(function (x) { return String(x == null ? '' : x).trim(); }).join('|');
-      var g = by[k] || (by[k] = { from: String(r[C.from] || '').trim(), to: String(r[C.to] || '').trim(), w: String(r[C.weight] || '').trim(), n: 0, b: {}, s: {}, last: r[C.date] });
-      g.n++;
-      if (r[C.buys] > 0) g.b[r[C.buys]] = (g.b[r[C.buys]] || 0) + 1;
-      if (r[C.sales] > 0) g.s[r[C.sales]] = (g.s[r[C.sales]] || 0) + 1;
-    });
-    var top = function (m) { return Object.keys(m).map(function (v) { return { v: +v, n: m[v] }; }).sort(function (a, b) { return b.n - a.n || b.v - a.v; }).slice(0, 3); };
-    return Object.keys(by).map(function (k) { var g = by[k]; return { from: g.from, to: g.to, w: g.w, n: g.n, last: g.last, b: top(g.b), s: top(g.s) }; })
-      .sort(function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); }).slice(0, 5);
   }
   function renderSearch() {
     var st = srState(), an = state.an;
@@ -6044,6 +6068,7 @@
       .catch(function (err) { if (state.view === 'search') $('#srOut').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
   }
   function drawSearch() {
+    syncRoute();
     var st = srState(), box = $('#srOut'); if (!box) return;
     if (!state.an.rows) return;
     var months = anMonths(), res = srRun(), rows = res.rows;
@@ -6051,7 +6076,7 @@
       box.innerHTML = '<div class="card empty"><div><h3>무엇을 찾을까요?</h3><p class="muted" style="margin:0">예) 상차지에 <b>평택</b>, 하차지에 <b>창원</b> → 평택에서 창원 간 배차만 나와요.<br>데이터: ' + won(state.an.rows.length) + '건 · ' + esc(months[0] || '') + ' ~ ' + esc(months[months.length - 1] || '') + ' (관리자 → 분석 데이터에 올린 월별 엑셀)</p></div></div>';
       return;
     }
-    var sum = srSummary(rows), cnt = rows.length, shown = rows.slice(0, st.limit);
+    var cnt = rows.length, shown = rows.slice(0, st.limit);
     var money = function (v) { return v ? won(v) : '<span class="muted">–</span>'; };
     var hl = function (text, k) {
       var v = String(text == null ? '' : text), terms = String(st.f[k] || '').trim().split(/\s+/).filter(Boolean);
@@ -6059,14 +6084,8 @@
       var out = esc(v); terms.forEach(function (tm) { var i = v.toLowerCase().indexOf(tm.toLowerCase()); if (i !== -1) out = esc(v.slice(0, i)) + '<mark>' + esc(v.slice(i, i + tm.length)) + '</mark>' + esc(v.slice(i + tm.length)); });
       return out;
     };
-    var freq = function (list) { return list.length ? list.map(function (x, i) { return '<span class="sr-fq' + (i === 0 ? ' top' : '') + '"><b>' + won(x.v) + '</b><small>×' + x.n + '</small></span>'; }).join('') : '<span class="muted">–</span>'; };
-    box.innerHTML = (cnt ? '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><h3 style="margin:0">많이 나간 구간 TOP 5 <span class="muted small">' + won(cnt) + '건 중 · 금액은 자주 나온 순 (×횟수, 0원 제외)</span></h3></div>' +
-      '<div class="table-wrap"><table class="data sr-sum"><thead><tr><th class="left">#</th><th class="left">상차지 → 하차지</th><th class="left">중량</th><th>오더</th><th class="left">매입가 (자주 나온 금액)</th><th class="left">청구가 (자주 나온 금액)</th><th class="left">최근</th></tr></thead><tbody>' +
-      sum.map(function (g, i) {
-        return '<tr class="sr-combo" data-i="' + i + '" title="이 구간·중량으로 다시 찾기"><td class="left muted">' + (i + 1) + '</td><td class="left"><b>' + esc(g.from || '(빈칸)') + '</b> → <b>' + esc(g.to || '(빈칸)') + '</b></td><td class="left">' + esc(g.w || '–') + '</td><td class="num"><b>' + won(g.n) + '</b></td>' +
-          '<td class="left">' + freq(g.b) + '</td><td class="left">' + freq(g.s) + '</td><td class="left small muted">' + esc(g.last) + '</td></tr>';
-      }).join('') + '</tbody></table></div><p class="hint" style="margin:8px 0 0">줄을 누르면 그 상차지·하차지·중량(정확히)으로 다시 찾아요</p></div>' : '') +
-      '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><h3 style="margin:0">검색 결과 <span class="muted small">' + won(cnt) + '건 · 최신순</span></h3>' +
+    box.innerHTML =
+      '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><h3 style="margin:0">검색 결과 <span class="muted small">' + won(cnt) + '건 · 최신순</span></h3>' +
       '<button class="btn btn-sm" id="srX"' + (cnt ? '' : ' disabled') + '>엑셀 다운로드</button></div>' +
       (cnt ? '<div class="bulk-table" style="max-height:70vh"><table class="data bulk sr-tbl"><thead><tr><th class="left">날짜</th><th class="left">매출처</th><th class="left">상차지</th><th class="left">하차지</th><th class="left">중량</th><th>매입가</th><th>청구가</th><th>수익</th><th class="left">차량번호</th><th class="left">기사명</th><th class="left">전화</th><th class="left">비고</th></tr></thead><tbody>' +
         shown.map(function (r) {
@@ -6080,7 +6099,6 @@
         '<p class="hint" style="margin:8px 0 0">차량번호·기사명을 누르면 그 차/기사로 다시 검색해요</p>'
         : '<p class="muted" style="margin:0">조건에 맞는 배차가 없어요. 단어를 줄이거나 기간을 "전체"로 바꿔 보세요.</p>') + '</div>';
     var more = $('#srMore'); if (more) more.onclick = function () { st.limit += 300; drawSearch(); };
-    $$('.sr-combo', box).forEach(function (tr) { tr.onclick = function () { var g = sum[+tr.dataset.i]; st.f = { cust: st.f.cust || '', from: g.from, to: g.to, weight: g.w }; st.exactW = !!g.w; renderSearch(); }; });
     $$('.sr-pick', box).forEach(function (b) { b.onclick = function () { if (!b.dataset.v) return; st.f = {}; st.f[b.dataset.pk] = b.dataset.v; renderSearch(); }; });
     var x = $('#srX'); if (x) x.onclick = function () {
       var btn = this; busy(btn, true, '…');
@@ -6169,6 +6187,7 @@
   }
 
   function drawDocs() {
+    syncRoute();
     var ds = state.docs, list = $('#dList'); if (!list || !ds.list) return;
     var cats = {}; ds.list.forEach(function (d) { cats[d.cat] = (cats[d.cat] || 0) + 1; });
     var catSel = $('#dCat');
@@ -6758,7 +6777,7 @@
       }).join('') + '</ul>' + (list.length > (inf.newsLimit || 60) ? '<button class="btn btn-sm" id="nwMore" style="margin-top:10px">더 보기</button>' : '')
         : '<p class="muted">' + (items.length ? '조건에 맞는 기사가 없어요.' : '최근 7일 동안 모인 기사가 없어요.') + '</p>') +
       '<p class="hint" style="margin:12px 0 0">제목을 누르면 원문 기사가 새 창으로 열려요. 키워드로 모으는 방식이라 관계없는 기사가 섞일 수 있어요.' + (isAdmin ? ' 키워드 설정에서 제외 단어를 추가해 걸러 주세요.' : '') + '</p></div>';
-    $$('.nw-chips .chip', box).forEach(function (c) { c.onclick = function () { inf.newsKw = c.dataset.k; inf.newsLimit = 60; infoNews(box); }; });
+    $$('.nw-chips .chip', box).forEach(function (c) { c.onclick = function () { inf.newsKw = c.dataset.k; inf.newsLimit = 60; syncRoute(); infoNews(box); }; });
     var st; $('#nwQ', box).oninput = function () { var v = this.value; clearTimeout(st); st = setTimeout(function () { inf.newsQ = v.trim(); infoNews(box); var el = $('#nwQ'); el.focus(); el.setSelectionRange(v.length, v.length); }, 250); };
     var more = $('#nwMore', box); if (more) more.onclick = function () { inf.newsLimit = (inf.newsLimit || 60) + 60; infoNews(box); };
     if (isAdmin) {
@@ -6907,7 +6926,7 @@
     );
     if (can('search')) sec.push(['search', '배차검색', [
       '새 오더가 오면 <b>업체·자료 → 배차검색</b>에서 업체·상차지·하차지·중량·차량번호·기사명·전화번호·비고를 칸마다 넣어 찾아요. 일부만 넣어도 되고, 여러 칸을 넣으면 모두 맞는 것만 나와요. 중량 옆 <b>정확히</b>를 켜면 1을 넣었을 때 11·1윙 없이 "1"만 나와요.',
-      '예) 상차지 <b>평택</b> + 하차지 <b>창원</b> → 평택에서 창원 간 배차만. 위쪽 <b>많이 나간 구간 TOP 5</b>에 상차지·하차지·중량 조합별 오더 수와 자주 나온 매입가·청구가 3개(×횟수)가 나와요. 줄을 누르면 그 구간으로 다시 찾아요.',
+      '예) 상차지 <b>평택</b> + 하차지 <b>창원</b> → 평택에서 창원 간 배차만. 매출처 설정에서 숨긴 업체는 나오지 않아요. 뒤로가기를 누르면 바로 전 검색 조건으로 돌아가요.',
       '차량번호·기사명을 누르면 그 차/기사로 다시 찾아요. 결과는 엑셀로 받을 수 있어요.',
       '데이터는 관리자가 분석 데이터에 올린 월별 엑셀이에요. 금액이 보이니 권한은 관리자가 계정마다 따로 줘요.'
     ]]);
