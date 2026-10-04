@@ -3077,7 +3077,7 @@
     });
   }
 
-  var SORT_PRESETS = [['profit', -1, '이익 높은 순'], ['rate', 1, '이익률 낮은 순'], ['profit', 1, '손실 큰 순'], ['drate', 1, '이익률 하락 큰 순'], ['unit', 1, '건당 이익 낮은 순'], ['n', -1, '건수 많은 순']];
+  var SORT_PRESETS = [['profit', -1, '이익 높은 순'], ['rate', 1, '이익률 낮은 순'], ['profit', 1, '손실 큰 순'], ['drate', 1, '이익률 하락 큰 순'], ['n', -1, '건수 많은 순']];
 
   function drawGroup() {
     var an = state.an, f = an.f, dim = an.dim, def = dimDef(dim);
@@ -3127,7 +3127,7 @@
       (isRoute ? '<label class="toggle small"><input type="checkbox" id="anRouteW"' + (an.routeWeight ? ' checked' : '') + '><span class="track"></span>중량까지 나누기</label>' : '') +
       '</div>' +
       '<div class="table-wrap"><table class="data grp"><thead><tr>' + th('name', esc(def[1]), true) + th('n', '건수') + th('sales', '매출') + th('buys', '매입') + th('profit', '이익') + th('rate', '이익률') +
-      (hasCmp ? th('drate', '이익률 변화') : '') + th('unit', '건당 이익') + '<th class="left" style="width:15%">이익 크기</th></tr></thead><tbody>' +
+      (hasCmp ? th('drate', '이익률 변화') : '') + '<th class="left" style="width:15%">이익 크기</th></tr></thead><tbody>' +
       (shown.map(function (x) {
         var on = selected.indexOf(x.k) !== -1;
         var name = isRoute
@@ -3136,7 +3136,6 @@
         return '<tr class="pick' + (on ? ' picked' : '') + '" data-k="' + esc(x.k) + '"><td class="left wrap">' + name + '</td><td class="num">' + won(x.n) + '</td><td class="num">' + won(x.s) + '</td><td class="num">' + won(x.b) + '</td>' +
           '<td class="num strong' + (x.p < 0 ? ' neg' : '') + '">' + won(x.p) + '</td><td class="num' + (x.r != null && x.r < 0 ? ' neg' : '') + '">' + pctText(x.r) + '</td>' +
           (hasCmp ? '<td class="num" title="' + esc(cr.label) + ' ' + pctText(x.cr) + '">' + (x.dr == null ? '<span class="dl">신규</span>' : deltaHtml(x.dr, '%p', true)) + '</td>' : '') +
-          '<td class="num' + (x.u < 0 ? ' neg' : '') + '">' + won(Math.round(x.u)) + '</td>' +
           '<td class="left"><div class="pbar"><i class="' + (x.p < 0 ? 'loss' : '') + '" style="width:' + (Math.abs(x.p) / maxAbs * 100).toFixed(1) + '%"></i></div></td></tr>';
       }).join('') || '<tr><td colspan="9" class="left muted" style="padding:20px">조건에 맞는 데이터가 없습니다.</td></tr>') +
       '</tbody></table></div>' +
@@ -3179,12 +3178,12 @@
     var more = $('#anMore'); if (more) more.onclick = function () { an.groupLimit += 100; drawGroup(); };
     $('#anGX').onclick = function () {
       var btn = this; busy(btn, true, '…');
-      var head = isRoute ? ['발지', '착지', '중량', '건수', '매출', '매입', '이익', '이익률(%)', '건당 이익'] : [def[1], '건수', '매출', '매입', '이익', '이익률(%)', '건당 이익'];
+      var head = isRoute ? ['발지', '착지', '중량', '건수', '매출', '매입', '이익', '이익률(%)'] : [def[1], '건수', '매출', '매입', '이익', '이익률(%)'];
       if (hasCmp) head.push(cr.label + ' 이익률(%)', '이익률 변화(%p)');
       downloadXlsx('JOIL_분석_' + def[1] + '별_' + f.from + '_' + f.to + '.xlsx', [{
         name: def[1] + '별', widths: isRoute ? [24, 24, 10, 8, 14, 14, 14, 9, 12, 12, 12] : [36, 8, 14, 14, 14, 9, 12, 12, 12],
         rows: [head].concat(list.map(function (x) {
-          var row = (isRoute ? [x.parts[0], x.parts[1], an.routeWeight ? x.parts[2] : '(전체)'] : [x.k]).concat([x.n, x.s, x.b, x.p, x.r == null ? '' : Math.round(x.r * 10) / 10, Math.round(x.u)]);
+          var row = (isRoute ? [x.parts[0], x.parts[1], an.routeWeight ? x.parts[2] : '(전체)'] : [x.k]).concat([x.n, x.s, x.b, x.p, x.r == null ? '' : Math.round(x.r * 10) / 10]);
           if (hasCmp) row.push(x.cr == null ? '' : Math.round(x.cr * 10) / 10, x.dr == null ? '' : Math.round(x.dr * 10) / 10);
           return row;
         }))
@@ -3205,7 +3204,7 @@
       '<div class="bulk-table" style="max-height:64vh"><table class="data bulk detailt"><thead><tr>' + heads.map(function (h, i) { return '<th class="' + (i < 6 || i > 8 ? 'left' : '') + '">' + h + '</th>'; }).join('') + '</tr></thead><tbody>' +
       (page.map(function (r) {
         var p = r[C.sales] - r[C.buys];
-        return '<tr><td class="left small">' + esc(r[C.date]) + '</td><td class="left small">' + esc(r[C.biz]) + '</td><td class="left wrap">' + esc(r[C.disp]) + (r[C.disp] !== r[C.cust] ? '<div class="addr-in">' + esc(r[C.cust]) + '</div>' : '') + '</td>' +
+        return '<tr><td class="left small">' + esc(r[C.date]) + '</td><td class="left small">' + esc(r[C.biz]) + '</td><td class="left wrap">' + esc(r[C.disp]) + '</td>' +
           '<td class="left wrap">' + esc(r[C.from]) + '</td><td class="left wrap">' + esc(r[C.to]) + '</td><td class="left">' + esc(r[C.weight]) + '</td>' +
           '<td class="num">' + won(r[C.sales]) + '</td><td class="num">' + won(r[C.buys]) + '</td><td class="num' + (p < 0 ? ' neg' : '') + '">' + won(p) + '</td>' +
           '<td class="left">' + esc(r[C.car]) + '</td><td class="left">' + esc(r[C.driver]) + '</td><td class="left small">' + esc(r[C.phone]) + '</td><td class="left small wrap">' + esc(r[C.etc]) + '</td><td class="left small wrap">' + esc(r[C.note]) + '</td></tr>';
@@ -4904,6 +4903,7 @@
   }
   function ruleText(t) {
     var r = t.rule || {}, adj = { prev: '쉬는 날이면 앞 영업일', next: '쉬는 날이면 다음 영업일', none: '' }[t.adjust] || '';
+    if (r.type === 'daily') return r.workdays === false ? '매일' : '매일 (평일만)';
     var base = r.type === 'once' ? '일회 ' + r.date : r.type === 'monthEnd' ? '매월 말일' : r.type === 'monthDay' ? '매월 ' + r.day + '일' : r.type === 'weekly' ? '매주 ' + WD[r.dow] + '요일' : r.type === 'yearly' ? '매년 ' + r.month + '월 ' + r.day + '일' : '';
     return base + (adj && r.type !== 'weekly' ? ' · ' + adj : '');
   }
@@ -4913,6 +4913,7 @@
     var r = t.rule || {}, bases = [], lo = dAdd(from, -10), hi = dAdd(to, 10);
     if (r.type === 'once') bases = [r.date];
     else if (r.type === 'weekly') { for (var s = lo; s <= hi; s = dAdd(s, 1)) if (dDow(s) === Number(r.dow)) bases.push(s); }
+    else if (r.type === 'daily') { var td = state.cal.data.today; if (td >= from && td <= to && (r.workdays === false || !isOff(td, holi))) bases.push(td); } // 매일: 오늘 것만 (지난 날은 쌓지 않고, 달력도 오늘만)
     else {
       for (var ym = ymAdd(lo.slice(0, 7), 0); ym <= hi.slice(0, 7); ym = ymAdd(ym, 1)) {
         var y = +ym.slice(0, 4), m = +ym.slice(5, 7), n = dim(y, m);
@@ -4923,7 +4924,7 @@
     }
     var doneMap = state.cal.doneMap;
     return bases.filter(function (b) { return !t.start || b >= t.start; }).map(function (b) {
-      var date = r.type === 'weekly' ? b : adjustDay(b, t.adjust, holi);
+      var date = r.type === 'weekly' || r.type === 'daily' ? b : adjustDay(b, t.adjust, holi);
       return { task: t, base: b, date: date, done: doneMap[t.id + '|' + b] || null };
     }).filter(function (o) { return o.date >= from && o.date <= to; });
   }
@@ -5216,9 +5217,10 @@
         Object.keys((state.cal.data.tasks || []).reduce(function (o, x) { if (x.cust) o[x.cust] = 1; return o; }, {})).concat((state.rateCusts || []).map(function (x) { return x.cust; })).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div>' +
         '<div class="field"><label>담당</label><select class="input" id="tkA"><option value="">팀 전체</option>' + users.map(function (u) { return '<option value="' + esc(u.id) + '"' + ((t.assigneeId || (isNew ? state.user.id : '')) === u.id ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select></div></div>' +
         '<div class="field"><label>할 일 <span style="color:var(--red)">*</span></label><input class="input" id="tkT" maxlength="200" value="' + esc(t.title || '') + '" placeholder="예) 월말 정산서 발송"></div>' +
-        '<div class="field"><label>반복</label><div class="segmented" id="tkR">' + [['once', '일회'], ['monthEnd', '매월 말일'], ['monthDay', '매월 N일'], ['weekly', '매주'], ['yearly', '매년']].map(function (x) { return '<button type="button" data-v="' + x[0] + '" class="' + (r.type === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
+        '<div class="field"><label>반복</label><div class="segmented" id="tkR">' + [['once', '일회'], ['daily', '매일'], ['monthEnd', '매월 말일'], ['monthDay', '매월 N일'], ['weekly', '매주'], ['yearly', '매년']].map(function (x) { return '<button type="button" data-v="' + x[0] + '" class="' + (r.type === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
         '<div class="rule-opts">' +
         '<div class="field ro ro-once"><label>날짜</label><input class="input" type="date" id="tkD" value="' + esc(r.date || state.cal.data.today) + '"></div>' +
+        '<div class="field ro ro-daily"><label class="toggle"><input type="checkbox" id="tkWD"' + (r.type === 'daily' && r.workdays === false ? '' : ' checked') + '><span class="track"></span>평일만 (주말·공휴일 빼기)</label><span class="hint">오늘 할 일에만 나오고, 지난 날 안 한 것은 밀린 할 일로 쌓이지 않아요</span></div>' +
         '<div class="field ro ro-monthDay"><label>매월 며칠</label><input class="input" type="number" min="1" max="31" id="tkMD" value="' + esc(r.type === 'monthDay' ? r.day : 25) + '"><span class="hint">31처럼 없는 날이 있는 달은 그 달 마지막 날</span></div>' +
         '<div class="field ro ro-weekly"><label>요일</label><div class="segmented" id="tkW">' + WD.map(function (x, i) { return '<button type="button" data-v="' + i + '" class="' + ((r.type === 'weekly' ? Number(r.dow) : 1) === i ? 'on' : '') + '">' + x + '</button>'; }).join('') + '</div></div>' +
         '<div class="field ro ro-yearly"><label>매년</label><div class="qd-two"><input class="input" type="number" min="1" max="12" id="tkYM" value="' + esc(r.type === 'yearly' ? r.month : 1) + '" placeholder="월"><input class="input" type="number" min="1" max="31" id="tkYD" value="' + esc(r.type === 'yearly' ? r.day : 1) + '" placeholder="일"></div></div></div>' +
@@ -5229,12 +5231,13 @@
       foot: (!isNew ? '<button class="btn btn-danger btn-sm" id="tkDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="tkSave">저장</button>',
       onMount: function (m, close) {
         var seg = function (id) { $$(id + ' button', m).forEach(function (b) { b.onclick = function () { $$(id + ' button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); sync(); }; }); };
-        var sync = function () { var ty = $('#tkR button.on', m).dataset.v; $$('.ro', m).forEach(function (el) { el.classList.toggle('hidden', !el.classList.contains('ro-' + ty)); }); $('.ro-adj', m).classList.toggle('hidden', ty === 'weekly'); };
+        var sync = function () { var ty = $('#tkR button.on', m).dataset.v; $$('.ro', m).forEach(function (el) { el.classList.toggle('hidden', !el.classList.contains('ro-' + ty)); }); $('.ro-adj', m).classList.toggle('hidden', ty === 'weekly' || ty === 'daily'); };
         ['#tkR', '#tkW', '#tkJ'].forEach(seg); sync();
         $('#tkSave', m).onclick = function () {
           var ty = $('#tkR button.on', m).dataset.v, rule = { type: ty };
           if (ty === 'once') rule.date = $('#tkD', m).value;
           if (ty === 'monthDay') rule.day = Number($('#tkMD', m).value);
+          if (ty === 'daily') rule.workdays = $('#tkWD', m).checked;
           if (ty === 'weekly') rule.dow = Number($('#tkW button.on', m).dataset.v);
           if (ty === 'yearly') { rule.month = Number($('#tkYM', m).value); rule.day = Number($('#tkYD', m).value); }
           var asel = $('#tkA', m);
@@ -6393,7 +6396,7 @@
     sec.unshift(['cal', '일정 · 할 일 · 휴가', [
       '<b>달력</b>: 월요일부터 시작해요. 공휴일(구글 캘린더 "대한민국의 휴일"), 당직, 휴가, 추가근무, 할 일' + (hq ? ', 견적 회신 기한, 서류 만료일' : '') + ', 일정을 한 달 단위로 봐요. 위쪽 칩으로 보일 것만 고를 수 있어요.',
       '날짜를 누르면 그날 항목을 보고 바로 <b>일정 · 할 일 · 휴가·근무</b>를 추가할 수 있어요. 일정은 팀 전체가 보고, "나만 보기"를 켜면 나만 봐요.',
-      '<b>할 일</b>: 업체별로 일회·매월 말일·매월 N일·매주·매년 반복을 정해요. 기한이 주말·공휴일이면 앞 영업일(또는 다음 영업일)로 당겨져요.',
+      '<b>할 일</b>: 업체별로 일회·매일·매월 말일·매월 N일·매주·매년 반복을 정해요. 기한이 주말·공휴일이면 앞 영업일(또는 다음 영업일)로 당겨져요.',
       '체크하면 목록에서 사라지고 <b>완료 기록</b>에 누가 언제 했는지 남아요. 잘못 체크했으면 완료 기록에서 되돌리기.',
       '<b>휴가·근무</b>: 연차·반차·병가·경조·공가·대체휴무와 야간근무·휴일근무를 등록해요. 반차는 0.5일, 연차는 주말·공휴일을 빼고 셉니다.' + (adm ? ' 관리자는 사람별 <b>연차 부여 일수</b>와 <b>회사 휴무일</b>을 정할 수 있어요.' : ''),
       '<b>당직 순번</b>: 휴가·근무 탭의 "당직 순번 규칙"에 순서·시작 주·시간을 정해 두면 앞으로의 당직이 달력에 자동으로 나오고 추가근무(당직)에도 들어가요. 한 주만 바꾸려면 달력에서 그 날짜를 눌러 "바꾸기".',

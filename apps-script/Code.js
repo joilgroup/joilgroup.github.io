@@ -1369,12 +1369,13 @@ function eventDelete_(session, id) {
   return calAll_(session);
 }
 
-var TASK_TYPES = ['once', 'monthEnd', 'monthDay', 'weekly', 'yearly'];
+var TASK_TYPES = ['once', 'daily', 'monthEnd', 'monthDay', 'weekly', 'yearly'];
 function cleanRule_(r) {
   r = r || {};
   var type = TASK_TYPES.indexOf(r.type) !== -1 ? r.type : 'once', out = { type: type };
   if (type === 'once') out.date = checkDate_(r.date, '날짜');
   if (type === 'monthDay') { out.day = Math.round(Number(r.day)); if (!(out.day >= 1 && out.day <= 31)) throw new Error('매월 며칠인지 1~31로 넣으세요.'); }
+  if (type === 'daily') out.workdays = r.workdays !== false;
   if (type === 'weekly') { out.dow = Math.round(Number(r.dow)); if (!(out.dow >= 0 && out.dow <= 6)) throw new Error('요일을 고르세요.'); }
   if (type === 'yearly') { out.month = Math.round(Number(r.month)); out.day = Math.round(Number(r.day)); if (!(out.month >= 1 && out.month <= 12 && out.day >= 1 && out.day <= 31)) throw new Error('매년 몇 월 며칠인지 넣으세요.'); }
   return out;
