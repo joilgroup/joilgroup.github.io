@@ -53,12 +53,22 @@
   /* 일정: 데모용 공휴일 (실제 서버는 구글 캘린더 "대한민국의 휴일"에서 가져옴) */
   function calStore() {
     store.cal = store.cal || {};
-    ['events', 'tasks', 'done', 'leaves', 'grants', 'companyHolidays'].forEach(function (k) { store.cal[k] = store.cal[k] || []; });
+    ['events', 'tasks', 'done', 'leaves', 'grants', 'companyHolidays', 'staff'].forEach(function (k) { store.cal[k] = store.cal[k] || []; });
     return store.cal;
   }
   function calId(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
   function calFind(k, id) { var f = calStore()[k].filter(function (x) { return x.id === id; })[0]; if (!f) fail('찾을 수 없습니다.'); return f; }
-  function calUsers() { return store.users.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name }; }); }
+  function calUsers() {
+    var acc = store.users.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name }; }), nm = {};
+    acc.forEach(function (u) { nm[u.name] = 1; });
+    return acc.concat(calStore().staff.filter(function (x) { return !nm[x.name]; }).map(function (x) { return { id: x.id, name: x.name, nameOnly: true }; }));
+  }
+  function demoLeave(l) {
+    var k = { '반차(오전)': '오전 반차', '반차(오후)': '오후 반차' }[l.kind] || l.kind || '연차', w = /근무|당직/.test(k);
+    var v = { kind: k, start: l.start, end: /반차/.test(k) ? l.start : (l.end || l.start), memo: l.memo || '', from: w ? l.from || '' : '', to: w ? l.to || '' : '', hours: w ? Number(l.hours) || 0 : 0 };
+    if (!/^\d{4}-\d\d-\d\d$/.test(v.start)) fail('날짜를 확인하세요: ' + v.start);
+    return v;
+  }
   function demoHolidays() {
     var out = [], y0 = new Date().getFullYear();
     [y0 - 1, y0, y0 + 1].forEach(function (y) {
@@ -75,7 +85,7 @@
   function calAll() {
     var c = calStore(), d = new Date();
     return { events: c.events.filter(function (e) { return !e.private || e.ownerId === (curMe || {}).id; }), tasks: c.tasks, done: c.done, leaves: c.leaves,
-      grants: c.grants.map(function (g) { var u = calUsers().filter(function (x) { return x.id === g.userId; })[0]; return Object.assign({}, g, { name: u ? u.name : g.userId }); }),
+      grants: c.grants.map(function (g) { var u = calUsers().filter(function (x) { return x.id === g.userId; })[0]; return Object.assign({}, g, { name: u ? u.name : (g.name || g.userId) }); }),
       users: calUsers(), holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
   }
   var curMe = null;
@@ -342,11 +352,24 @@
         save(); return calAll();
       case 'cal.leaveSave':
         var cl = req.leave || {}, lu = calUsers().filter(function (u) { return u.id === (cl.userId || me.id); })[0] || { id: me.id, name: me.name };
-        var lv = { userId: lu.id, name: lu.name, kind: cl.kind || '연차', start: cl.start, end: /반차/.test(cl.kind) ? cl.start : (cl.end || cl.start), memo: cl.memo || '' };
+        var lv = Object.assign({ userId: lu.id, name: lu.name }, demoLeave(cl));
         if (lv.end < lv.start) fail('종료일이 시작일보다 빠릅니다.');
         if (req.id) Object.assign(calFind('leaves', req.id), lv); else store.cal.leaves.push(Object.assign({ id: calId('L'), by: me.name, at: today() }, lv));
         save(); return calAll();
       case 'cal.leaveDelete': store.cal.leaves = store.cal.leaves.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
+      case 'cal.staffSave':
+        calStore().staff = (req.names || []).map(function (n) { return String(n).trim(); }).filter(Boolean).map(function (n) { var o = calStore().staff.filter(function (x) { return x.name === n; })[0]; return o || { id: calId('S'), name: n }; });
+        save(); return calAll();
+      case 'cal.import':
+        var cs = calStore(), res = { leaves: 0, events: 0, grants: 0, skipped: 0, staff: 0 }, byN = {};
+        calUsers().forEach(function (u) { byN[u.name] = u.id; });
+        var whoId = function (n) { if (!byN[n]) { var sid = calId('S'); cs.staff.push({ id: sid, name: n }); byN[n] = sid; res.staff++; } return byN[n]; };
+        var lk = {}; cs.leaves.forEach(function (l) { lk[l.name + '|' + l.kind + '|' + l.start] = 1; });
+        (req.leaves || []).forEach(function (l) { var v = demoLeave(l), k = l.name + '|' + v.kind + '|' + v.start; if (lk[k]) { res.skipped++; return; } lk[k] = 1; cs.leaves.push(Object.assign({ id: calId('L'), userId: whoId(l.name), name: l.name, by: me.name + ' (가져오기)', at: today() }, v)); res.leaves++; });
+        var ek = {}; cs.events.forEach(function (e) { ek[e.title + '|' + e.start] = 1; });
+        (req.events || []).forEach(function (e) { if (!e.title || ek[e.title + '|' + e.start]) { res.skipped++; return; } ek[e.title + '|' + e.start] = 1; cs.events.push({ id: calId('C'), start: e.start, end: e.end || e.start, title: e.title, memo: e.memo || '', private: false, ownerId: me.id, owner: me.name, at: today() }); res.events++; });
+        (req.grants || []).forEach(function (g) { var id = whoId(g.name); cs.grants = cs.grants.filter(function (x) { return !(x.year === String(g.year) && x.userId === id); }); cs.grants.push({ year: String(g.year), userId: id, name: g.name, days: Number(g.days) || 0 }); res.grants++; });
+        save(); return { result: res, cal: calAll() };
       case 'cal.grantsSave':
         if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
         store.cal.grants = store.cal.grants.filter(function (g) { return g.year !== String(req.year); });

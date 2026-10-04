@@ -128,6 +128,8 @@ function handle_(req) {
     case 'cal.taskDone': return taskDone_(session, req);
     case 'cal.leaveSave': return leaveSave_(session, req);
     case 'cal.leaveDelete': return leaveDelete_(session, req.id);
+    case 'cal.staffSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return staffSave_(session, req);
+    case 'cal.import': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return calImport_(session, req);
     case 'cal.grantsSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return grantsSave_(session, req);
     case 'cal.refreshHolidays': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return { result: refreshHolidays_(), cal: calAll_(session) };
     case 'cal.companyHolidays': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); saveCompanyHolidays_(req.list); return calAll_(session);
@@ -1196,8 +1198,10 @@ var TASK_HEADER = ['ID', '업체', '제목', '규칙', '휴일처리', '담당ID
 var SHEET_TASK_DONE = '할일완료';
 var TASK_DONE_HEADER = ['규칙ID', '기한일', '완료일시', '완료자', '메모'];
 var SHEET_LEAVES = '휴가';
-var LEAVE_HEADER = ['ID', '아이디', '이름', '종류', '시작일', '종료일', '메모', '등록자', '등록일시'];
-var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무'];
+var LEAVE_HEADER = ['ID', '아이디', '이름', '종류', '시작일', '종료일', '메모', '등록자', '등록일시', '시작시각', '종료시각', '시간'];
+var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무', '당직'];
+var LEAVE_ALIAS = { '반차(오전)': '오전 반차', '반차(오후)': '오후 반차', '오전반차': '오전 반차', '오후반차': '오후 반차', '반차': '오후 반차' };
+function isWorkKind_(k) { return /근무|당직/.test(k); }
 var SHEET_GRANTS = '연차부여';
 var GRANT_HEADER = ['연도', '아이디', '이름', '부여일수'];
 var SHEET_HOLI = '공휴일';
@@ -1331,10 +1335,11 @@ function calAll_(session) {
   var done = rowsOf_(SHEET_TASK_DONE, TASK_DONE_HEADER).map(function (r) { return { taskId: String(r[0]), date: td_(r[1]), at: fmt_(r[2]), by: String(r[3]), memo: String(r[4] || '') }; })
     .filter(function (d) { return d.date >= since; });
   var leaves = rowsOf_(SHEET_LEAVES, LEAVE_HEADER).map(function (r) {
-    return { id: String(r[0]), userId: String(r[1]), name: String(r[2]), kind: String(r[3]), start: td_(r[4]), end: td_(r[5]) || td_(r[4]), memo: String(r[6] || ''), by: String(r[7]), at: fmt_(r[8]) };
+    return { id: String(r[0]), userId: String(r[1]), name: String(r[2]), kind: String(r[3]), start: td_(r[4]), end: td_(r[5]) || td_(r[4]), memo: String(r[6] || ''), by: String(r[7]), at: fmt_(r[8]),
+      from: hm_(r[9]), to: hm_(r[10]), hours: Number(r[11]) || 0 };
   });
   var grants = rowsOf_(SHEET_GRANTS, GRANT_HEADER).map(function (r) { return { year: String(r[0]), userId: String(r[1]), name: String(r[2]), days: Number(r[3]) || 0 }; });
-  var users = listUsers_().filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
+  var users = calUsers_();
   return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: users, holidays: krHolidays_(), companyHolidays: companyHolidays_(), today: ymd_(new Date()) };
 }
 
@@ -1398,21 +1403,105 @@ function taskDone_(session, req) {
 
 function leaveSave_(session, req) {
   var l = req.leave || {};
-  var kind = LEAVE_KINDS.indexOf(l.kind) !== -1 ? l.kind : null; if (!kind) throw new Error('종류를 고르세요.');
-  var start = checkDate_(l.start, '시작일'), end = l.end ? checkDate_(l.end, '종료일') : start;
-  if (/반차/.test(kind)) end = start;
-  if (end < start) throw new Error('종료일이 시작일보다 빠릅니다.');
   var userId = String(l.userId || session.id);
   if (userId !== session.id && session.role !== 'admin') throw new Error('다른 사람의 휴가는 관리자만 등록할 수 있습니다.');
-  var u = listUsers_().filter(function (x) { return String(x.id) === userId; })[0];
-  if (!u) throw new Error('계정을 찾을 수 없습니다.');
-  var row = [userId, String(u.name), kind, "'" + start, "'" + end, String(l.memo || '').slice(0, 500)];
+  var u = calUsers_().filter(function (x) { return x.id === userId; })[0];
+  if (!u) throw new Error('직원을 찾을 수 없습니다.');
+  var v = cleanLeave_(l);
+  var sh = leaveSheet_();
   if (req.id) {
     var f = findRow_(SHEET_LEAVES, LEAVE_HEADER, req.id); if (!f) throw new Error('기록을 찾을 수 없습니다.');
     if (String(f.raw[1]) !== session.id && session.role !== 'admin') throw new Error('본인이나 관리자만 고칠 수 있습니다.');
-    f.sh.getRange(f.row, 2, 1, row.length).setValues([row]);
-  } else cacheSheet_(SHEET_LEAVES, LEAVE_HEADER).appendRow([newId_('L')].concat(row).concat([session.name, now_()]));
+    f.sh.getRange(f.row, 2, 1, 6).setValues([[userId, u.name, v.kind, "'" + v.start, "'" + v.end, v.memo]]);
+    f.sh.getRange(f.row, 10, 1, 3).setValues([["'" + v.from, "'" + v.to, v.hours]]);
+  } else sh.appendRow(leaveRow_(newId_('L'), userId, u.name, v, session.name));
   return calAll_(session);
+}
+/** 시각 값 → 'HH:mm' (시트가 시간으로 바꿔 버린 경우도 처리) */
+function hm_(v) {
+  if (v instanceof Date) return Utilities.formatDate(v, TZ, 'HH:mm');
+  var m = /^(\d{1,2}):(\d{2})/.exec(String(v || '').replace(/^'/, '').trim());
+  return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : '';
+}
+function leaveSheet_() {
+  var sh = cacheSheet_(SHEET_LEAVES, LEAVE_HEADER);
+  if (sh.getLastColumn && sh.getLastColumn() < LEAVE_HEADER.length) sh.getRange(1, 1, 1, LEAVE_HEADER.length).setValues([LEAVE_HEADER]).setFontWeight('bold');
+  return sh;
+}
+function cleanLeave_(l) {
+  var k = String(l.kind || '').trim(); k = LEAVE_ALIAS[k] || k;
+  if (LEAVE_KINDS.indexOf(k) === -1) throw new Error('종류 "' + k + '"를 알 수 없습니다.');
+  var start = checkDate_(l.start, '시작일'), end = l.end ? checkDate_(l.end, '종료일') : start;
+  if (/반차/.test(k)) end = start;
+  if (end < start) throw new Error('종료일이 시작일보다 빠릅니다.');
+  var work = isWorkKind_(k), hours = work ? Math.round(Number(l.hours) * 100) / 100 || 0 : 0;
+  if (hours < 0 || hours > 400) throw new Error('추가근무 시간을 확인하세요.');
+  return { kind: k, start: start, end: end, memo: String(l.memo || '').slice(0, 500), from: work ? hm_(l.from) : '', to: work ? hm_(l.to) : '', hours: hours };
+}
+function leaveRow_(id, userId, name, v, by) {
+  return [id, userId, name, v.kind, "'" + v.start, "'" + v.end, v.memo, by, now_(), "'" + v.from, "'" + v.to, v.hours];
+}
+/** 휴가·근무 대상: 사용 중인 계정 + 계정 없는 직원(이름만, 관리자가 추가) */
+function calStaff_() { return parseJson_(PropertiesService.getScriptProperties().getProperty('CAL_STAFF'), []); }
+function calUsers_() {
+  var acc = listUsers_().filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
+  var names = {}; acc.forEach(function (u) { names[u.name] = 1; });
+  return acc.concat(calStaff_().filter(function (s) { return !names[s.name]; }).map(function (s) { return { id: s.id, name: s.name, nameOnly: true }; }));
+}
+function staffSave_(session, req) {
+  var seen = {}, old = {}; calStaff_().forEach(function (s) { old[s.name] = s.id; });
+  var list = (req.names || []).map(function (n) { return String(n || '').trim().slice(0, 30); }).filter(function (n) { if (!n || seen[n]) return false; seen[n] = 1; return true; })
+    .map(function (n) { return { id: old[n] || 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), name: n }; });
+  PropertiesService.getScriptProperties().setProperty('CAL_STAFF', JSON.stringify(list));
+  return calAll_(session);
+}
+/** 관리자: 엑셀 가져오기 (휴가·근무 / 일정 / 연차 부여). 같은 기록은 건너뜀 */
+function calImport_(session, req) {
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var staff = calStaff_(), users = calUsers_(), byName = {};
+    users.forEach(function (u) { byName[u.name] = u.id; });
+    var who = function (name) {
+      name = String(name || '').trim(); if (!name) throw new Error('이름이 비어 있는 줄이 있습니다.');
+      if (byName[name]) return byName[name];
+      var id = 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10);
+      staff.push({ id: id, name: name.slice(0, 30) }); byName[name] = id; return id;
+    };
+    var res = { leaves: 0, events: 0, grants: 0, skipped: 0, staff: 0 }, n0 = staff.length;
+    var sh = leaveSheet_(), have = {};
+    rowsOf_(SHEET_LEAVES, LEAVE_HEADER).forEach(function (r) { have[String(r[2]) + '|' + String(r[3]) + '|' + td_(r[4])] = 1; });
+    var add = [];
+    (req.leaves || []).slice(0, 3000).forEach(function (l, i) {
+      var v; try { v = cleanLeave_(l); } catch (e) { throw new Error('휴가·근무 ' + (i + 2) + '번째 줄: ' + e.message); }
+      var name = String(l.name || '').trim(), key = name + '|' + v.kind + '|' + v.start;
+      if (have[key]) { res.skipped++; return; }
+      have[key] = 1; add.push(leaveRow_(newId_('L'), who(name), name, v, session.name + ' (가져오기)')); res.leaves++;
+    });
+    if (add.length) sh.getRange(sh.getLastRow() + 1, 1, add.length, LEAVE_HEADER.length).setValues(add);
+    var esh = cacheSheet_(SHEET_EVENTS, EVENT_HEADER), ehave = {}, eadd = [];
+    rowsOf_(SHEET_EVENTS, EVENT_HEADER).forEach(function (r) { ehave[String(r[3]) + '|' + td_(r[1])] = 1; });
+    (req.events || []).slice(0, 3000).forEach(function (e, i) {
+      var title = String(e.title || '').trim().slice(0, 100); if (!title) { res.skipped++; return; }
+      var start = checkDate_(e.start, '일정 ' + (i + 2) + '번째 줄 시작일'), end = e.end ? checkDate_(e.end, '종료일') : start;
+      if (ehave[title + '|' + start]) { res.skipped++; return; }
+      ehave[title + '|' + start] = 1; eadd.push([newId_('C'), "'" + start, "'" + (end < start ? start : end), title, String(e.memo || '').slice(0, 1000), '팀', session.id, session.name, now_()]); res.events++;
+    });
+    if (eadd.length) esh.getRange(esh.getLastRow() + 1, 1, eadd.length, EVENT_HEADER.length).setValues(eadd);
+    var g = req.grants || [];
+    if (g.length) {
+      var gsh = cacheSheet_(SHEET_GRANTS, GRANT_HEADER), rows = rowsOf_(SHEET_GRANTS, GRANT_HEADER);
+      g.forEach(function (x) {
+        var y = String(x.year || ''), d = Number(x.days); if (!/^\d{4}$/.test(y) || !(d >= 0 && d <= 100)) { res.skipped++; return; }
+        var id = who(x.name);
+        rows = rows.filter(function (r) { return !(String(r[0]) === y && String(r[1]) === id); }).concat([[y, id, String(x.name).trim(), d]]); res.grants++;
+      });
+      if (gsh.getLastRow() > 1) gsh.getRange(2, 1, gsh.getLastRow() - 1, GRANT_HEADER.length).clearContent();
+      if (rows.length) gsh.getRange(2, 1, rows.length, GRANT_HEADER.length).setValues(rows);
+    }
+    res.staff = staff.length - n0;
+    if (res.staff) PropertiesService.getScriptProperties().setProperty('CAL_STAFF', JSON.stringify(staff));
+    return { result: res, cal: calAll_(session) };
+  } finally { lock.releaseLock(); }
 }
 function leaveDelete_(session, id) {
   var f = findRow_(SHEET_LEAVES, LEAVE_HEADER, id); if (!f) throw new Error('기록을 찾을 수 없습니다.');
@@ -1423,7 +1512,7 @@ function leaveDelete_(session, id) {
 /** 관리자: 연도별 연차 부여 일수 */
 function grantsSave_(session, req) {
   var year = String(req.year || ''); if (!/^\d{4}$/.test(year)) throw new Error('연도를 확인하세요.');
-  var users = listUsers_(), sh = cacheSheet_(SHEET_GRANTS, GRANT_HEADER);
+  var users = calUsers_(), sh = cacheSheet_(SHEET_GRANTS, GRANT_HEADER);
   var keep = rowsOf_(SHEET_GRANTS, GRANT_HEADER).filter(function (r) { return String(r[0]) !== year; });
   var add = Object.keys(req.grants || {}).map(function (uid) {
     var u = users.filter(function (x) { return String(x.id) === uid; })[0]; if (!u) return null;

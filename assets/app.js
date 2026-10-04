@@ -4877,7 +4877,8 @@
 
   /* ───────── 일정 (달력 · 할 일 · 휴가) ───────── */
 
-  var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무'];
+  var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무', '당직'];
+  function isWork(k) { return /근무|당직/.test(k); }
   var WD = ['일', '월', '화', '수', '목', '금', '토'];
   /* 날짜 문자열(YYYY-MM-DD) 계산 */
   function dU(s) { return Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)); }
@@ -4938,7 +4939,7 @@
   function leaveDays(l, holi) {
     if (/반차/.test(l.kind)) return 0.5;
     var n = 0;
-    for (var s = l.start; s <= l.end; s = dAdd(s, 1)) if (/근무/.test(l.kind) || !isOff(s, holi)) n++;
+    for (var s = l.start; s <= l.end; s = dAdd(s, 1)) if (isWork(l.kind) || !isOff(s, holi)) n++;
     return n;
   }
 
@@ -4982,8 +4983,8 @@
     if (sh.holi) (holi[s] || []).forEach(function (h) { out.push({ k: h.off ? 'holi' : 'obs', t: h.name }); });
     if (sh.leave) d.leaves.forEach(function (l) {
       if (s < l.start || s > l.end) return;
-      if (!/근무/.test(l.kind) && l.start !== l.end && isOff(s, holi)) return;
-      out.push({ k: /근무/.test(l.kind) ? 'work' : 'leave', t: l.name + ' ' + l.kind, ref: l });
+      if (!isWork(l.kind) && l.start !== l.end && isOff(s, holi)) return;
+      out.push({ k: isWork(l.kind) ? 'work' : 'leave', t: l.name + ' ' + l.kind + (l.hours && l.start === s ? ' ' + l.hours + 'h' : ''), ref: l });
     });
     if (sh.task) (occ[s] || []).forEach(function (o) { out.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, ref: o }); });
     if (sh.req) (state.reqs.list || []).forEach(function (r) { if (r.due === s && ['접수', '검토중'].indexOf(r.status) !== -1) out.push({ k: 'req', t: '회신 ' + r.cust, ref: r }); });
@@ -5158,28 +5159,41 @@
 
   function editLeave(l) {
     var isNew = !l.id, adm = state.user.role === 'admin', users = state.cal.data.users;
+    var selId = (users.filter(function (u) { return u.id === l.userId; })[0] || users.filter(function (u) { return u.name === l.name; })[0] || { id: state.user.id }).id;
     modal({
       eyebrow: '휴가·근무', title: isNew ? '휴가·근무 등록' : '휴가·근무 수정',
-      body: '<div class="field"><label>사람</label>' + (adm ? '<select class="input" id="lvU">' + users.map(function (u) { return '<option value="' + esc(u.id) + '"' + ((l.userId || state.user.id) === u.id ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select>'
+      body: '<div class="field"><label>사람</label>' + (adm ? '<select class="input" id="lvU">' + users.map(function (u) { return '<option value="' + esc(u.id) + '"' + (selId === u.id ? ' selected' : '') + '>' + esc(u.name) + (u.nameOnly ? ' (계정 없음)' : '') + '</option>'; }).join('') + '</select>'
         : '<input class="input" value="' + esc(state.user.name) + '" disabled>') + '</div>' +
-        '<div class="field"><label>종류</label><div class="segmented wrap-seg" id="lvK">' + LEAVE_KINDS.map(function (k) { return '<button type="button" data-v="' + k + '" class="' + ((l.kind || '연차') === k ? 'on' : '') + (/근무/.test(k) ? ' work' : '') + '">' + k + '</button>'; }).join('') + '</div></div>' +
+        '<div class="field"><label>종류</label><div class="segmented wrap-seg" id="lvK">' + LEAVE_KINDS.map(function (k) { return '<button type="button" data-v="' + k + '" class="' + ((l.kind || '연차') === k ? 'on' : '') + (isWork(k) ? ' work' : '') + '">' + k + '</button>'; }).join('') + '</div></div>' +
         '<div class="qd-two"><div class="field"><label>시작일</label><input class="input" type="date" id="lvS" value="' + esc(l.start || state.cal.data.today) + '"></div><div class="field" id="lvEf"><label>종료일</label><input class="input" type="date" id="lvE" value="' + esc(l.end || l.start || state.cal.data.today) + '"></div></div>' +
-        '<div class="field"><label>메모</label><input class="input" id="lvM" maxlength="500" value="' + esc(l.memo || '') + '" placeholder="예) 가족 여행, 야간 상차 지원"></div><p class="hint" id="lvInfo" style="margin:0"></p>',
+        '<div class="lv-time" id="lvTm"><div class="field"><label>시작 시각</label><input class="input" type="time" id="lvF" value="' + esc(l.from || '') + '"></div><div class="field"><label>종료 시각</label><input class="input" type="time" id="lvT" value="' + esc(l.to || '') + '"></div>' +
+        '<div class="field"><label>추가근무 시간</label><input class="input num" id="lvH" inputmode="decimal" value="' + esc(l.hours || '') + '" placeholder="예) 2"><span class="hint">시각을 넣으면 자동 계산 (자정 넘으면 다음날)</span></div></div>' +
+        '<div class="field"><label>메모</label><input class="input" id="lvM" maxlength="500" value="' + esc(l.memo || '') + '" placeholder="예) 한진 견적, 롯데 배차"></div><p class="hint" id="lvInfo" style="margin:0"></p>',
       foot: (!isNew ? '<button class="btn btn-danger btn-sm" id="lvDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="lvSave">저장</button>',
       onMount: function (m, close) {
         var holi = calHoli();
         var info = function () {
           var k = $('#lvK button.on', m).dataset.v, s = $('#lvS', m).value, e = /반차/.test(k) ? s : ($('#lvE', m).value || s);
           $('#lvEf', m).classList.toggle('hidden', /반차/.test(k));
+          $('#lvTm', m).classList.toggle('hidden', !isWork(k));
           if (!s || e < s) { $('#lvInfo', m).textContent = ''; return; }
           var n = leaveDays({ kind: k, start: s, end: e }, holi);
-          $('#lvInfo', m).textContent = /근무/.test(k) ? '근무 기록 ' + n + '일 (연차에서 빠지지 않아요)' : k === '연차' || /반차/.test(k) ? '연차 ' + n + '일 사용 (주말·공휴일 제외)' : n + '일 (연차에서 빠지지 않아요)';
+          $('#lvInfo', m).textContent = isWork(k) ? '추가근무로 집계돼요 (연차에서 빠지지 않아요)' : k === '연차' || /반차/.test(k) ? '연차 ' + n + '일 사용 (주말·공휴일 제외)' : n + '일 (연차에서 빠지지 않아요)';
         };
+        var autoH = function () {
+          var f = $('#lvF', m).value, t = $('#lvT', m).value; if (!f || !t) return;
+          var d = (+t.slice(0, 2) * 60 + +t.slice(3, 5)) - (+f.slice(0, 2) * 60 + +f.slice(3, 5)); if (d <= 0) d += 1440;
+          $('#lvH', m).value = Math.round(d / 60 * 100) / 100;
+        };
+        $('#lvF', m).onchange = autoH; $('#lvT', m).onchange = autoH;
         $$('#lvK button', m).forEach(function (b) { b.onclick = function () { $$('#lvK button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); info(); }; });
         $('#lvS', m).onchange = function () { if ($('#lvE', m).value < this.value) $('#lvE', m).value = this.value; info(); };
         $('#lvE', m).onchange = info; info();
         $('#lvSave', m).onclick = function () {
-          var lv = { userId: adm ? $('#lvU', m).value : state.user.id, kind: $('#lvK button.on', m).dataset.v, start: $('#lvS', m).value, end: $('#lvE', m).value, memo: $('#lvM', m).value };
+          var k = $('#lvK button.on', m).dataset.v;
+          var lv = { userId: adm ? $('#lvU', m).value : state.user.id, kind: k, start: $('#lvS', m).value, end: $('#lvE', m).value, memo: $('#lvM', m).value,
+            from: $('#lvF', m).value, to: $('#lvT', m).value, hours: Number(String($('#lvH', m).value).replace(/[^\d.]/g, '')) || 0 };
+          if (isWork(k) && !lv.hours && !confirm('추가근무 시간이 비어 있어요. 0시간으로 저장할까요?')) return;
           var btn = this; busy(btn, true, '저장 중…');
           calSave('cal.leaveSave', { id: l.id || '', leave: lv }, '저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
         };
@@ -5188,48 +5202,110 @@
     });
   }
 
+  var OT_KINDS = ['야간근무', '휴일근무', '당직'];
+  function hrs(n) { return Math.round(n * 100) / 100; }
+  /** 사람 목록 (이름 기준: 계정·계정 없는 직원·기록에만 있는 이름) */
+  function calPeople() {
+    var d = state.cal.data, out = [], seen = {};
+    var add = function (name, id, nameOnly) { if (!name || seen[name]) return; seen[name] = 1; out.push({ name: name, id: id, nameOnly: nameOnly }); };
+    d.users.forEach(function (u) { add(u.name, u.id, u.nameOnly); });
+    d.leaves.forEach(function (l) { add(l.name, l.userId, true); });
+    return out;
+  }
+  /** 월별 추가근무 (시작일이 속한 달 기준) */
+  function otMonth(ym) {
+    var by = {};
+    state.cal.data.leaves.forEach(function (l) {
+      if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 7) !== ym) return;
+      var s = by[l.name] || (by[l.name] = { name: l.name, total: 0, list: [] });
+      OT_KINDS.forEach(function (k) { s[k] = s[k] || { n: 0, h: 0 }; });
+      s[l.kind].n++; s[l.kind].h += l.hours || 0; s.total += l.hours || 0; s.list.push(l);
+    });
+    return by;
+  }
+  function otXlsx(ym) {
+    var by = otMonth(ym), names = Object.keys(by).sort();
+    var sum = [['이름', '야간근무(건)', '야간근무(시간)', '휴일근무(건)', '휴일근무(시간)', '당직(건)', '당직(시간)', '합계(시간)']].concat(names.map(function (n) {
+      var s = by[n]; return [n, s['야간근무'].n, hrs(s['야간근무'].h), s['휴일근무'].n, hrs(s['휴일근무'].h), s['당직'].n, hrs(s['당직'].h), hrs(s.total)];
+    }));
+    var det = [['날짜', '종료일', '이름', '종류', '시작 시각', '종료 시각', '시간', '메모']];
+    names.forEach(function (n) { by[n].list.slice().sort(function (a, b) { return a.start < b.start ? -1 : 1; }).forEach(function (l) { det.push([l.start, l.end !== l.start ? l.end : '', l.name, l.kind, l.from || '', l.to || '', l.hours || 0, l.memo || '']); }); });
+    return downloadXlsx('추가근무_' + ym + '.xlsx', [{ name: '요약', rows: sum, widths: [12, 12, 13, 12, 13, 10, 11, 11] }, { name: '상세', rows: det, widths: [12, 12, 10, 10, 9, 9, 7, 36] }]);
+  }
+
   function calLeave() {
     var c = state.cal, d = c.data, yr = c.year, holi = calHoli(), adm = state.user.role === 'admin';
+    if (!c.otm || c.otm.slice(0, 4) !== yr) c.otm = yr === d.today.slice(0, 4) ? d.today.slice(0, 7) : yr + '-12';
+    var people = calPeople();
     var inYear = d.leaves.filter(function (l) { return l.start.slice(0, 4) === yr || l.end.slice(0, 4) === yr; });
-    var grant = {}; d.grants.forEach(function (g) { if (g.year === yr) grant[g.userId] = g.days; });
-    var stat = {}; d.users.forEach(function (u) { stat[u.id] = { u: u, used: 0, other: 0, night: 0, hol: 0 }; });
+    var grant = {}; d.grants.forEach(function (g) { if (g.year === yr) grant[g.name] = g.days; });
+    var stat = {}; people.forEach(function (p) { stat[p.name] = { p: p, used: 0, other: 0, ot: 0, otN: 0 }; });
     inYear.forEach(function (l) {
-      var s = stat[l.userId] || (stat[l.userId] = { u: { id: l.userId, name: l.name }, used: 0, other: 0, night: 0, hol: 0 }), n = leaveDays(l, holi);
-      if (l.kind === '연차' || /반차/.test(l.kind)) s.used += n; else if (l.kind === '야간근무') s.night += n; else if (l.kind === '휴일근무') s.hol += n; else s.other += n;
+      var s = stat[l.name]; if (!s) return;
+      if (OT_KINDS.indexOf(l.kind) !== -1) { if (l.start.slice(0, 4) === yr) { s.ot += l.hours || 0; s.otN++; } }
+      else if (l.kind === '연차' || /반차/.test(l.kind)) s.used += leaveDays(l, holi); else s.other += leaveDays(l, holi);
     });
+    var shown = people.filter(function (p) { var s = stat[p.name]; return !p.nameOnly || s.used || s.other || s.ot || s.otN || grant[p.name] != null || d.users.some(function (u) { return u.name === p.name; }); });
     var years = {}; years[d.today.slice(0, 4)] = 1; d.leaves.forEach(function (l) { years[l.start.slice(0, 4)] = 1; }); d.grants.forEach(function (g) { years[g.year] = 1; });
     var who = c.person || '';
-    var list = inYear.filter(function (l) { return !who || l.userId === who; }).sort(function (a, b) { return a.start < b.start ? 1 : -1; });
+    var list = inYear.filter(function (l) { return !who || l.name === who; }).sort(function (a, b) { return a.start < b.start ? 1 : -1; });
+    // 월별 추가근무
+    var om = otMonth(c.otm), omNames = Object.keys(om).sort(), mon = +c.otm.slice(5);
+    var matrix = {}; d.leaves.forEach(function (l) { if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 4) !== yr) return; var r = matrix[l.name] || (matrix[l.name] = {}); var k = +l.start.slice(5, 7); r[k] = (r[k] || 0) + (l.hours || 0); });
+    var mNames = Object.keys(matrix).sort();
+    var cell = function (s) { return s.n ? '<b>' + hrs(s.h) + '</b><small> h · ' + s.n + '건</small>' : '<span class="muted">–</span>'; };
+
     $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Leave · 휴가·근무</div><h2>' + yr + '년 휴가·근무</h2></div>' +
       '<div class="actions"><select class="input input-sm" id="lvY" style="width:auto">' + Object.keys(years).sort().reverse().map(function (y) { return '<option' + (y === yr ? ' selected' : '') + '>' + y + '</option>'; }).join('') + '</select>' +
-      (adm ? '<button class="btn btn-sm" id="lvG">연차 부여 일수</button>' : '') + '<button class="btn btn-sm btn-primary" id="lvAdd">＋ 휴가·근무 등록</button></div></div>' +
-      '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">이름</th><th>부여</th><th>사용</th><th>잔여</th><th>그 밖의 휴가</th><th>야간근무</th><th>휴일근무</th></tr></thead><tbody>' +
-      Object.keys(stat).map(function (k) { return stat[k]; }).map(function (s) {
-        var g = grant[s.u.id], rem = g != null ? g - s.used : null;
-        return '<tr class="' + (who === s.u.id ? 'sel' : '') + '" data-p="' + esc(s.u.id) + '"><td class="left"><b>' + esc(s.u.name) + '</b></td><td class="num">' + (g != null ? g : '<span class="muted">–</span>') + '</td><td class="num">' + s.used + '</td>' +
-          '<td class="num' + (rem != null && rem < 0 ? ' neg' : '') + '">' + (rem != null ? '<b>' + rem + '</b>' : '<span class="muted">–</span>') + '</td><td class="num">' + (s.other || '–') + '</td><td class="num">' + (s.night ? s.night + '일' : '–') + '</td><td class="num">' + (s.hol ? s.hol + '일' : '–') + '</td></tr>';
-      }).join('') + '</tbody></table></div><p class="hint" style="margin:8px 0 0">사용 = 연차 + 반차(0.5) · 주말·공휴일 제외 · 이름을 누르면 그 사람 기록만 보여요</p></div>' +
-      '<div class="card" style="margin-top:16px"><div class="row-between"><h3>' + (who ? esc((stat[who] || { u: { name: '' } }).u.name) + ' 기록' : '전체 기록') + ' <span class="muted small">' + list.length + '건</span></h3>' + (who ? '<button class="btn btn-sm btn-ghost" id="lvAll">전체 보기</button>' : '') + '</div>' +
-      (list.length ? '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">기간</th><th class="left">이름</th><th class="left">종류</th><th>일수</th><th class="left">메모</th><th class="left">등록</th><th></th></tr></thead><tbody>' +
-        list.map(function (l) {
-          var canEdit = adm || l.userId === state.user.id;
+      (adm ? '<button class="btn btn-sm" id="lvStaff">직원 명단</button><button class="btn btn-sm" id="lvG">연차 부여 일수</button><button class="btn btn-sm" id="lvImp">엑셀 가져오기</button>' : '') + '<button class="btn btn-sm btn-primary" id="lvAdd">＋ 휴가·근무 등록</button></div></div>' +
+      '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">이름</th><th>부여</th><th>사용</th><th>잔여</th><th>그 밖의 휴가</th><th>추가근무 (연간)</th></tr></thead><tbody>' +
+      shown.map(function (p) {
+        var s = stat[p.name], g = grant[p.name], rem = g != null ? g - s.used : null;
+        return '<tr class="' + (who === p.name ? 'sel' : '') + '" data-p="' + esc(p.name) + '"><td class="left"><b>' + esc(p.name) + '</b>' + (p.nameOnly ? ' <span class="muted small">계정 없음</span>' : '') + '</td><td class="num">' + (g != null ? g : '<span class="muted">–</span>') + '</td><td class="num">' + s.used + '</td>' +
+          '<td class="num' + (rem != null && rem < 0 ? ' neg' : '') + '">' + (rem != null ? '<b>' + rem + '</b>' : '<span class="muted">–</span>') + '</td><td class="num">' + (s.other || '–') + '</td><td class="num">' + (s.otN ? hrs(s.ot) + '시간 <span class="muted small">' + s.otN + '건</span>' : '–') + '</td></tr>';
+      }).join('') + '</tbody></table></div><p class="hint" style="margin:8px 0 0">사용 = 연차 + 반차(0.5) · 주말·공휴일 제외 · 추가근무 = 야간근무 + 휴일근무 + 당직 · 이름을 누르면 그 사람 기록만 보여요</p></div>' +
+
+      '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Overtime · 월별 추가근무</div>' +
+      '<div class="cal-nav"><button class="btn btn-sm" id="otPrev"' + (mon <= 1 ? ' disabled' : '') + '>◀</button><h2>' + yr + '년 ' + mon + '월</h2><button class="btn btn-sm" id="otNext"' + (mon >= 12 ? ' disabled' : '') + '>▶</button></div></div>' +
+      '<button class="btn btn-sm" id="otX"' + (omNames.length ? '' : ' disabled') + '>엑셀 (요약·상세)</button></div>' +
+      (omNames.length ? '<div class="table-wrap"><table class="data leave-table ot-table"><thead><tr><th class="left">이름</th><th>야간근무</th><th>휴일근무</th><th>당직</th><th>합계</th></tr></thead><tbody>' +
+        omNames.map(function (n) { var s = om[n]; return '<tr data-otp="' + esc(n) + '"><td class="left"><b>' + esc(n) + '</b></td><td class="num">' + cell(s['야간근무']) + '</td><td class="num">' + cell(s['휴일근무']) + '</td><td class="num">' + cell(s['당직']) + '</td><td class="num tot"><b>' + hrs(s.total) + '</b> 시간</td></tr>'; }).join('') +
+        '</tbody></table></div>' : '<p class="muted small" style="margin:6px 0 10px">' + mon + '월에는 추가근무 기록이 없어요.</p>') +
+      (mNames.length ? '<h3 style="margin:18px 0 6px;font-size:14px">' + yr + '년 월별 합계 <span class="muted small">(시간 · 누르면 그 달로)</span></h3><div class="table-wrap"><table class="data leave-table ot-year"><thead><tr><th class="left">이름</th>' +
+        [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (k) { return '<th class="' + (k === mon ? 'on' : '') + '" data-m="' + k + '">' + k + '월</th>'; }).join('') + '<th>합계</th></tr></thead><tbody>' +
+        mNames.map(function (n) { var r = matrix[n], t = 0; return '<tr><td class="left"><b>' + esc(n) + '</b></td>' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (k) { t += r[k] || 0; return '<td class="num' + (k === mon ? ' on' : '') + '" data-m="' + k + '">' + (r[k] ? hrs(r[k]) : '<span class="muted">·</span>') + '</td>'; }).join('') + '<td class="num"><b>' + hrs(t) + '</b></td></tr>'; }).join('') +
+        '</tbody></table></div>' : '') +
+      '<p class="hint" style="margin:8px 0 0">시작일이 속한 달로 집계해요 (월을 넘기는 당직은 시작한 달)</p></div>' +
+
+      '<div class="card" style="margin-top:16px"><div class="row-between"><h3>' + (who ? esc(who) + ' 기록' : '전체 기록') + ' <span class="muted small">' + list.length + '건</span></h3>' + (who ? '<button class="btn btn-sm btn-ghost" id="lvAll">전체 보기</button>' : '') + '</div>' +
+      (list.length ? '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">기간</th><th class="left">이름</th><th class="left">종류</th><th>일수 · 시간</th><th class="left">메모</th><th class="left">등록</th><th></th></tr></thead><tbody>' +
+        list.slice(0, c.lvMore ? list.length : 40).map(function (l) {
+          var canEdit = adm || l.userId === state.user.id, w = isWork(l.kind);
           return '<tr><td class="left">' + esc(l.start) + (l.end !== l.start ? ' ~ ' + esc(l.end.slice(5)) : '') + ' <span class="muted small">(' + WD[dDow(l.start)] + ')</span></td><td class="left">' + esc(l.name) + '</td>' +
-            '<td class="left"><span class="lv-kind' + (/근무/.test(l.kind) ? ' work' : '') + '">' + esc(l.kind) + '</span></td><td class="num">' + leaveDays(l, holi) + '</td><td class="left small">' + esc(l.memo) + '</td>' +
+            '<td class="left"><span class="lv-kind' + (w ? ' work' : '') + '">' + esc(l.kind) + '</span></td><td class="num">' + (w ? '<b>' + hrs(l.hours || 0) + '시간</b>' + (l.from ? ' <span class="muted small">' + esc(l.from) + '~' + esc(l.to) + '</span>' : '') : leaveDays(l, holi) + '일') + '</td><td class="left small">' + esc(l.memo) + '</td>' +
             '<td class="left small muted">' + esc(l.by) + '</td><td>' + (canEdit ? '<button class="btn btn-sm btn-ghost" data-lv="' + esc(l.id) + '">수정</button>' : '') + '</td></tr>';
-        }).join('') + '</tbody></table></div>' : '<p class="muted small">기록이 없어요.</p>') + '</div>' +
+        }).join('') + '</tbody></table></div>' + (list.length > 40 && !c.lvMore ? '<div style="text-align:center;margin-top:10px"><button class="btn btn-sm" id="lvMore">나머지 ' + (list.length - 40) + '건 더 보기</button></div>' : '') : '<p class="muted small">기록이 없어요.</p>') + '</div>' +
       (adm ? '<div class="card" style="margin-top:16px"><div class="row-between"><h3>회사 휴무일 <span class="muted small">공휴일 외에 회사가 쉬는 날 (창립기념일 등)</span></h3><span class="actions"><button class="btn btn-sm btn-ghost" id="hoRe">공휴일 다시 받기</button><button class="btn btn-sm" id="chAdd">＋ 추가</button></span></div>' +
         ((d.companyHolidays || []).length ? '<ul class="rule-list">' + d.companyHolidays.map(function (h, i) { return '<li><span><b>' + esc(h.date) + '</b> ' + esc(h.name) + '</span><button class="btn btn-sm btn-ghost" data-ch="' + i + '">삭제</button></li>'; }).join('') + '</ul>' : '<p class="muted small" style="margin:6px 0 0">없어요.</p>') + '</div>' : '');
+
     $('#lvY').onchange = function () { c.year = this.value; calLeave(); };
-    $('#lvAdd').onclick = function () { editLeave({ userId: who || state.user.id }); };
+    $('#lvAdd').onclick = function () { var p = people.filter(function (x) { return x.name === who; })[0]; editLeave({ userId: p ? p.id : state.user.id, name: who }); };
     $$('tr[data-p]').forEach(function (tr) { tr.onclick = function () { c.person = c.person === tr.dataset.p ? '' : tr.dataset.p; calLeave(); }; });
+    $$('tr[data-otp]').forEach(function (tr) { tr.onclick = function () { c.person = tr.dataset.otp; calLeave(); }; });
     var all = $('#lvAll'); if (all) all.onclick = function () { c.person = ''; calLeave(); };
+    var more = $('#lvMore'); if (more) more.onclick = function () { c.lvMore = true; calLeave(); };
+    $('#otPrev').onclick = function () { c.otm = ymAdd(c.otm, -1); calLeave(); };
+    $('#otNext').onclick = function () { c.otm = ymAdd(c.otm, 1); calLeave(); };
+    $$('.ot-year [data-m]').forEach(function (x) { x.onclick = function () { c.otm = yr + '-' + pad2(+x.dataset.m); calLeave(); }; });
+    $('#otX').onclick = function () { var b = this; busy(b, true, '만드는 중…'); otXlsx(c.otm).then(function () { busy(b, false); }).catch(function (err) { busy(b, false); toast(err.message, 'err'); }); };
     var byId = {}; d.leaves.forEach(function (l) { byId[l.id] = l; });
     $$('[data-lv]').forEach(function (b) { b.onclick = function () { editLeave(byId[b.dataset.lv]); }; });
     var g = $('#lvG'); if (g) g.onclick = function () {
+
       modal({
         eyebrow: '휴가·근무', title: yr + '년 연차 부여 일수',
         body: '<p class="muted small" style="margin:0 0 10px">사람마다 올해 쓸 수 있는 연차 일수를 넣으면 사용·잔여가 자동으로 계산돼요. 비워 두면 계산하지 않아요.</p>' +
-          '<div class="grant-grid">' + d.users.map(function (u) { return '<label>' + esc(u.name) + '<input class="input input-sm num" data-g="' + esc(u.id) + '" value="' + (grant[u.id] != null ? grant[u.id] : '') + '" inputmode="decimal" placeholder="–"></label>'; }).join('') + '</div>',
+          '<div class="grant-grid">' + d.users.map(function (u) { return '<label>' + esc(u.name) + '<input class="input input-sm num" data-g="' + esc(u.id) + '" value="' + (grant[u.name] != null ? grant[u.name] : '') + '" inputmode="decimal" placeholder="–"></label>'; }).join('') + '</div>',
         foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="gSave">저장</button>',
         onMount: function (m, close) {
           $('#gSave', m).onclick = function () {
@@ -5240,6 +5316,22 @@
         }
       });
     };
+    var st = $('#lvStaff'); if (st) st.onclick = function () {
+      var cur = d.users.filter(function (u) { return u.nameOnly; }).map(function (u) { return u.name; });
+      modal({
+        eyebrow: '휴가·근무', title: '계정 없는 직원',
+        body: '<p class="muted small" style="margin:0 0 10px">사이트 계정이 없는 직원도 휴가·근무를 기록할 수 있게 이름을 한 줄에 한 명씩 넣으세요. 계정이 있는 사람은 넣지 않아도 돼요. (계정과 이름이 같으면 같은 사람으로 봐요)</p>' +
+          '<textarea class="input memo" id="stN" style="min-height:160px" placeholder="김기중">' + esc(cur.join('\n')) + '</textarea>',
+        foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="stSave">저장</button>',
+        onMount: function (m, close) {
+          $('#stSave', m).onclick = function () {
+            var btn = this; busy(btn, true, '저장 중…');
+            calSave('cal.staffSave', { names: $('#stN', m).value.split(/\n/) }, '저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+          };
+        }
+      });
+    };
+    var imp = $('#lvImp'); if (imp) imp.onclick = openCalImport;
     var re = $('#hoRe'); if (re) re.onclick = function () {
       busy(re, true, '받는 중…');
       api('cal.refreshHolidays').then(function (r) {
@@ -5263,6 +5355,85 @@
       });
     };
     $$('[data-ch]').forEach(function (b) { b.onclick = function () { var list = d.companyHolidays.slice(); list.splice(+b.dataset.ch, 1); calSave('cal.companyHolidays', { list: list }, '삭제했어요.'); }; });
+  }
+
+  /* 엑셀 가져오기: 휴가근무 / 일정 / 연차부여 시트 */
+  var CAL_IMPORT_HEAD = {
+    '휴가근무': ['이름', '종류', '시작일', '종료일', '시작시각', '종료시각', '시간', '메모'],
+    '일정': ['제목', '시작일', '종료일', '메모'],
+    '연차부여': ['연도', '이름', '일수']
+  };
+  function xlDate(v) {
+    if (v == null || v === '') return '';
+    if (typeof v === 'number') return new Date(Date.UTC(1899, 11, 30) + Math.round(v * 86400000)).toISOString().slice(0, 10);
+    var m = /(\d{4})[-./](\d{1,2})[-./](\d{1,2})/.exec(String(v));
+    return m ? m[1] + '-' + pad2(m[2]) + '-' + pad2(m[3]) : String(v).trim();
+  }
+  function xlTime(v) {
+    if (v == null || v === '') return '';
+    if (typeof v === 'number') { var mm = Math.round((v % 1) * 1440); return pad2(Math.floor(mm / 60) % 24) + ':' + pad2(mm % 60); }
+    var m = /(\d{1,2}):(\d{2})/.exec(String(v)); return m ? pad2(m[1]) + ':' + m[2] : '';
+  }
+  function parseCalImport(buf) {
+    return loadXlsx().then(function (X) {
+      var wb = X.read(buf, { type: 'array' }), out = { leaves: [], events: [], grants: [] };
+      var rowsOf = function (name) {
+        var ws = wb.Sheets[name]; if (!ws) return [];
+        var rows = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }), head = (rows[0] || []).map(function (h) { return String(h).replace(/\s/g, ''); });
+        return rows.slice(1).filter(function (r) { return r.some(function (x) { return String(x).trim() !== ''; }); }).map(function (r) {
+          var o = {}; CAL_IMPORT_HEAD[name].forEach(function (h) { var i = head.indexOf(h); o[h] = i === -1 ? '' : r[i]; }); return o;
+        });
+      };
+      if (!wb.Sheets['휴가근무'] && !wb.Sheets['일정'] && !wb.Sheets['연차부여']) throw new Error('"휴가근무", "일정", "연차부여" 시트를 찾지 못했어요. 양식을 내려받아 확인하세요.');
+      rowsOf('휴가근무').forEach(function (r) { out.leaves.push({ name: String(r['이름']).trim(), kind: String(r['종류']).trim(), start: xlDate(r['시작일']), end: xlDate(r['종료일']), from: xlTime(r['시작시각']), to: xlTime(r['종료시각']), hours: Number(r['시간']) || 0, memo: String(r['메모'] || '') }); });
+      rowsOf('일정').forEach(function (r) { out.events.push({ title: String(r['제목']).trim(), start: xlDate(r['시작일']), end: xlDate(r['종료일']), memo: String(r['메모'] || '') }); });
+      rowsOf('연차부여').forEach(function (r) { out.grants.push({ year: String(r['연도']).trim(), name: String(r['이름']).trim(), days: Number(r['일수']) }); });
+      return out;
+    });
+  }
+  function openCalImport() {
+    var data = null;
+    modal({
+      eyebrow: '휴가·근무', title: '엑셀 가져오기', wide: true,
+      body: '<p class="muted small" style="margin:0 0 10px">"휴가근무", "일정", "연차부여" 시트가 있는 엑셀을 올리세요. 이미 있는 기록(같은 사람·종류·시작일, 같은 제목·날짜)은 건너뛰어요. 계정에 없는 이름은 "계정 없는 직원"으로 추가돼요.</p>' +
+        '<div class="actions" style="margin-bottom:12px"><button class="btn btn-sm" id="ciTpl">양식 내려받기</button><label class="btn btn-sm btn-primary">파일 고르기<input type="file" id="ciFile" accept=".xlsx,.xls" hidden></label></div><div id="ciPrev"></div>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="ciGo" disabled>가져오기</button>',
+      onMount: function (m, close) {
+        $('#ciTpl', m).onclick = function () {
+          downloadXlsx('일정_가져오기_양식.xlsx', [
+            { name: '휴가근무', rows: [CAL_IMPORT_HEAD['휴가근무'], ['홍길동', '연차', '2026-10-15', '', '', '', '', ''], ['홍길동', '야간근무', '2026-10-16', '', '17:30', '19:30', 2, '견적'], ['홍길동', '당직', '2026-10-19', '2026-10-25', '', '', 2, '']], widths: [10, 10, 12, 12, 9, 9, 7, 30] },
+            { name: '일정', rows: [CAL_IMPORT_HEAD['일정'], ['팀 회식', '2026-10-23', '', '장소 미정']], widths: [24, 12, 12, 30] },
+            { name: '연차부여', rows: [CAL_IMPORT_HEAD['연차부여'], ['2026', '홍길동', 15]], widths: [8, 10, 8] },
+            { name: '안내', rows: [['종류'], [LEAVE_KINDS.join(', ')], ['반차(오전)·반차(오후)도 됩니다. 날짜는 2026-10-15 형식, 시각은 17:30 형식.'], ['추가근무(야간근무·휴일근무·당직)는 "시간"에 시간 수를 넣으세요.']], widths: [80] }
+          ]);
+        };
+        $('#ciFile', m).onchange = function () {
+          var f = this.files[0]; if (!f) return;
+          $('#ciPrev', m).innerHTML = '<p class="muted"><span class="spinner dark"></span> 읽는 중…</p>';
+          f.arrayBuffer().then(parseCalImport).then(function (r) {
+            data = r;
+            var kinds = {}, names = {}; r.leaves.forEach(function (l) { kinds[l.kind] = (kinds[l.kind] || 0) + 1; names[l.name] = 1; });
+            var known = {}; state.cal.data.users.forEach(function (u) { known[u.name] = 1; });
+            var newNames = Object.keys(names).filter(function (n) { return !known[n]; });
+            var ot = r.leaves.filter(function (l) { return OT_KINDS.indexOf(l.kind) !== -1; }).reduce(function (a, l) { return a + (l.hours || 0); }, 0);
+            $('#ciPrev', m).innerHTML = '<div class="ci-sum"><div><b>' + r.leaves.length + '</b><small>휴가·근무</small></div><div><b>' + r.events.length + '</b><small>일정</small></div><div><b>' + r.grants.length + '</b><small>연차 부여</small></div><div><b>' + hrs(ot) + '</b><small>추가근무 시간</small></div></div>' +
+              '<p class="small" style="margin:10px 0 4px">종류: ' + Object.keys(kinds).map(function (k) { return esc(k) + ' ' + kinds[k]; }).join(' · ') + '</p>' +
+              '<p class="small" style="margin:0 0 4px">사람: ' + Object.keys(names).map(esc).join(', ') + '</p>' +
+              (newNames.length ? '<p class="small" style="margin:0;color:var(--orange)">계정이 없어 "계정 없는 직원"으로 추가될 이름: ' + newNames.map(esc).join(', ') + '</p>' : '');
+            $('#ciGo', m).disabled = !(r.leaves.length || r.events.length || r.grants.length);
+          }).catch(function (err) { data = null; $('#ciPrev', m).innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+        };
+        $('#ciGo', m).onclick = function () {
+          if (!data) return;
+          var btn = this; busy(btn, true, '가져오는 중…');
+          api('cal.import', data).then(function (r) {
+            setCalData(r.cal); close(); drawCal();
+            var x = r.result;
+            toast('가져왔어요: 휴가·근무 ' + x.leaves + ' · 일정 ' + x.events + ' · 연차 부여 ' + x.grants + (x.skipped ? ' · 건너뜀 ' + x.skipped : ''));
+          }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      }
+    });
   }
 
   /* 홈 카드: 오늘 할 일 · 오늘 휴가 */
@@ -6081,8 +6252,9 @@
       '날짜를 누르면 그날 항목을 보고 바로 <b>일정 · 할 일 · 휴가·근무</b>를 추가할 수 있어요. 일정은 팀 전체가 보고, "나만 보기"를 켜면 나만 봐요.',
       '<b>할 일</b>: 업체별로 일회·매월 말일·매월 N일·매주·매년 반복을 정해요. 기한이 주말·공휴일이면 앞 영업일(또는 다음 영업일)로 당겨져요.',
       '체크하면 목록에서 사라지고 <b>완료 기록</b>에 누가 언제 했는지 남아요. 잘못 체크했으면 완료 기록에서 되돌리기.',
-      '<b>휴가·근무</b>: 연차·반차·병가·경조·공가·대체휴무와 야간근무·휴일근무를 등록해요. 반차는 0.5일, 연차는 주말·공휴일을 빼고 셉니다.' + (adm ? ' 관리자는 사람별 <b>연차 부여 일수</b>와 <b>회사 휴무일</b>을 정할 수 있어요.' : '')
-    ]]);
+      '<b>휴가·근무</b>: 연차·반차·병가·경조·공가·대체휴무와 야간근무·휴일근무를 등록해요. 반차는 0.5일, 연차는 주말·공휴일을 빼고 셉니다.' + (adm ? ' 관리자는 사람별 <b>연차 부여 일수</b>와 <b>회사 휴무일</b>을 정할 수 있어요.' : ''),
+      '<b>추가근무</b>: 야간근무·휴일근무·당직에 시작·종료 시각과 시간을 넣으면 <b>월별 추가근무</b> 표에 사람별 시간 합계가 나와요. 월말에 그 달을 골라 <b>엑셀</b>로 받으면 요약·상세가 들어 있어요.'
+    ].concat(adm ? ['관리자: <b>직원 명단</b>에서 계정 없는 직원을 이름으로 추가하고, <b>엑셀 가져오기</b>로 예전 기록(휴가근무·일정·연차부여 시트)을 한 번에 넣을 수 있어요. 같은 기록은 건너뛰어요.'] : [])]);
     sec.push(['account', '계정 · 보안', [
       '오른쪽 위 <b>비밀번호</b>에서 언제든 바꿀 수 있습니다. 로그인은 브라우저 창을 닫으면 풀립니다.',
       '비밀번호를 5번 틀리면 10분 동안 잠깁니다. 잊어버렸다면 관리자에게 초기화를 요청하세요.',
