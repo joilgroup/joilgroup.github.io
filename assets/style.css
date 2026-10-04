@@ -802,3 +802,46 @@ table.data.bulk tr.err .c2 { background: #FFF1EC; }
 table.data.bulk thead tr.adj-head.r2 th { top: 33px; }
 table.data.bulk thead tr.adj-head.r3 th { top: 66px; }
 table.data.bulk thead tr.adj-head th.sticky { z-index: 4; }
+
+/* ── 단가 변경 기록 ── */
+.note-line { stroke: #8A5A12; stroke-width: 1; stroke-dasharray: 3 3; opacity: .7; }
+.note-pin { font-size: 11px; }
+.tip-notes { margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,.25); font-size: 12px; line-height: 1.5; max-width: 300px; white-space: normal; }
+.note-badge { display: inline-block; margin: 2px 0 0 6px; font-size: 11px; font-weight: 700; color: #6B4510; background: rgba(244, 190, 46, .28); border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+.note-kind { display: inline-block; font-size: 11px; font-weight: 800; border-radius: 6px; padding: 1px 7px; background: var(--bg-2); color: var(--ink-2); white-space: nowrap; }
+.note-kind.k-0 { background: rgba(42, 157, 176, .16); color: #176E7C; }
+.note-kind.k-1 { background: rgba(79, 168, 100, .16); color: #2C7040; }
+.note-kind.k-2 { background: rgba(43, 98, 201, .14); color: #1F4E9E; }
+.note-kind.k-3 { background: rgba(224, 71, 46, .13); color: #A8331F; }
+.note-kind.k-4 { background: rgba(240, 122, 34, .16); color: #B4520C; }
+table.data.notes-table .left { text-align: left; }
+table.data.notes-table td.wrap { min-width: 180px; white-space: normal; }
+.cc-notes { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.cc-notes h3 { margin: 0; }
+.note-tl { list-style: none; margin: 8px 0 0; padding: 0 0 0 14px; border-left: 2px solid rgba(244, 190, 46, .6); }
+.note-tl li { margin: 6px 0; font-size: 13.5px; line-height: 1.5; }
+.qd-three { display: grid; grid-template-columns: 1fr 1fr 110px; gap: 0 10px; margin-top: 8px; }
+.ne-route summary { cursor: pointer; font-weight: 700; font-size: 13px; color: var(--ink-2); margin-bottom: 8px; }
+.nowrap { white-space: nowrap; }
+@media (max-width: 560px) { .qd-three { grid-template-columns: 1fr; } }
+
+/* ── 견적 접수함 ── */
+.rstatus { display: inline-block; font-size: 12px; font-weight: 800; border-radius: 999px; padding: 3px 10px; white-space: nowrap; }
+.rstatus.r-0 { background: rgba(43, 98, 201, .13); color: #1F4E9E; }
+.rstatus.r-1 { background: rgba(244, 190, 46, .3); color: #6A4E05; }
+.rstatus.r-2 { background: rgba(42, 157, 176, .16); color: #176E7C; }
+.rstatus.r-3 { background: rgba(79, 168, 100, .18); color: #2C7040; }
+.rstatus.r-4 { background: var(--bg-2); color: var(--muted); }
+table.data.reqs .left { text-align: left; }
+table.data.reqs tbody tr { cursor: pointer; }
+table.data.reqs tbody tr:hover td { background: var(--panel-2); }
+.req-title small { max-width: 420px; }
+.req-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.req-body { min-height: 220px; font-size: 13.5px; line-height: 1.6; }
+.rf-list { list-style: none; margin: 8px 0 10px; padding: 0; }
+.rf-list li { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.rf-list .actions { flex: none; }
+.small-drop { padding: 12px; font-size: 13px; margin: 0; }
+.drop.busy { opacity: .7; pointer-events: none; }
+.req-tl { max-height: 360px; overflow: auto; }
+@media (max-width: 980px) { .req-grid { grid-template-columns: minmax(0, 1fr); } }

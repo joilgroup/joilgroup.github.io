@@ -122,9 +122,10 @@ function handle_(req) {
   }
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
-    'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials'];
+    'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
-  if (action === 'analysis.index' || action === 'analysis.load') requirePerm_(session, 'analysis');
+  if (action === 'analysis.index' || action === 'analysis.load' || /^notes\./.test(action)) requirePerm_(session, 'analysis');
   switch (action) {
     case 'analysis.index': return analysisIndex_(session);
     case 'analysis.load': return analysisLoad_(req.keys);
@@ -143,6 +144,18 @@ function handle_(req) {
     case 'rates.get': return ratesGet_(req.cust);
     case 'rates.upload': return ratesUpload_(session, req);
     case 'rates.saveSpecials': return saveCustSpecials_(req.cust, req.specials);
+    case 'reqs.list': return reqsList_();
+    case 'reqs.get': return reqsGet_(req.id);
+    case 'reqs.save': return reqsSave_(session, req);
+    case 'reqs.upload': return reqsUpload_(session, req);
+    case 'reqs.file': return reqsFile_(req.fileId);
+    case 'reqs.fileDelete': return reqsFileDelete_(session, req.fileId);
+    case 'reqs.zip': return reqsZip_(req.id);
+    case 'reqs.delete': return reqsDelete_(session, req.id);
+    case 'notes.list': return { notes: notesList_() };
+    case 'notes.save': return notesSave_(session, req);
+    case 'notes.import': return notesImport_(session, req.rows);
+    case 'notes.delete': return notesDelete_(req.id);
     case 'docs.list': return docsList_();
     case 'docs.upload': return docsUpload_(session, req);
     case 'docs.update': return docsUpdate_(session, req.id, req.patch);
@@ -946,6 +959,220 @@ function ratesDelete_(cust) {
   return {};
 }
 
+/* ───────────── 단가 변경 기록 (분석 비고) ─────────────
+ * 매출처별로 언제부터 어떤 단가가 왜 바뀌었는지. 매출매입 엑셀에 없는 구두 합의·유가연동 등을 직접 기록.
+ * 보기·쓰기: 분석 권한자 (관리자 포함)
+ */
+var SHEET_NOTES = '단가변경';
+var NOTE_HEADER = ['ID', '매출처', '적용월', '구분', '대상', '변동', '근거', '내용', '발지', '착지', '중량', '작성자', '작성일시', '수정일시'];
+var NOTE_KINDS = ['유가연동', '재계약', '신규', '인하', '기사 운임', '기타'];
+
+function notesSheet_() { return cacheSheet_(SHEET_NOTES, NOTE_HEADER); }
+function noteRowToObj_(r) {
+  return { id: String(r[0]), cust: String(r[1]), month: String(r[2]).replace(/^'/, '').slice(0, 7), kind: String(r[3]), target: String(r[4]), change: String(r[5]), basis: String(r[6]),
+    memo: String(r[7]), from: String(r[8] || ''), to: String(r[9] || ''), weight: String(r[10] || ''), by: String(r[11]), at: fmt_(r[12]), updated: fmt_(r[13]) };
+}
+function notesList_() {
+  var sh = notesSheet_();
+  if (sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, NOTE_HEADER.length).getValues().filter(function (r) { return r[0]; }).map(noteRowToObj_)
+    .sort(function (a, b) { return a.month < b.month ? 1 : a.month > b.month ? -1 : 0; });
+}
+function checkNote_(n) {
+  n = n || {};
+  var month = String(n.month || '').replace(/^'/, '').slice(0, 7);
+  if (!/^\d{4}-\d{2}$/.test(month)) throw new Error('적용 시작 월을 YYYY-MM 형식으로 넣으세요.');
+  var cust = String(n.cust || '').trim();
+  if (!cust) throw new Error('매출처를 고르세요. (모든 매출처라면 "(전체)")');
+  var memo = String(n.memo || '').trim(), change = String(n.change || '').trim();
+  if (!memo && !change) throw new Error('변동 내용이나 메모를 입력하세요.');
+  var cut = function (v, k) { return String(v || '').trim().slice(0, k); };
+  return { cust: cut(cust, 100), month: month, kind: NOTE_KINDS.indexOf(n.kind) !== -1 ? n.kind : '기타', target: ['매출', '매입', '매출·매입'].indexOf(n.target) !== -1 ? n.target : '매출',
+    change: cut(change, 100), basis: ['계약서', '메일', '구두', '내부'].indexOf(n.basis) !== -1 ? n.basis : '', memo: cut(memo, 1000), from: cut(n.from, 100), to: cut(n.to, 100), weight: cut(n.weight, 30) };
+}
+function noteRow_(id, n, by, at, upd) { return [id, n.cust, "'" + n.month, n.kind, n.target, n.change, n.basis, n.memo, n.from, n.to, n.weight, by, at, upd]; }
+
+function notesSave_(session, req) {
+  var n = checkNote_(req.note), sh = notesSheet_(), now = now_(), who = session.name + ' (' + session.id + ')';
+  if (req.id) {
+    var hit = sh.getLastRow() >= 2 && sh.getRange(2, 1, sh.getLastRow() - 1, 1).createTextFinder(String(req.id)).matchEntireCell(true).findNext();
+    if (!hit) throw new Error('기록을 찾을 수 없습니다.');
+    var old = sh.getRange(hit.getRow(), 1, 1, NOTE_HEADER.length).getValues()[0];
+    sh.getRange(hit.getRow(), 1, 1, NOTE_HEADER.length).setValues([noteRow_(String(req.id), n, old[11], old[12], now + ' · ' + session.name)]);
+  } else sh.appendRow(noteRow_(newId_('N'), n, who, now, ''));
+  return { notes: notesList_() };
+}
+function notesImport_(session, rows) {
+  if (!Array.isArray(rows) || !rows.length) throw new Error('올릴 기록이 없습니다.');
+  if (rows.length > 2000) throw new Error('한 번에 2,000줄까지 올릴 수 있습니다.');
+  var now = now_(), who = session.name + ' (' + session.id + ')';
+  var out = rows.map(function (r, i) {
+    try { return noteRow_(newId_('N') + i, checkNote_(r), who, now, ''); } catch (e) { throw new Error((i + 1) + '번째 줄: ' + e.message); }
+  });
+  var sh = notesSheet_();
+  sh.getRange(sh.getLastRow() + 1, 1, out.length, NOTE_HEADER.length).setValues(out);
+  return { count: out.length, notes: notesList_() };
+}
+function notesDelete_(id) {
+  var sh = notesSheet_();
+  var hit = sh.getLastRow() >= 2 && sh.getRange(2, 1, sh.getLastRow() - 1, 1).createTextFinder(String(id)).matchEntireCell(true).findNext();
+  if (!hit) throw new Error('기록을 찾을 수 없습니다.');
+  sh.deleteRow(hit.getRow());
+  return { notes: notesList_() };
+}
+
+/* ───────────── 견적 접수함 ─────────────
+ * 받은 견적 요청(메일 제목·본문·원본 첨부) → 제출(우리 견적 파일·단가 요약) → 결과까지 한 건으로 기록
+ * 보기·쓰기: 견적 권한자 모두 (팀 공유) · 삭제: 등록자 또는 관리자
+ */
+var SHEET_REQS = '견적접수';
+var REQ_HEADER = ['ID', '사업자', '거래처', '제목', '본문', '받은날', '회신기한', '상태', '제출일', '제출요약', '연결견적ID', '담당', '등록자', '등록일시', '수정일시', '기록'];
+var SHEET_REQ_FILES = '접수파일';
+var REQ_FILE_HEADER = ['파일ID', '접수ID', '종류', '파일명', '형식', '크기', '올린사람', '올린일시'];
+var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주'];
+
+function reqsSheet_() { return cacheSheet_(SHEET_REQS, REQ_HEADER); }
+function reqFilesSheet_() { return cacheSheet_(SHEET_REQ_FILES, REQ_FILE_HEADER); }
+function reqRowToObj_(r, withBody) {
+  var o = { id: String(r[0]), biz: String(r[1]), cust: String(r[2]), title: String(r[3]), received: textDate_(r[5]), due: textDate_(r[6]), status: String(r[7]) || '접수',
+    submitted: textDate_(r[8]), summary: String(r[9] || ''), quoteId: String(r[10] || ''), owner: String(r[11] || ''), by: String(r[12]), at: fmt_(r[13]), updated: fmt_(r[14]) };
+  if (withBody) { o.body = String(r[4] || ''); o.log = parseJson_(r[15], []); }
+  else o.snippet = String(r[4] || '').replace(/\s+/g, ' ').slice(0, 120);
+  return o;
+}
+function findReq_(id) {
+  var sh = reqsSheet_();
+  if (!id || sh.getLastRow() < 2) return null;
+  var hit = sh.getRange(2, 1, sh.getLastRow() - 1, 1).createTextFinder(String(id)).matchEntireCell(true).findNext();
+  return hit ? { row: hit.getRow(), raw: sh.getRange(hit.getRow(), 1, 1, REQ_HEADER.length).getValues()[0] } : null;
+}
+function reqFiles_(reqId) {
+  var sh = reqFilesSheet_();
+  if (sh.getLastRow() < 2) return [];
+  return sh.getRange(2, 1, sh.getLastRow() - 1, REQ_FILE_HEADER.length).getValues().filter(function (r) { return String(r[1]) === String(reqId); }).map(function (r) {
+    return { id: String(r[0]), kind: String(r[2]), fileName: String(r[3]), mime: String(r[4]), size: Number(r[5]) || 0, by: String(r[6]), at: fmt_(r[7]) };
+  });
+}
+function reqsList_() {
+  var sh = reqsSheet_(), counts = {};
+  var fs = reqFilesSheet_();
+  if (fs.getLastRow() >= 2) fs.getRange(2, 2, fs.getLastRow() - 1, 2).getValues().forEach(function (r) { var k = String(r[0]); var c = counts[k] || (counts[k] = { in: 0, out: 0 }); if (String(r[1]) === '제출') c.out++; else c.in++; });
+  var list = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, REQ_HEADER.length).getValues().filter(function (r) { return r[0]; }).map(function (r) {
+    var o = reqRowToObj_(r, false); o.files = counts[o.id] || { in: 0, out: 0 }; return o;
+  });
+  return { reqs: list.reverse() };
+}
+function reqsGet_(id) {
+  var f = findReq_(id);
+  if (!f) throw new Error('접수 건을 찾을 수 없습니다.');
+  var o = reqRowToObj_(f.raw, true);
+  o.files = reqFiles_(o.id);
+  if (o.quoteId) { var q = findQuote_(o.quoteId); o.quote = q ? { id: q.data.id, name: q.data.name, status: q.data.status, userName: q.data.userName } : null; }
+  return { req: o };
+}
+function checkReq_(r) {
+  r = r || {};
+  var d = function (v) { v = String(v || '').trim(); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + v); return v; };
+  var cust = String(r.cust || '').trim();
+  if (!cust) throw new Error('거래처를 입력하세요.');
+  var title = String(r.title || '').trim();
+  if (!title) throw new Error('제목을 입력하세요.');
+  return { biz: String(r.biz || '').slice(0, 30), cust: cust.slice(0, 100), title: title.slice(0, 200), body: String(r.body || '').slice(0, 40000), received: d(r.received), due: d(r.due),
+    status: REQ_STATUS.indexOf(r.status) !== -1 ? r.status : '접수', submitted: d(r.submitted), summary: String(r.summary || '').slice(0, 3000), quoteId: String(r.quoteId || '').slice(0, 40), owner: String(r.owner || '').slice(0, 50) };
+}
+var REQ_TO_QUOTE_STATUS = { '접수': '작성', '검토중': '작성', '제출': '제출', '수주': '수주', '미수주': '미수주' };
+function reqsSave_(session, req) {
+  var f = checkReq_(req.req), sh = reqsSheet_(), now = now_(), who = session.name;
+  if (f.quoteId && !findQuote_(f.quoteId)) throw new Error('연결할 견적모음 건을 찾을 수 없습니다.');
+  var row = [f.biz, f.cust, f.title, f.body, "'" + f.received, "'" + f.due, f.status, "'" + f.submitted, f.summary, f.quoteId, f.owner];
+  var id, log;
+  if (req.id) {
+    var found = findReq_(req.id);
+    if (!found) throw new Error('접수 건을 찾을 수 없습니다.');
+    var old = reqRowToObj_(found.raw, true);
+    id = old.id; log = old.log || [];
+    if (old.status !== f.status) log.push({ at: now, by: who, text: '상태 ' + old.status + ' → ' + f.status });
+    if (old.quoteId !== f.quoteId) log.push({ at: now, by: who, text: f.quoteId ? '견적모음 연결' : '견적모음 연결 해제' });
+    if (old.submitted !== f.submitted && f.submitted) log.push({ at: now, by: who, text: '제출일 ' + f.submitted });
+    if (old.summary !== f.summary && f.summary) log.push({ at: now, by: who, text: '제출 단가 요약 수정' });
+    if (log.length > 200) log = log.slice(-200);
+    sh.getRange(found.row, 2, 1, row.length).setValues([row]);
+    sh.getRange(found.row, 15, 1, 2).setValues([[now, JSON.stringify(log)]]);
+  } else {
+    id = newId_('Q');
+    log = [{ at: now, by: who, text: '접수 등록' + (f.received ? ' (받은 날 ' + f.received + ')' : '') }];
+    sh.appendRow([id].concat(row).concat([session.name + ' (' + session.id + ')', now, now, JSON.stringify(log)]));
+  }
+  // 연결된 견적모음 상태도 맞춤
+  if (f.quoteId) { var q = findQuote_(f.quoteId); if (q) quotesSheet_().getRange(q.row, 8).setValue(REQ_TO_QUOTE_STATUS[f.status]); }
+  return reqsGet_(id);
+}
+function reqAddLog_(id, session, text) {
+  var found = findReq_(id); if (!found) return;
+  var log = parseJson_(found.raw[15], []);
+  log.push({ at: now_(), by: session.name, text: text });
+  if (log.length > 200) log = log.slice(-200);
+  reqsSheet_().getRange(found.row, 15, 1, 2).setValues([[now_(), JSON.stringify(log)]]);
+}
+function reqsUpload_(session, req) {
+  if (!findReq_(req.id)) throw new Error('접수 건을 찾을 수 없습니다.');
+  var kind = req.kind === '제출' ? '제출' : '받은';
+  var bytes = Utilities.base64Decode(String(req.data || ''));
+  if (!bytes.length) throw new Error('파일이 비어 있습니다.');
+  if (bytes.length > DOC_MAX_BYTES) throw new Error('파일은 20MB까지 올릴 수 있습니다.');
+  var fileName = String(req.fileName || '파일').replace(/[\\/:*?"<>|]/g, '_').slice(0, 150);
+  var file = docsFolder_().createFile(Utilities.newBlob(bytes, String(req.mime || 'application/octet-stream'), fileName));
+  reqFilesSheet_().appendRow([file.getId(), String(req.id), kind, fileName, String(req.mime || 'application/octet-stream'), bytes.length, session.name, now_()]);
+  reqAddLog_(req.id, session, (kind === '제출' ? '제출 파일' : '받은 파일') + ' 추가: ' + fileName);
+  return reqsGet_(req.id);
+}
+function findReqFile_(fileId) {
+  var sh = reqFilesSheet_();
+  if (!fileId || sh.getLastRow() < 2) return null;
+  var hit = sh.getRange(2, 1, sh.getLastRow() - 1, 1).createTextFinder(String(fileId)).matchEntireCell(true).findNext();
+  if (!hit) return null;
+  var r = sh.getRange(hit.getRow(), 1, 1, REQ_FILE_HEADER.length).getValues()[0];
+  return { row: hit.getRow(), id: String(r[0]), reqId: String(r[1]), kind: String(r[2]), fileName: String(r[3]), mime: String(r[4]) };
+}
+function reqsFile_(fileId) {
+  var f = findReqFile_(fileId);
+  if (!f) throw new Error('파일을 찾을 수 없습니다.');
+  return { data: Utilities.base64Encode(DriveApp.getFileById(f.id).getBlob().getBytes()), fileName: f.fileName, mime: f.mime };
+}
+function reqsFileDelete_(session, fileId) {
+  var f = findReqFile_(fileId);
+  if (!f) throw new Error('파일을 찾을 수 없습니다.');
+  try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* 이미 없음 */ }
+  reqFilesSheet_().deleteRow(f.row);
+  reqAddLog_(f.reqId, session, '파일 삭제: ' + f.fileName);
+  return reqsGet_(f.reqId);
+}
+function reqsZip_(id) {
+  var files = reqFiles_(id);
+  if (!files.length) throw new Error('파일이 없습니다.');
+  var used = {};
+  var blobs = files.map(function (f) {
+    var nm = (f.kind === '제출' ? '제출_' : '받은_') + f.fileName, k = 2, base = nm.replace(/(\.[^.]+)?$/, ''), ext = (nm.match(/\.[^.]+$/) || [''])[0];
+    while (used[nm]) nm = base + '(' + (k++) + ')' + ext;
+    used[nm] = true;
+    return DriveApp.getFileById(f.id).getBlob().setName(nm);
+  });
+  return { data: Utilities.base64Encode(Utilities.zip(blobs, '견적접수.zip').getBytes()) };
+}
+function reqsDelete_(session, id) {
+  var found = findReq_(id);
+  if (!found) throw new Error('접수 건을 찾을 수 없습니다.');
+  if (session.role !== 'admin' && String(found.raw[12]).indexOf('(' + session.id + ')') === -1) throw new Error('등록한 사람이나 관리자만 삭제할 수 있습니다.');
+  reqFiles_(id).forEach(function (f) { try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* 무시 */ } });
+  var fs = reqFilesSheet_();
+  if (fs.getLastRow() >= 2) {
+    var ids = fs.getRange(2, 2, fs.getLastRow() - 1, 1).getValues();
+    for (var i = ids.length - 1; i >= 0; i--) if (String(ids[i][0]) === String(id)) fs.deleteRow(i + 2);
+  }
+  reqsSheet_().deleteRow(found.row);
+  return {};
+}
+
 /* ───────────── 견적모음 ───────────── */
 
 var QUOTE_HEADER = ['견적ID', '저장일', '아이디', '이름', '견적명', '거래처', '메모', '상태', '종류', '건수', '상차지', '하차지', '원본기록ID', '조회일', '수정일', '실적연결', '조정', '조정기록'];
@@ -1366,7 +1593,7 @@ function analysisIndex_(session) {
   });
   var log = cacheSheet_(SHEET_AN_LOG, ['일시', '아이디', '이름', '데이터 묶음 수']);
   log.appendRow([now_(), session.id, session.name, list.length]);
-  return { index: list, mapping: mapping, businesses: AN_BUSINESSES, rules: analysisRules_() };
+  return { index: list, mapping: mapping, businesses: AN_BUSINESSES, rules: analysisRules_(), notes: notesList_() };
 }
 
 /** 압축된 데이터 문자열을 그대로 돌려줌 (풀기는 브라우저에서) */

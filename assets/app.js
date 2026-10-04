@@ -14,6 +14,7 @@
     calc: { origin: '', dest: '', dieselMode: null, dieselPrice: '', baseTon: null, tons: null, result: null, specials: [], cust: '' },
     rateCusts: null,
     rates: { custs: null, sel: '', data: null, cmp: null, q: '', ton: '', custQ: '' },
+    reqs: { list: null, status: '', biz: '', q: '', detail: null, data: null, blobs: {} },
     hist: { days: 30, type: '', userId: '', q: '', logs: null, users: null, detail: null, detailData: null },
     quotes: { q: '', status: '', list: null, detail: null, detailData: null },
     docs: { list: null, biz: '', cat: '', q: '', sel: {}, blobs: {} },
@@ -62,7 +63,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get'];
+  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list'];
   var TIMEOUT_MS = 25000;
   var inflight = {};
 
@@ -230,6 +231,7 @@
     state.docs = { list: null, biz: '', cat: '', q: '', sel: {}, blobs: {} };
     state.companies = null; state.addr = null; state.rateCusts = null;
     state.rates = { custs: null, sel: '', data: null, cmp: null, q: '', ton: '', custQ: '' };
+    state.reqs = { list: null, status: '', biz: '', q: '', detail: null, data: null, blobs: {} };
     state.info = { tab: 'diesel', range: 90, diesel: null, news: null, weather: null, newsKw: '', newsQ: '' };
     state.an = newAnState();
     storage('del', 'joil-token');
@@ -254,7 +256,7 @@
   function navItems() {
     var items = [];
     if (can('quote') || can('analysis')) items.push(['home', '홈'], ['info', '물류정보']);
-    if (can('quote')) items.push(['calc', '단건'], ['bulk', '대량'], ['history', '조회기록'], ['quotes', '견적모음'], ['rates', '업체단가'], ['docs', '서류함']);
+    if (can('quote')) items.push(['calc', '단건'], ['bulk', '대량'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록'], ['rates', '업체단가'], ['docs', '서류함']);
     if (can('analysis')) items.push(['analysis', '분석']);
     if (state.user.role === 'admin') items.push(['admin', '관리자']);
     return items;
@@ -288,6 +290,7 @@
           if (state.view === 'history') { state.hist.detail = null; state.hist.logs = null; }
           if (state.view === 'quotes') { state.quotes.detail = null; state.quotes.list = null; }
           if (state.view === 'docs') state.docs.list = null;
+          if (state.view === 'reqs') { state.reqs.detail = null; state.reqs.list = null; }
         }
         if (b.dataset.view === 'history' && state.view !== 'history') state.hist.logs = null;
         state.view = b.dataset.view; render();
@@ -312,6 +315,7 @@
     else if (state.view === 'quotes') renderQuotes();
     else if (state.view === 'docs') renderDocs();
     else if (state.view === 'rates') renderRates();
+    else if (state.view === 'reqs') renderReqs();
     else if (state.view === 'help') renderHelp();
     else if (state.view === 'home') renderHome();
     else if (state.view === 'info') renderInfo();
@@ -1606,6 +1610,7 @@
       an.mapping = {};
       (r.mapping || []).forEach(function (m) { an.mapping[m.raw] = m; });
       an.rules = r.rules || [];
+      an.notes = r.notes || [];
       var keys = an.index.map(function (x) { return x.key; });
       an.total = keys.length; an.loaded = 0;
       var batches = [];
@@ -2334,7 +2339,7 @@
     var have = Object.keys(byM).sort(), months = [];
     if (have.length) for (var mm = have[have.length - 1], k = 0; k < 24 && mm >= have[0]; k++, mm = addMonths(mm, -1)) months.unshift(mm);
     var mk = function (m) { var x = byM[m] || { s: 0, b: 0, n: 0 }; return { m: m, s: x.s, b: x.b, n: x.n, p: x.s - x.b, rate: pct(x.s - x.b, x.s), has: !!byM[m] }; };
-    var data = months.map(function (m) { var d = mk(m); d.ly = mk(addMonths(m, -12)); return d; });
+    var data = attachNotes(months.map(function (m) { var d = mk(m); d.ly = mk(addMonths(m, -12)); return d; }), [name]);
     // 경로 조합 (선택 기간)
     var g = {};
     rows.forEach(function (r) {
@@ -2365,12 +2370,19 @@
         ].map(function (k) { return '<div class="kpi"><div class="k">' + k[0] + '</div><div class="v num' + (k[2] ? ' neg' : '') + '">' + k[1] + '</div><div class="s">' + (k[3] ? k[3] + ' <span class="muted">' + esc(cr.label) + ' 대비</span>' : '') + '</div></div>'; }).join('') + '</div>' +
         '<div class="cc-charts"><div id="ccTrend"><div class="row-between"><h3>월별 이익</h3><div class="legend"><span><i style="background:' + AN_SALES_COLOR + '"></i>이익</span><span><i style="background:' + AN_BUYS_COLOR + '"></i>손실</span><span><i class="ly"></i>전년 같은 달</span></div></div>' + profitChart(data) + '</div>' +
         '<div id="ccRate"><h3>월별 이익률</h3>' + lineChart(data) + '</div></div>' +
+        (function () {
+          var ns = (an.notes || []).filter(function (n) { return n.cust === name || n.cust === '(전체)'; });
+          return '<div class="cc-notes"><div class="row-between"><h3>📌 단가 변경 기록 <span class="muted small">' + ns.length + '건</span></h3><button class="btn btn-sm" id="ccNoteAdd">＋ 기록 추가</button></div>' +
+            (ns.length ? '<ul class="note-tl">' + ns.map(function (n) { return '<li><b>' + esc(n.month) + '</b> <span class="note-kind k-' + NOTE_KINDS.indexOf(n.kind) + '">' + esc(n.kind) + '</span> ' + esc(noteText(n, n.cust === '(전체)').replace('[' + n.kind + '] ', '')) + (n.basis ? ' <span class="muted small">· ' + esc(n.basis) + '</span>' : '') + '</li>'; }).join('') + '</ul>'
+              : '<p class="muted small" style="margin:6px 0 0">재계약·유가연동처럼 단가가 바뀐 때를 적어 두면 그래프에 📌로 표시돼요.</p>') + '</div>';
+        })() +
         '<div class="cc-routes"><div><h3>주력 경로 <span class="muted small">건수 많은 순 · ' + esc(period) + '</span></h3>' + routeTable(top, '이 기간에 오더가 없어요.') + '</div>' +
         '<div><h3>손실 경로 <span class="muted small">손실 큰 순</span></h3>' + routeTable(loss, '손실 난 경로가 없어요. 👍') + '</div></div>',
       foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="ccFilter">이 매출처로 걸러 보기</button>',
       onMount: function (m, close) {
         bindChartHover($('#ccTrend', m), data, function (d) { return '<b>' + d.m + '</b><br>이익 ' + won(d.p) + ' · ' + pctText(d.rate) + '<br>매출 ' + won(d.s) + '<br>' + won(d.n) + '건' + (d.ly.has ? '<br><span style="opacity:.75">전년: 이익 ' + won(d.ly.p) + '</span>' : ''); });
         bindChartHover($('#ccRate', m), data, function (d) { return '<b>' + d.m + '</b><br>이익률 ' + pctText(d.rate); });
+        $('#ccNoteAdd', m).onclick = function () { close(); editNote({ cust: name }, function () { openCustCard(name); }); };
         $('#ccFilter', m).onclick = function () { f.sel = { cust: [name] }; an.dim = 'route'; an.sort = { key: 'profit', dir: 1 }; close(); renderAnalysis(); };
       }
     });
@@ -2410,7 +2422,7 @@
     var months = [];
     for (var mm = f.to, k = 0; k < 12; k++, mm = addMonths(mm, -1)) months.unshift(mm);
     var mk = function (m) { var x = byM[m] || { s: 0, b: 0, n: 0 }; return { m: m, s: x.s, b: x.b, n: x.n, p: x.s - x.b, rate: pct(x.s - x.b, x.s), has: !!byM[m] }; };
-    var data = months.map(function (m) { var d = mk(m); d.ly = mk(addMonths(m, -12)); return d; });
+    var data = attachNotes(months.map(function (m) { var d = mk(m); d.ly = mk(addMonths(m, -12)); return d; }), (f.sel.cust || []).length ? f.sel.cust : null);
     var scope = [];
     if (f.biz.length) scope.push('사업자: ' + f.biz.join(', '));
     Object.keys(f.sel).forEach(function (kk) { if ((f.sel[kk] || []).length) scope.push(dimDef(kk)[1] + ': ' + f.sel[kk].join(', ')); });
@@ -2446,6 +2458,12 @@
       '<tr><td class="left">매출이 평소보다 싼 오더</td><td class="num">' + won(sellAnom.length) + '건</td><td class="num neg">−' + won(sumDiff(sellAnom)) + '원</td></tr></tbody></table>' +
       (buyAnom.length ? '<p class="small muted" style="margin:8px 0 4px">매입 초과 상위 5건</p>' + tbl(buyAnom.slice(0, 5), [['날짜', function (x) { return '<td class="left small">' + esc(x.r[C.date]) + '</td>'; }, 1], ['매출처', function (x) { return '<td class="left">' + esc(x.r[C.disp]) + '</td>'; }, 1], ['경로', function (x) { return '<td class="left">' + esc(x.r[C.from] + ' → ' + x.r[C.to] + ' · ' + x.r[C.weight]) + '</td>'; }, 1], ['매입', function (x) { return numCell(won(x.r[C.buys])); }], ['보통', function (x) { return numCell(won(Math.round(x.base))); }], ['기사', function (x) { return '<td class="left small">' + esc(x.r[C.driver]) + '</td>'; }, 1]]) : '') +
       '</section>' +
+      (function () {
+        var ns = notesBetween(hasCmp ? cr.from : f.from, f.to, null).filter(function (n) { return !(f.sel.cust || []).length || n.cust === '(전체)' || f.sel.cust.indexOf(n.cust) !== -1; });
+        return ns.length ? '<section><h2>단가 변경 기록 <span class="small muted">' + esc(hasCmp ? cr.from : f.from) + ' ~ ' + esc(f.to) + '</span></h2>' +
+          tbl(ns, [['적용 월', function (x) { return '<td class="left">' + esc(x.month) + '</td>'; }, 1], ['매출처', function (x) { return '<td class="left">' + esc(x.cust) + '</td>'; }, 1], ['구분', function (x) { return '<td class="left">' + esc(x.kind) + '</td>'; }, 1],
+            ['변동', function (x) { return '<td class="left strong">' + esc((x.target !== '매출' ? x.target + ' ' : '') + x.change) + '</td>'; }, 1], ['내용', function (x) { return '<td class="left">' + esc((noteRoute(x) ? '(' + noteRoute(x) + ') ' : '') + x.memo) + '</td>'; }, 1]]) + '</section>' : '';
+      })() +
       '<footer class="rpt-foot muted small">조일그룹 견적·실적 시스템 · 이익 = 매출후불 − 매입후불</footer></div>';
     var wrap = document.createElement('div');
     wrap.id = 'report';
@@ -2470,6 +2488,153 @@
       downloadXlsx('JOIL_매출매입보고_' + period.replace(/ ~ /, '_') + '.xlsx', sheets).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
   }
+
+  /* ───────── 분석: 단가 변경 기록 (비고) ───────── */
+
+  var NOTE_KINDS = ['유가연동', '재계약', '신규', '인하', '기사 운임', '기타'];
+  var NOTE_BASIS = ['계약서', '메일', '구두', '내부'];
+  /** 그 달 · 그 매출처(들)에 해당하는 기록. custs 가 없으면 전체 */
+  function notesFor(month, custs) {
+    return (state.an.notes || []).filter(function (n) {
+      return n.month === month && (!custs || !custs.length || n.cust === '(전체)' || custs.indexOf(n.cust) !== -1);
+    });
+  }
+  function notesBetween(from, to, cust) {
+    return (state.an.notes || []).filter(function (n) { return n.month >= from && n.month <= to && (!cust || n.cust === cust || n.cust === '(전체)'); });
+  }
+  function attachNotes(data, custs) { data.forEach(function (d) { d.notes = notesFor(d.m, custs); }); return data; }
+  function noteRoute(n) { return ([n.from, n.to].filter(Boolean).join('→') + ' ' + (n.weight || '')).trim(); }
+  function noteText(n, withCust) {
+    return (withCust ? n.cust + ' ' : '') + '[' + n.kind + '] ' + (n.target && n.target !== '매출' ? n.target + ' ' : '') + (n.change || '') + (noteRoute(n) ? ' (' + noteRoute(n) + ')' : '') + (n.memo ? ' · ' + n.memo : '');
+  }
+  function noteBadge(n) {
+    return '<span class="note-badge" title="' + esc(n.month + ' ' + noteText(n, true) + (n.basis ? ' · 근거: ' + n.basis : '')) + '">📌 ' + esc(n.month.slice(5).replace(/^0/, '') + '월 ' + n.kind + (n.change ? ' ' + n.change : '')) + '</span>';
+  }
+  function notesTip(d) {
+    return d && d.notes && d.notes.length ? '<div class="tip-notes">' + d.notes.map(function (n) { return '📌 ' + esc(noteText(n, true)); }).join('<br>') + '</div>' : '';
+  }
+  /** 막대·선 그래프 위 깃발 (x 좌표, 위·아래 끝) */
+  function noteMark(x, top, bottom) {
+    return '<line x1="' + x + '" x2="' + x + '" y1="' + top + '" y2="' + bottom + '" class="note-line"/><text x="' + x + '" y="' + (top + 10) + '" text-anchor="middle" class="note-pin">📌</text>';
+  }
+
+  /** 단가 변경 기록 목록 (분석 화면 → "단가 변경 기록") */
+  function openNotes(preCust) {
+    var an = state.an, q = preCust || '', kind = '';
+    modal({
+      wide: true, eyebrow: '매출매입 분석', title: '단가 변경 기록',
+      body: '<p class="muted small" style="margin:0 0 10px">재계약·유가연동·구두 합의처럼 매출매입 엑셀에는 없는 단가 변경을 적어 두면, 그래프에 📌로 표시되고 "확인해 볼 곳"·매출처 상세·월간 보고서에도 같이 나와요.</p>' +
+        '<div class="toolbar"><input class="input input-sm" id="ntQ" placeholder="매출처·내용 검색" value="' + esc(q) + '" style="max-width:220px">' +
+        '<select class="input input-sm" id="ntK" style="width:auto"><option value="">모든 구분</option>' + NOTE_KINDS.map(function (k) { return '<option>' + k + '</option>'; }).join('') + '</select>' +
+        '<span class="spacer"></span><button class="btn btn-sm" id="ntTpl">엑셀 양식</button><label class="btn btn-sm" for="ntFile">엑셀로 한꺼번에 올리기</label><input type="file" id="ntFile" accept=".xlsx,.xls,.csv" hidden>' +
+        '<button class="btn btn-sm" id="ntX">엑셀 내려받기</button><button class="btn btn-sm btn-primary" id="ntAdd">＋ 기록 추가</button></div>' +
+        '<div id="ntList"></div>',
+      foot: '<button class="btn" data-close>닫기</button>',
+      onMount: function (m, close) {
+        var draw = function () {
+          var list = (an.notes || []).filter(function (n) { return (!kind || n.kind === kind) && (!q || (n.cust + ' ' + n.memo + ' ' + n.change + ' ' + noteRoute(n)).indexOf(q) !== -1); });
+          $('#ntList', m).innerHTML = list.length ? '<div class="table-wrap"><table class="data notes-table"><thead><tr><th class="left">적용 월</th><th class="left">매출처</th><th class="left">구분</th><th class="left">대상</th><th class="left">변동</th><th class="left">경로 한정</th><th class="left">근거</th><th class="left">내용</th><th class="left">작성</th><th></th></tr></thead><tbody>' +
+            list.map(function (n) {
+              return '<tr><td class="left strong">' + esc(n.month) + '</td><td class="left">' + esc(n.cust) + '</td><td class="left"><span class="note-kind k-' + NOTE_KINDS.indexOf(n.kind) + '">' + esc(n.kind) + '</span></td><td class="left small">' + esc(n.target) + '</td>' +
+                '<td class="left strong">' + esc(n.change) + '</td><td class="left small">' + esc(noteRoute(n) || '–') + '</td><td class="left small">' + esc(n.basis || '–') + '</td><td class="left small wrap">' + esc(n.memo) + '</td>' +
+                '<td class="left small muted">' + esc(String(n.by).replace(/ \(.*\)$/, '')) + '<br>' + esc(String(n.at).slice(0, 10)) + '</td>' +
+                '<td class="nowrap"><button class="btn btn-sm btn-ghost" data-e="' + esc(n.id) + '">수정</button><button class="btn btn-sm btn-ghost" data-d="' + esc(n.id) + '">삭제</button></td></tr>';
+            }).join('') + '</tbody></table></div>' : '<p class="muted" style="margin:14px 0">' + ((an.notes || []).length ? '조건에 맞는 기록이 없어요.' : '아직 기록이 없어요. "＋ 기록 추가"로 첫 기록을 남겨 보세요.') + '</p>';
+          $$('[data-e]', m).forEach(function (b) { b.onclick = function () { editNote(an.notes.filter(function (n) { return n.id === b.dataset.e; })[0], draw); }; });
+          $$('[data-d]', m).forEach(function (b) {
+            b.onclick = function () {
+              if (!confirm('이 기록을 지울까요?')) return;
+              api('notes.delete', { id: b.dataset.d }).then(function (r) { an.notes = r.notes; draw(); redrawAnalysisNotes(); }).catch(function (err) { toast(err.message, 'err'); });
+            };
+          });
+        };
+        var st; $('#ntQ', m).oninput = function () { var v = this.value; clearTimeout(st); st = setTimeout(function () { q = v.trim(); draw(); }, 200); };
+        $('#ntK', m).onchange = function () { kind = this.value; draw(); };
+        $('#ntAdd', m).onclick = function () { editNote({ cust: preCust || '' }, draw); };
+        $('#ntTpl', m).onclick = function () {
+          var btn = this; busy(btn, true, '…');
+          downloadXlsx('JOIL_단가변경기록_양식.xlsx', [{ name: '단가변경', widths: [11, 24, 11, 10, 16, 9, 18, 18, 9, 40], rows: [['적용 월', '매출처', '구분', '대상', '변동', '근거', '발지', '착지', '중량', '내용'],
+            ['2026-07', '화인', '유가연동', '매출', '+3.2%', '계약서', '', '', '', '← 예시 줄 (지우고 쓰세요)'], ['2026-05', '삼다수', '재계약', '매출', '5톤 +20,000', '구두', '제주', '', '5톤', '김부장님 통화 합의']] },
+            { name: '안내', widths: [90], rows: [['적용 월: 2026-07 처럼 (그 달부터 적용)'], ['매출처: 분석 화면의 표시 이름 (모든 매출처는 "(전체)")'], ['구분: ' + NOTE_KINDS.join(' / ')], ['대상: 매출 / 매입 / 매출·매입'], ['근거: ' + NOTE_BASIS.join(' / ')], ['발지·착지·중량: 특정 경로만 바뀐 경우에만 (나머지는 비워 두기)']] }])
+            .catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
+        };
+        $('#ntX', m).onclick = function () {
+          var btn = this; busy(btn, true, '…');
+          downloadXlsx('JOIL_단가변경기록_' + today() + '.xlsx', [{ name: '단가변경', widths: [11, 24, 11, 10, 16, 9, 18, 18, 9, 40, 16, 17], rows: [['적용 월', '매출처', '구분', '대상', '변동', '근거', '발지', '착지', '중량', '내용', '작성자', '작성일시']].concat((an.notes || []).map(function (n) {
+            return [n.month, n.cust, n.kind, n.target, n.change, n.basis, n.from, n.to, n.weight, n.memo, String(n.by).replace(/ \(.*\)$/, ''), n.at];
+          })) }]).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
+        };
+        $('#ntFile', m).onchange = function () {
+          var file = this.files[0]; this.value = ''; if (!file) return;
+          Promise.all([loadXlsx(), file.arrayBuffer()]).then(function (res) {
+            var X = res[0], wb = X.read(new Uint8Array(res[1]), { type: 'array', cellDates: true });
+            var grid = X.utils.sheet_to_json(wb.Sheets[wb.SheetNames.filter(function (n) { return /단가|변경/.test(n); })[0] || wb.SheetNames[0]], { header: 1, raw: true, defval: '' });
+            var hi = grid.findIndex(function (r) { return r.some(function (c) { return /적용/.test(String(c)); }) && r.some(function (c) { return /매출처/.test(String(c)); }); });
+            if (hi === -1) throw new Error('"적용 월 · 매출처" 제목 줄을 찾지 못했어요. 양식을 내려받아 써 주세요.');
+            var h = grid[hi].map(function (c) { return String(c).replace(/\s/g, ''); });
+            var col = function (re) { return h.findIndex(function (c) { return re.test(c); }); };
+            var c = { month: col(/적용/), cust: col(/매출처/), kind: col(/구분/), target: col(/대상/), change: col(/변동/), basis: col(/근거/), from: col(/발지|상차/), to: col(/착지|하차/), weight: col(/중량|톤/), memo: col(/내용|메모|비고/) };
+            var g = function (r, k) { return c[k] === -1 ? '' : String(r[c[k]] == null ? '' : r[c[k]]).trim(); };
+            var rows = grid.slice(hi + 1).filter(function (r) { return g(r, 'cust') && !/예시/.test(g(r, 'memo')); }).map(function (r) {
+              var mv = r[c.month], month = mv instanceof Date ? mv.getFullYear() + '-' + ('0' + (mv.getMonth() + 1)).slice(-2) : (String(mv).match(/(\d{4})\D*(\d{1,2})/) || []).slice(1).map(function (x, i) { return i ? ('0' + x).slice(-2) : x; }).join('-');
+              return { month: month, cust: g(r, 'cust'), kind: g(r, 'kind'), target: g(r, 'target') || '매출', change: g(r, 'change'), basis: g(r, 'basis'), from: g(r, 'from'), to: g(r, 'to'), weight: g(r, 'weight'), memo: g(r, 'memo') };
+            });
+            if (!rows.length) throw new Error('올릴 기록이 없어요.');
+            if (!confirm(rows.length + '개 기록을 추가할까요?')) return null;
+            return api('notes.import', { rows: rows });
+          }).then(function (r) { if (!r) return; an.notes = r.notes; toast(r.count + '개 기록을 추가했어요.'); draw(); redrawAnalysisNotes(); })
+            .catch(function (err) { toast(err.message, 'err'); });
+        };
+        draw();
+      }
+    });
+  }
+
+  /** 기록 추가·수정 */
+  function editNote(n, after) {
+    var an = state.an, isNew = !n.id;
+    var custs = {};
+    (an.rows || []).forEach(function (r) { if (!r[C.hidden]) custs[r[C.disp]] = (custs[r[C.disp]] || 0) + r[C.sales]; });
+    var custList = ['(전체)'].concat(Object.keys(custs).sort(function (a, b) { return custs[b] - custs[a]; }));
+    var ms = anMonths(), lastM = ms[ms.length - 1] || today().slice(0, 7);
+    modal({
+      eyebrow: '단가 변경 기록', title: isNew ? '기록 추가' : '기록 수정',
+      body: '<div class="qd-two"><div class="field"><label>매출처 <span style="color:var(--red)">*</span></label><input class="input" id="neC" list="neCs" value="' + esc(n.cust || '') + '" placeholder="이름 일부 입력"><datalist id="neCs">' + custList.slice(0, 3000).map(function (c) { return '<option value="' + esc(c) + '">'; }).join('') + '</datalist></div>' +
+        '<div class="field"><label>적용 시작 월 <span style="color:var(--red)">*</span></label><input class="input" id="neM" type="month" value="' + esc(n.month || lastM) + '"></div></div>' +
+        '<div class="field"><label>구분</label><div class="segmented" id="neK">' + NOTE_KINDS.map(function (k) { return '<button type="button" data-v="' + k + '" class="' + ((n.kind || '유가연동') === k ? 'on' : '') + '">' + k + '</button>'; }).join('') + '</div></div>' +
+        '<div class="qd-two"><div class="field"><label>대상</label><div class="segmented" id="neT">' + ['매출', '매입', '매출·매입'].map(function (k) { return '<button type="button" data-v="' + k + '" class="' + ((n.target || '매출') === k ? 'on' : '') + '">' + k + '</button>'; }).join('') + '</div></div>' +
+        '<div class="field"><label>근거</label><div class="segmented" id="neB"><button type="button" data-v="" class="' + (!n.basis ? 'on' : '') + '">없음</button>' + NOTE_BASIS.map(function (k) { return '<button type="button" data-v="' + k + '" class="' + (n.basis === k ? 'on' : '') + '">' + k + '</button>'; }).join('') + '</div></div></div>' +
+        '<div class="field"><label>변동 <span class="muted">(예: +3.2%, 5톤 +20,000, 단가 650,000 → 680,000)</span></label><input class="input" id="neV" maxlength="100" value="' + esc(n.change || '') + '"></div>' +
+        '<details class="ne-route"' + (n.from || n.to || n.weight ? ' open' : '') + '><summary>특정 경로·중량만 바뀐 경우</summary><div class="qd-three"><div class="field"><label>발지</label><input class="input" id="neF" list="neFs" value="' + esc(n.from || '') + '"></div>' +
+        '<div class="field"><label>착지</label><input class="input" id="neTo" list="neTs" value="' + esc(n.to || '') + '"></div><div class="field"><label>중량</label><input class="input" id="neW" list="neWs" value="' + esc(n.weight || '') + '"></div></div>' +
+        '<datalist id="neFs"></datalist><datalist id="neTs"></datalist><datalist id="neWs"></datalist></details>' +
+        '<div class="field"><label>내용</label><textarea class="input memo" id="neMemo" maxlength="1000" placeholder="예) 3분기 유가연동 인상분, 10월 청구분부터 반영">' + esc(n.memo || '') + '</textarea></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="neSave">저장</button>',
+      onMount: function (m, close) {
+        ['#neK', '#neT', '#neB'].forEach(function (id) { $$(id + ' button', m).forEach(function (b) { b.onclick = function () { $$(id + ' button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); }; }); });
+        var fillRoute = function () {
+          var c = $('#neC', m).value.trim(), f = {}, t = {}, w = {};
+          (an.rows || []).forEach(function (r) { if (r[C.disp] === c) { f[r[C.from]] = 1; t[r[C.to]] = 1; w[r[C.weight]] = 1; } });
+          var opt = function (o) { return Object.keys(o).filter(Boolean).slice(0, 500).map(function (x) { return '<option value="' + esc(x) + '">'; }).join(''); };
+          $('#neFs', m).innerHTML = opt(f); $('#neTs', m).innerHTML = opt(t); $('#neWs', m).innerHTML = opt(w);
+        };
+        $('#neC', m).onchange = fillRoute; fillRoute();
+        $('#neSave', m).onclick = function () {
+          var v = function (id) { return $(id, m).value.trim(); };
+          var note = { cust: v('#neC'), month: v('#neM'), kind: $('#neK button.on', m).dataset.v, target: $('#neT button.on', m).dataset.v, basis: $('#neB button.on', m).dataset.v,
+            change: v('#neV'), from: v('#neF'), to: v('#neTo'), weight: v('#neW'), memo: v('#neMemo') };
+          if (!note.cust) return toast('매출처를 입력하세요.', 'err');
+          if (note.cust !== '(전체)' && !custs[note.cust] && !confirm('"' + note.cust + '"은 분석 데이터에 없는 이름이에요. 그래도 저장할까요?')) return;
+          var btn = this; busy(btn, true, '저장 중…');
+          api('notes.save', { id: n.id || '', note: note }).then(function (r) {
+            an.notes = r.notes; close(); toast('기록을 저장했어요.'); if (after) after(); redrawAnalysisNotes();
+          }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      }
+    });
+  }
+  /** 기록이 바뀌면 분석 화면 그래프·확인해 볼 곳을 다시 그림 */
+  function redrawAnalysisNotes() { if (state.view === 'analysis' && state.an.rows && $('#anTrend')) renderAnalysis(); }
 
   /* ───────── 매출매입 분석 화면 ───────── */
 
@@ -2579,7 +2744,7 @@
     main.innerHTML =
       '<div class="card anfilter">' +
       '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Analysis · 매출매입 분석</div><h2>매출 · 매입 · 이익</h2></div>' +
-      '<div class="actions"><button class="btn btn-sm btn-primary" id="anReport">월간 보고서</button><button class="btn btn-sm" id="anReset">필터 초기화</button><button class="btn btn-sm" id="anReload">데이터 새로고침</button></div></div>' +
+      '<div class="actions"><button class="btn btn-sm" id="anNotes">📌 단가 변경 기록' + ((an.notes || []).length ? ' <span class="cnt">' + an.notes.length + '</span>' : '') + '</button><button class="btn btn-sm btn-primary" id="anReport">월간 보고서</button><button class="btn btn-sm" id="anReset">필터 초기화</button><button class="btn btn-sm" id="anReload">데이터 새로고침</button></div></div>' +
       '<div class="anfilter-row">' +
       '<div class="fgroup"><span class="flabel">기간</span><select class="input input-sm" id="anFrom">' + months.map(function (m) { return '<option' + (m === f.from ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' +
       '<span class="muted">~</span><select class="input input-sm" id="anTo">' + months.map(function (m) { return '<option' + (m === f.to ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' +
@@ -2615,6 +2780,7 @@
     });
     $('#anCustPick').onclick = openCustPicker;
     $('#anReport').onclick = openReport;
+    $('#anNotes').onclick = function () { openNotes(''); };
     var wc = $('#anWithCats'); if (wc) wc.onclick = function () { f.withCats = !f.withCats; refresh(); };
     var sx = $('#anShowX'); if (sx) sx.onclick = function () { an.showExcluded = !an.showExcluded; refresh(); };
     $('#anQ').onkeydown = function (e) { if (e.key === 'Enter') { f.q = this.value.trim(); refresh(); } };
@@ -2708,7 +2874,7 @@
       for (var mm = lastM, k = 0; k < 24 && mm >= firstM; k++, mm = addMonths(mm, -1)) months.unshift(mm);
     }
     var mk = function (m) { var x = byM[m] || { s: 0, b: 0, n: 0 }; return { m: m, s: x.s, b: x.b, n: x.n, p: x.s - x.b, rate: pct(x.s - x.b, x.s), has: !!byM[m] }; };
-    var data = months.map(function (m) { var d = mk(m); d.ly = mk(addMonths(m, -12)); return d; });
+    var data = attachNotes(months.map(function (m) { var d = mk(m); d.ly = mk(addMonths(m, -12)); return d; }), (an.f.sel.cust || []).length ? an.f.sel.cust : null);
     var profitMode = an.trendMode !== 'sb';
     $('#anTrend').innerHTML = '<div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:6px"><div><div class="eyebrow">Trend · 월별 추이</div><h3>' + (profitMode ? '월별 이익' : '월별 매출 · 매입') + '</h3></div>' +
       '<div class="actions" style="align-items:center"><div class="legend">' + (profitMode
@@ -2754,6 +2920,7 @@
           : '<path d="M' + x0 + ',' + top + 'V' + (bot - r) + 'Q' + x0 + ',' + bot + ' ' + (x0 + r) + ',' + bot + 'H' + (x0 + bw - r) + 'Q' + (x0 + bw) + ',' + bot + ' ' + (x0 + bw) + ',' + (bot - r) + 'V' + top + 'Z" fill="' + c + '" opacity="' + op + '"/>';
       }
       if (d.ly.has) out += '<line x1="' + (cx - bw / 2 - 3) + '" x2="' + (cx + bw / 2 + 3) + '" y1="' + y(d.ly.p) + '" y2="' + y(d.ly.p) + '" class="lymark"/>';
+      if (d.notes && d.notes.length) out += noteMark(cx, T, H - B);
       var lbl = (n <= 12 || i % Math.ceil(n / 12) === 0) ? '<text x="' + cx + '" y="' + (H - 8) + '" class="axis" text-anchor="middle">' + d.m.slice(2).replace('-', '.') + '</text>' : '';
       return out + lbl + '<rect class="hit" data-i="' + i + '" x="' + (L + band * i) + '" y="' + T + '" width="' + band + '" height="' + (H - T - B) + '" fill="transparent"/>';
     }).join('');
@@ -2789,7 +2956,8 @@
       [[0, '전체'], [500000, '50만↑'], [1000000, '100만↑'], [5000000, '500만↑'], [10000000, '1,000만↑']].map(function (o) { return '<option value="' + o[0] + '"' + (al.minSales === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div></div>' +
       (list.length ? '<div class="table-wrap"><table class="data grp"><thead><tr><th class="left">매출처</th><th>이익률</th><th>' + esc(cr.label) + '</th><th>변화</th><th>이익</th><th>이익 증감</th><th>매출</th><th>건수</th></tr></thead><tbody>' +
         list.slice(0, 15).map(function (x) {
-          return '<tr class="pick" data-k="' + esc(x.k) + '"><td class="left wrap">' + (x.turned ? '<span class="badge down">적자 전환</span> ' : '') + esc(x.k) + ' <button class="cc-btn" data-cc="' + esc(x.k) + '">상세</button></td>' +
+          return '<tr class="pick" data-k="' + esc(x.k) + '"><td class="left wrap">' + (x.turned ? '<span class="badge down">적자 전환</span> ' : '') + esc(x.k) + ' <button class="cc-btn" data-cc="' + esc(x.k) + '">상세</button>' +
+            notesBetween(cr.from, an.f.to, x.k).map(noteBadge).join('') + '</td>' +
             '<td class="num' + (x.r < 0 ? ' neg' : '') + '">' + pctText(x.r) + '</td><td class="num muted">' + pctText(x.cr) + '</td>' +
             '<td class="num">' + deltaHtml(x.dr, '%p', true) + '</td><td class="num' + (x.p < 0 ? ' neg' : '') + '">' + won(x.p) + '</td>' +
             '<td class="num' + (x.dp < 0 ? ' neg' : '') + '">' + (x.dp > 0 ? '+' : '') + won(x.dp) + '</td><td class="num">' + won(x.s) + '</td><td class="num">' + won(x.n) + '</td></tr>';
@@ -2864,7 +3032,7 @@
         '<text x="' + Math.min(x(lastI), W - R - 2) + '" y="' + (y(d.rate) - 10) + '" class="vlabel" text-anchor="end">' + d.rate.toFixed(1) + '%</text>';
     }
     var labels = data.map(function (d, i) { return (n <= 6 || i % Math.ceil(n / 6) === 0) ? '<text x="' + x(i) + '" y="' + (H - 8) + '" class="axis" text-anchor="middle">' + d.m.slice(2).replace('-', '.') + '</text>' : ''; }).join('');
-    var hits = data.map(function (d, i) { var w = step || (W - L - R); return '<rect class="hit" data-i="' + i + '" x="' + (x(i) - w / 2) + '" y="' + T + '" width="' + w + '" height="' + (H - T - B) + '" fill="transparent"/>'; }).join('');
+    var hits = data.map(function (d, i) { var w = step || (W - L - R); return (d.notes && d.notes.length ? noteMark(x(i), T, H - B) : '') + '<rect class="hit" data-i="' + i + '" x="' + (x(i) - w / 2) + '" y="' + T + '" width="' + w + '" height="' + (H - T - B) + '" fill="transparent"/>'; }).join('');
     return '<div class="chartbox"><svg viewBox="0 0 ' + W + ' ' + H + '" class="chart" role="img" aria-label="월별 이익률 선 차트">' + grid +
       '<path d="' + path + '" fill="none" stroke="var(--ink-2)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' + (n <= 36 ? dots : '') + pts + labels + hits + '</svg><div class="tip hidden"></div></div>';
   }
@@ -2873,7 +3041,7 @@
     var box = $('.chartbox', card), tip = $('.tip', card);
     if (!box) return;
     $$('.hit', box).forEach(function (h) {
-      h.onmouseenter = function () { h.setAttribute('fill', 'rgba(30,28,25,.05)'); tip.innerHTML = fmt(data[h.dataset.i]); tip.classList.remove('hidden'); };
+      h.onmouseenter = function () { h.setAttribute('fill', 'rgba(30,28,25,.05)'); tip.innerHTML = fmt(data[h.dataset.i]) + notesTip(data[h.dataset.i]); tip.classList.remove('hidden'); };
       h.onmousemove = function (e) {
         var rc = box.getBoundingClientRect(), x = e.clientX - rc.left, yy = e.clientY - rc.top;
         tip.style.left = Math.min(x + 14, rc.width - tip.offsetWidth - 4) + 'px';
@@ -4428,6 +4596,259 @@
     });
   }
 
+  /* ───────── 견적 접수함 ───────── */
+
+  var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주'];
+  function reqPill(st) { return '<span class="rstatus r-' + Math.max(0, REQ_STATUS.indexOf(st)) + '">' + esc(st || '접수') + '</span>'; }
+  function dueInfo(r) {
+    if (!r.due || ['제출', '수주', '미수주'].indexOf(r.status) !== -1) return null;
+    var n = docDays({ expires: r.due });
+    return n;
+  }
+  function dueBadge(r) {
+    var n = dueInfo(r);
+    if (n == null) return r.due ? '<span class="small muted">' + esc(r.due) + '</span>' : '<span class="muted">–</span>';
+    if (n < 0) return '<span class="badge exp-x">' + (-n) + '일 지남</span> <span class="small muted">' + esc(r.due.slice(5)) + '</span>';
+    if (n <= 2) return '<span class="badge exp-soon">' + (n ? 'D-' + n : '오늘') + '</span> <span class="small muted">' + esc(r.due.slice(5)) + '</span>';
+    return '<span class="small">' + esc(r.due) + '</span>';
+  }
+
+  function renderReqs() {
+    var rs = state.reqs;
+    if (rs.detail) return renderReqDetail();
+    $('#main').innerHTML =
+      '<div class="card"><div class="row-between" style="flex-wrap:wrap;margin-bottom:14px"><div><div class="eyebrow">Requests · 견적 접수함</div><h2>견적 접수함</h2>' +
+      '<p class="muted small" style="margin:6px 0 0">받은 견적 요청(메일 제목·본문·원본 첨부)과 우리가 제출한 견적을 한 건으로 남겨요. 언제 무엇을 받아 어떤 단가로 냈는지 바로 찾을 수 있어요.</p></div>' +
+      '<div class="actions"><button class="btn btn-sm" id="rqReload">새로고침</button><button class="btn btn-sm btn-primary" id="rqNew">＋ 견적 요청 등록</button></div></div>' +
+      '<div id="rqAlert"></div>' +
+      '<div class="toolbar"><div class="segmented" id="rqSt">' + [''].concat(REQ_STATUS).map(function (s) { return '<button type="button" data-s="' + s + '" class="' + (rs.status === s ? 'on' : '') + '">' + (s || '전체') + '</button>'; }).join('') + '</div>' +
+      '<select class="input input-sm" id="rqBiz" style="width:auto"><option value="">모든 사업자</option>' + BIZ_LIST.map(function (b) { return '<option' + (rs.biz === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select>' +
+      '<input class="input input-sm" id="rqQ" placeholder="거래처·제목·본문 검색" value="' + esc(rs.q) + '" style="max-width:240px"></div><div id="rqList"></div></div>';
+    $$('#rqSt button').forEach(function (b) { b.onclick = function () { rs.status = b.dataset.s; $$('#rqSt button').forEach(function (x) { x.classList.toggle('on', x === b); }); drawReqs(); }; });
+    $('#rqBiz').onchange = function () { rs.biz = this.value; drawReqs(); };
+    var st; $('#rqQ').oninput = function () { var v = this.value; clearTimeout(st); st = setTimeout(function () { rs.q = v.trim(); drawReqs(); }, 200); };
+    $('#rqReload').onclick = function () { rs.list = null; loadReqs(); };
+    $('#rqNew').onclick = openNewReq;
+    if (rs.list) drawReqs(); else loadReqs();
+  }
+  function loadReqs() {
+    var l = $('#rqList'); if (l) l.innerHTML = '<p class="muted"><span class="spinner dark"></span> 불러오는 중…</p>';
+    return api('reqs.list').then(function (r) { state.reqs.list = r.reqs; if (state.view === 'reqs' && !state.reqs.detail) drawReqs(); })
+      .catch(function (err) { var x = $('#rqList'); if (x) x.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+  }
+  function drawReqs() {
+    var rs = state.reqs, el = $('#rqList'); if (!el || !rs.list) return;
+    var counts = {}; rs.list.forEach(function (r) { counts[r.status] = (counts[r.status] || 0) + 1; });
+    $$('#rqSt button').forEach(function (b) { var n = b.dataset.s ? counts[b.dataset.s] || 0 : rs.list.length; b.innerHTML = (b.dataset.s || '전체') + ' <span class="cnt">' + n + '</span>'; });
+    var soon = rs.list.filter(function (r) { var n = dueInfo(r); return n != null && n <= 2; });
+    $('#rqAlert').innerHTML = soon.length ? '<div class="doc-alert"><b>회신 기한</b> ' + soon.map(function (r) { return esc(r.cust + ' · ' + r.title.slice(0, 24)) + ' ' + dueBadge(r).replace(/<span class="small muted">.*<\/span>/, ''); }).join(' · ') + '</div>' : '';
+    var q = rs.q;
+    var list = rs.list.filter(function (r) {
+      if (rs.status && r.status !== rs.status) return false;
+      if (rs.biz && r.biz !== rs.biz) return false;
+      return !q || (r.cust + ' ' + r.title + ' ' + r.snippet + ' ' + r.summary + ' ' + r.owner).indexOf(q) !== -1;
+    });
+    if (!list.length) { el.innerHTML = '<p class="muted" style="margin:18px 0 4px">' + (rs.list.length ? '조건에 맞는 접수 건이 없어요.' : '아직 등록한 견적 요청이 없어요. <b>＋ 견적 요청 등록</b>으로 메일 내용을 붙여넣어 보세요.') + '</p>'; return; }
+    el.innerHTML = '<div class="table-wrap"><table class="data reqs"><thead><tr><th class="left">받은 날</th><th class="left">거래처</th><th class="left">제목</th><th class="left">상태</th><th class="left">회신 기한</th><th class="left">파일</th><th class="left">제출</th><th class="left">담당</th></tr></thead><tbody>' +
+      list.map(function (r) {
+        return '<tr data-id="' + esc(r.id) + '"><td class="left small">' + esc(r.received || String(r.at).slice(0, 10)) + '</td>' +
+          '<td class="left"><b>' + esc(r.cust) + '</b>' + (r.biz ? '<br><span class="small muted">' + esc(r.biz) + '</span>' : '') + '</td>' +
+          '<td class="left req-title"><button class="doc-name" data-open><span><b>' + esc(r.title) + '</b><small>' + esc(r.snippet) + '</small></span></button></td>' +
+          '<td class="left">' + reqPill(r.status) + '</td><td class="left">' + dueBadge(r) + '</td>' +
+          '<td class="left small"><span title="받은 파일">📥 ' + r.files.in + '</span> <span title="제출 파일">📤 ' + r.files.out + '</span></td>' +
+          '<td class="left small">' + (r.submitted ? esc(r.submitted) + (r.summary ? '<br><span class="muted">' + esc(r.summary.split('\n')[0].slice(0, 30)) + '</span>' : '') : '<span class="muted">–</span>') + '</td>' +
+          '<td class="left small">' + esc(r.owner || String(r.by).replace(/ \(.*\)$/, '')) + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    $$('tr[data-id]', el).forEach(function (tr) { tr.onclick = function () { rs.detail = tr.dataset.id; rs.data = null; renderReqs(); window.scrollTo(0, 0); }; });
+  }
+
+  function reqFieldsHtml(r, compact) {
+    return '<div class="qd-two"><div class="field"><label>거래처 <span style="color:var(--red)">*</span></label><input class="input" data-r="cust" value="' + esc(r.cust || '') + '" maxlength="100" placeholder="예) 삼다수"></div>' +
+      '<div class="field"><label>사업자</label><select class="input" data-r="biz"><option value="">선택 안 함</option>' + BIZ_LIST.map(function (b) { return '<option' + (r.biz === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select></div></div>' +
+      '<div class="field"><label>메일 제목 <span style="color:var(--red)">*</span></label><input class="input" data-r="title" value="' + esc(r.title || '') + '" maxlength="200" placeholder="받은 메일 제목을 붙여넣으세요"></div>' +
+      '<div class="qd-three"><div class="field"><label>받은 날</label><input class="input" type="date" data-r="received" value="' + esc(r.received || today()) + '"></div>' +
+      '<div class="field"><label>회신 기한</label><input class="input" type="date" data-r="due" value="' + esc(r.due || '') + '"></div>' +
+      '<div class="field"><label>담당</label><input class="input" data-r="owner" value="' + esc(r.owner || state.user.name) + '" maxlength="50"></div></div>' +
+      '<div class="field"><label>메일 본문</label><textarea class="input req-body" data-r="body" placeholder="받은 메일 본문을 그대로 붙여넣으세요" rows="' + (compact ? 8 : 12) + '">' + esc(r.body || '') + '</textarea></div>';
+  }
+  function readReqFields(root) {
+    var o = {}; $$('[data-r]', root).forEach(function (el) { o[el.dataset.r] = el.value; }); return o;
+  }
+  function uploadReqFiles(id, kind, files, onEach) {
+    var list = Array.prototype.slice.call(files || []), i = 0, last = null;
+    var big = list.filter(function (f) { return f.size > DOC_MAX; });
+    if (big.length) toast(big.map(function (f) { return f.name; }).join(', ') + ': 20MB를 넘어 건너뜀', 'err');
+    list = list.filter(function (f) { return f.size <= DOC_MAX; });
+    var step = function () {
+      if (i >= list.length) return Promise.resolve(last);
+      var f = list[i++];
+      if (onEach) onEach(i, list.length, f);
+      return readFileB64(f).then(function (b64) { return api('reqs.upload', { id: id, kind: kind, fileName: f.name, mime: f.type || 'application/octet-stream', data: b64 }); })
+        .then(function (r) { last = r; return step(); });
+    };
+    return step();
+  }
+
+  function openNewReq() {
+    var files = [];
+    modal({
+      wide: true, eyebrow: '견적 접수함', title: '견적 요청 등록',
+      body: reqFieldsHtml({}, true) +
+        '<label class="drop" id="nrDrop"><input type="file" id="nrFile" multiple hidden><span id="nrTxt"><b>받은 첨부파일</b> 고르기 또는 끌어다 놓기 (여러 개 가능)<br><span class="small muted">원본 그대로 보관돼요 · 파일당 20MB까지</span></span></label>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="nrSave">등록</button>',
+      onMount: function (m, close) {
+        var show = function () { $('#nrTxt', m).innerHTML = files.length ? '<b>' + files.length + '개 파일</b><br><span class="small muted">' + files.map(function (f) { return esc(f.name); }).join(', ') + '</span>' : '<b>받은 첨부파일</b> 고르기 또는 끌어다 놓기'; };
+        $('#nrFile', m).onchange = function () { files = files.concat(Array.prototype.slice.call(this.files)); this.value = ''; show(); };
+        var dz = $('#nrDrop', m);
+        dz.ondragover = function (e) { e.preventDefault(); dz.classList.add('over'); };
+        dz.ondragleave = function () { dz.classList.remove('over'); };
+        dz.ondrop = function (e) { e.preventDefault(); dz.classList.remove('over'); files = files.concat(Array.prototype.slice.call(e.dataTransfer.files)); show(); };
+        $('#nrSave', m).onclick = function () {
+          var f = readReqFields(m);
+          if (!f.cust.trim()) return toast('거래처를 입력하세요.', 'err');
+          if (!f.title.trim()) return toast('메일 제목을 입력하세요.', 'err');
+          var btn = this; busy(btn, true, '등록 중…');
+          api('reqs.save', { req: f }).then(function (r) {
+            return uploadReqFiles(r.req.id, '받은', files, function (i, n) { btn.innerHTML = '<span class="spinner"></span>파일 올리는 중 ' + i + '/' + n; }).then(function () { return r.req.id; });
+          }).then(function (id) {
+            close(); toast('견적 요청을 등록했어요.');
+            state.reqs.list = null; state.reqs.detail = id; state.reqs.data = null; state.view = 'reqs'; render(); window.scrollTo(0, 0);
+          }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      }
+    });
+  }
+
+  function reqFileBlob(f) {
+    var cache = state.reqs.blobs;
+    if (cache[f.id]) return Promise.resolve(cache[f.id]);
+    return api('reqs.file', { fileId: f.id }).then(function (r) { var bl = new Blob([bytesFromB64(r.data)], { type: f.mime || 'application/octet-stream' }); if (f.size < 8 * 1024 * 1024) cache[f.id] = bl; return bl; });
+  }
+  function previewReqFile(f) {
+    var k = docKind(f), url = null;
+    modal({
+      wide: true, eyebrow: f.kind === '제출' ? '제출 파일' : '받은 파일', title: f.fileName,
+      body: '<div class="doc-meta small muted">' + fileSize(f.size) + ' · ' + esc(f.by) + ' ' + esc(f.at) + '</div><div class="doc-view" id="rfView"><p class="muted"><span class="spinner dark"></span> 불러오는 중…</p></div>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="rfDl">다운로드</button>',
+      onMount: function (m) {
+        var obs = new MutationObserver(function () { if (!document.body.contains(m)) { if (url) URL.revokeObjectURL(url); obs.disconnect(); } });
+        obs.observe(document.body, { childList: true });
+        reqFileBlob(f).then(function (bl) {
+          var v = $('#rfView', m); if (!v) return;
+          url = URL.createObjectURL(bl);
+          if (k === 'img') v.innerHTML = '<img src="' + url + '" alt="">';
+          else if (k === 'pdf') v.innerHTML = '<iframe src="' + url + '" title="' + esc(f.fileName) + '"></iframe>';
+          else v.innerHTML = '<div class="empty" style="min-height:160px"><div><div class="ficon big f-' + k + '">' + DOC_ICON[k] + '</div><p class="muted">이 형식은 미리보기를 지원하지 않아요. 다운로드해서 여세요.</p></div></div>';
+        }).catch(function (err) { var v = $('#rfView', m); if (v) v.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+        $('#rfDl', m).onclick = function () { var b = this; busy(b, true, '…'); reqFileBlob(f).then(function (bl) { saveBlob(bl, f.fileName); }).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(b, false); }); };
+      }
+    });
+  }
+
+  function renderReqDetail() {
+    var rs = state.reqs, id = rs.detail;
+    $('#main').innerHTML = '<div class="row-between" style="margin-bottom:14px;flex-wrap:wrap"><button class="btn btn-sm" id="rdBack">← 견적 접수함</button><div class="actions" id="rdActs"></div></div><div id="rdBody"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+    $('#rdBack').onclick = function () { rs.detail = null; rs.data = null; renderReqs(); };
+    var show = function (r) {
+      if (state.view !== 'reqs' || rs.detail !== id) return;
+      var isAdmin = state.user.role === 'admin', mine = String(r.by).indexOf('(' + state.user.id + ')') !== -1;
+      var fileList = function (kind) {
+        var fs = r.files.filter(function (f) { return f.kind === kind; });
+        return (fs.length ? '<ul class="rf-list">' + fs.map(function (f) {
+          var k = docKind(f);
+          return '<li><button class="doc-name" data-pv="' + esc(f.id) + '"><span class="ficon f-' + k + '">' + DOC_ICON[k] + '</span><span><b>' + esc(f.fileName) + '</b><small>' + fileSize(f.size) + ' · ' + esc(f.by) + ' ' + esc(String(f.at).slice(0, 16)) + '</small></span></button>' +
+            '<span class="actions"><button class="btn btn-sm" data-dl="' + esc(f.id) + '">다운로드</button><button class="btn btn-sm btn-ghost" data-rm="' + esc(f.id) + '">삭제</button></span></li>';
+        }).join('') + '</ul>' : '<p class="muted small" style="margin:4px 0 10px">아직 없어요.</p>') +
+          '<label class="drop small-drop" data-drop="' + kind + '"><input type="file" multiple hidden><span>' + (kind === '받은' ? '거래처가 보낸 원본 파일' : '우리가 보낸 견적서·엑셀') + ' 추가 (끌어다 놓기 가능)</span></label>';
+      };
+      $('#rdActs').innerHTML = (r.files.length ? '<button class="btn btn-sm" id="rdZip">파일 전체 ZIP</button>' : '') + (isAdmin || mine ? '<button class="btn btn-sm btn-danger" id="rdDel">삭제</button>' : '');
+      $('#rdBody').innerHTML = '<div class="req-grid"><div>' +
+        '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:12px"><div><div class="eyebrow">Request · ' + esc(r.biz || '견적 요청') + '</div><h2>' + esc(r.title) + '</h2><p class="muted small" style="margin:4px 0 0">' + esc(r.cust) + ' · 받은 날 ' + esc(r.received || '–') + ' · 등록 ' + esc(String(r.by).replace(/ \(.*\)$/, '')) + '</p></div>' + reqPill(r.status) + '</div>' +
+        '<div class="field"><label>진행 상태</label><div class="segmented" id="rdSt">' + REQ_STATUS.map(function (s) { return '<button type="button" data-v="' + s + '" class="' + (r.status === s ? 'on' : '') + '">' + s + '</button>'; }).join('') + '</div></div>' +
+        reqFieldsHtml(r, false) + '</div>' +
+        '<div class="card" style="margin-top:16px"><div class="eyebrow">Submit · 제출</div><h3 style="margin-bottom:10px">제출한 견적</h3>' +
+        '<div class="qd-two"><div class="field"><label>제출일</label><input class="input" type="date" data-r="submitted" value="' + esc(r.submitted || '') + '"></div>' +
+        '<div class="field"><label>견적모음 연결 <span class="muted">(사이트에서 계산해 저장한 견적)</span></label><select class="input" data-r="quoteId"><option value="">연결 안 함</option>' + (r.quote ? '<option value="' + esc(r.quote.id) + '" selected>' + esc(r.quote.name) + '</option>' : (r.quoteId ? '<option value="' + esc(r.quoteId) + '" selected>(연결된 견적)</option>' : '')) + '</select></div></div>' +
+        '<div class="field"><label>제출 단가 요약</label><textarea class="input memo" data-r="summary" placeholder="예) 5톤 평택→제주 650,000 / 11톤 900,000 · 유효기간 30일">' + esc(r.summary || '') + '</textarea></div>' +
+        (r.quote ? '<p class="small" style="margin:0 0 10px">연결된 견적: <a href="#" id="rdGoQuote"><b>' + esc(r.quote.name) + '</b></a> ' + statusPill(r.quote.status) + ' <span class="muted">상태는 접수함과 자동으로 맞춰져요</span></p>' : '') +
+        '<div class="actions" style="justify-content:flex-end"><button class="btn btn-primary" id="rdSave">저장</button></div></div>' +
+        '</div><div>' +
+        '<div class="card"><div class="eyebrow">Received · 받은 파일 (원본)</div>' + fileList('받은') + '</div>' +
+        '<div class="card" style="margin-top:16px"><div class="eyebrow">Submitted · 제출 파일</div>' + fileList('제출') + '</div>' +
+        '<div class="card" style="margin-top:16px"><div class="eyebrow">History · 기록</div><ul class="note-tl req-tl">' + (r.log || []).slice().reverse().map(function (l) {
+          return '<li><span class="small muted">' + esc(String(l.at).slice(0, 16)) + ' · ' + esc(l.by) + '</span><br>' + esc(l.text) + '</li>';
+        }).join('') + '</ul></div></div></div>';
+      var body = $('#rdBody');
+      $$('#rdSt button', body).forEach(function (b) { b.onclick = function () { $$('#rdSt button', body).forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
+      // 견적모음 목록 (연결용)
+      var qsel = $('[data-r="quoteId"]', body);
+      (state.quotes.list ? Promise.resolve({ quotes: state.quotes.list }) : api('quotes.list')).then(function (x) {
+        state.quotes.list = x.quotes;
+        var cur = qsel.value;
+        qsel.innerHTML = '<option value="">연결 안 함</option>' + x.quotes.map(function (q) { return '<option value="' + esc(q.id) + '"' + (q.id === cur ? ' selected' : '') + '>' + esc(q.name + (q.client ? ' · ' + q.client : '') + ' (' + String(q.savedAt).slice(0, 10) + ')') + '</option>'; }).join('');
+        if (cur && !x.quotes.some(function (q) { return q.id === cur; })) qsel.insertAdjacentHTML('beforeend', '<option value="' + esc(cur) + '" selected>' + esc(r.quote ? r.quote.name : '(다른 사람 견적)') + '</option>');
+      }).catch(function () { });
+      $('#rdSave').onclick = function () {
+        var f = readReqFields(body); f.status = $('#rdSt button.on', body).dataset.v;
+        if (!f.cust.trim() || !f.title.trim()) return toast('거래처와 제목을 입력하세요.', 'err');
+        if (f.status === '제출' && !f.submitted) f.submitted = today();
+        var btn = this; busy(btn, true, '저장 중…');
+        api('reqs.save', { id: id, req: f }).then(function (x) { rs.data = x.req; rs.list = null; state.quotes.list = null; toast('저장했어요.'); show(x.req); })
+          .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+      };
+      var gq = $('#rdGoQuote'); if (gq) gq.onclick = function (e) { e.preventDefault(); state.quotes.detail = r.quote.id; state.quotes.detailData = null; state.view = 'quotes'; render(); window.scrollTo(0, 0); };
+      $$('[data-drop]', body).forEach(function (dz) {
+        var kind = dz.dataset.drop, inp = $('input', dz);
+        var go = function (files) {
+          if (!files.length) return;
+          dz.classList.add('busy'); $('span', dz).innerHTML = '<span class="spinner dark"></span> 올리는 중…';
+          uploadReqFiles(id, kind, files, function (i, n) { $('span', dz).innerHTML = '<span class="spinner dark"></span> 올리는 중 ' + i + '/' + n; })
+            .then(function (x) { if (x) { rs.data = x.req; rs.list = null; toast('파일을 올렸어요.'); show(x.req); } })
+            .catch(function (err) { toast(err.message, 'err'); show(r); });
+        };
+        inp.onchange = function () { go(Array.prototype.slice.call(this.files)); this.value = ''; };
+        dz.ondragover = function (e) { e.preventDefault(); dz.classList.add('over'); };
+        dz.ondragleave = function () { dz.classList.remove('over'); };
+        dz.ondrop = function (e) { e.preventDefault(); dz.classList.remove('over'); go(Array.prototype.slice.call(e.dataTransfer.files)); };
+      });
+      var byId = {}; r.files.forEach(function (f) { byId[f.id] = f; });
+      $$('[data-pv]', body).forEach(function (b) { b.onclick = function () { previewReqFile(byId[b.dataset.pv]); }; });
+      $$('[data-dl]', body).forEach(function (b) { b.onclick = function () { var f = byId[b.dataset.dl]; busy(b, true, '…'); reqFileBlob(f).then(function (bl) { saveBlob(bl, f.fileName); }).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(b, false); }); }; });
+      $$('[data-rm]', body).forEach(function (b) {
+        b.onclick = function () {
+          var f = byId[b.dataset.rm]; if (!confirm('"' + f.fileName + '" 파일을 지울까요? 드라이브 휴지통으로 이동합니다.')) return;
+          busy(b, true, '…');
+          api('reqs.fileDelete', { fileId: f.id }).then(function (x) { rs.data = x.req; rs.list = null; show(x.req); }).catch(function (err) { busy(b, false); toast(err.message, 'err'); });
+        };
+      });
+      var z = $('#rdZip'); if (z) z.onclick = function () {
+        var b = this; busy(b, true, '묶는 중…');
+        api('reqs.zip', { id: id }).then(function (x) { saveBlob(new Blob([bytesFromB64(x.data)], { type: 'application/zip' }), '견적접수_' + r.cust + '_' + (r.received || today()) + '.zip'); })
+          .catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(b, false); });
+      };
+      var del = $('#rdDel'); if (del) del.onclick = function () {
+        if (!confirm('이 접수 건과 첨부파일을 모두 지울까요? 되돌릴 수 없습니다.')) return;
+        busy(del, true, '삭제 중…');
+        api('reqs.delete', { id: id }).then(function () { rs.detail = null; rs.data = null; rs.list = null; toast('삭제했어요.'); renderReqs(); }).catch(function (err) { busy(del, false); toast(err.message, 'err'); });
+      };
+    };
+    if (rs.data && rs.data.id === id) return show(rs.data);
+    api('reqs.get', { id: id }).then(function (x) { rs.data = x.req; show(x.req); }).catch(function (err) { if (rs.detail === id) $('#rdBody').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+  }
+
+  /* 홈 카드: 회신 기한 다가오는 견적 요청 */
+  function homeReqs(list) {
+    var el = $('#hcReqs'); if (!el) return;
+    var open = list.filter(function (r) { return ['접수', '검토중'].indexOf(r.status) !== -1; })
+      .sort(function (a, b) { return (a.due || '9999') < (b.due || '9999') ? -1 : 1; });
+    el.innerHTML = '<div class="row-between"><div class="eyebrow">Requests · 진행 중인 견적 요청</div><button class="btn btn-sm btn-ghost" data-go="reqs">접수함</button></div>' +
+      (open.length ? '<ul class="home-list">' + open.slice(0, 6).map(function (r) {
+        return '<li><button data-rq="' + esc(r.id) + '"><span><b>' + esc(r.cust) + '</b> <span class="small">' + esc(r.title) + '</span></span><span>' + (dueInfo(r) != null && dueInfo(r) <= 2 ? dueBadge(r).replace(/ <span class="small muted">.*<\/span>/, '') : reqPill(r.status)) + '</span></button></li>';
+      }).join('') + '</ul>' : '<p class="muted small" style="margin:8px 0 0">진행 중인 견적 요청이 없어요.</p>');
+    $$('[data-rq]', el).forEach(function (b) { b.onclick = function () { state.reqs.detail = b.dataset.rq; state.reqs.data = null; state.view = 'reqs'; render(); window.scrollTo(0, 0); }; });
+    bindHomeGo(el);
+  }
+
   /* ───────── 서류함 ───────── */
 
   var DOC_CATS = ['사업자등록증', '통장사본', '법인등기부등본', '인감증명서', '운송사업 허가증', '보험증권', '계약서', '견적서 양식', '기타'];
@@ -4793,6 +5214,7 @@
       (ha ? '<div class="card home-card wide2" id="hcAn"><div class="eyebrow">This month · 이번 달 실적</div><p class="muted"><span class="spinner dark"></span> 분석 데이터 불러오는 중…</p></div>' : '') +
       '<div class="card home-card" id="hcWx"><div class="eyebrow">Weather · 오늘 날씨</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       '<div class="card home-card wide2" id="hcNews"><div class="eyebrow">News · 물류 뉴스</div><p class="muted"><span class="spinner dark"></span></p></div>' +
+      (hq ? '<div class="card home-card" id="hcReqs"><div class="eyebrow">Requests · 진행 중인 견적 요청</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (hq ? '<div class="card home-card" id="hcDocs"><div class="eyebrow">Documents · 만료 임박 서류</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (hq ? '<div class="card home-card" id="hcQuotes"><div class="eyebrow">Quotes · 최근 내 견적</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (hq ? '<div class="card home-card" id="hcHist"><div class="eyebrow">History · 최근 조회 (7일)</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
@@ -4818,6 +5240,7 @@
       api('diesel.recent').then(function (r) { if (alive()) homeDiesel(r); }).catch(fail('#hcDiesel'));
       (state.docs.list ? Promise.resolve({ docs: state.docs.list }) : api('docs.list')).then(function (r) { state.docs.list = r.docs; if (alive()) homeDocs(r.docs); }).catch(fail('#hcDocs'));
       api('quotes.list').then(function (r) { state.quotes.list = r.quotes; if (alive()) homeQuotes(r.quotes); }).catch(fail('#hcQuotes'));
+      api('reqs.list').then(function (r) { state.reqs.list = r.reqs; if (alive()) homeReqs(r.reqs); }).catch(fail('#hcReqs'));
       api('history.list', { days: 7, type: '', userId: state.user.id, q: '' }).then(function (r) { if (alive()) homeHist(r.logs); }).catch(fail('#hcHist'));
     }
     if (ha) loadAnalysis().then(function () { if (alive()) homeAn(); }).catch(fail('#hcAn'));
@@ -4889,7 +5312,8 @@
       kpi('건수', won(c.n) + '건', false, p ? deltaHtml(deltaPct(c.n, p.n), '%', true) : null, null) + '</div>' +
       (p ? '<h4 class="home-sub">확인해 볼 곳 <span class="' + (watch.length ? 'neg' : 'muted') + '">' + watch.length + '곳</span> <span class="small muted">전월보다 이익률 ' + an.alert.drop + '%p 이상 하락 또는 적자 전환</span></h4>' +
         (watch.length ? '<ul class="home-list">' + watch.slice(0, 5).map(function (x) {
-          return '<li><button data-cust="' + esc(x.k) + '"><span>' + (x.turned ? '<span class="badge down">적자 전환</span> ' : '') + esc(x.k) + '</span><span class="num">' + pctText(x.r) + ' ' + deltaHtml(x.dr, '%p', true) + '</span></button></li>';
+          var nb = notesBetween(pm, m, x.k)[0];
+          return '<li><button data-cust="' + esc(x.k) + '"><span>' + (x.turned ? '<span class="badge down">적자 전환</span> ' : '') + esc(x.k) + (nb ? ' ' + noteBadge(nb) : '') + '</span><span class="num">' + pctText(x.r) + ' ' + deltaHtml(x.dr, '%p', true) + '</span></button></li>';
         }).join('') + '</ul>' + (watch.length > 5 ? '<p class="hint" style="margin:6px 0 0">외 ' + (watch.length - 5) + '곳은 분석 화면에서 볼 수 있어요.</p>' : '') : '<p class="muted small" style="margin:0">해당하는 매출처가 없어요. 👍</p>')
         : '<p class="muted small" style="margin:12px 0 0">전월 데이터가 올라오면 비교가 나와요.</p>');
     var goAn = function (cust) {
@@ -5171,6 +5595,12 @@
         '<b>특수 추가운임</b>: 계산 화면에서 냉동·리프트 같은 항목을 고르면 톤수별로 더해져요. 관리자가 금액을 넣은 항목만 보여요.',
         '결과 엑셀에는 계산식이 들어가요. 지역할증·하행·행 조정·열 조정(3행) 칸을 바꾸면 합계가 다시 계산됩니다.'
       ].concat(ha ? ['견적모음 상세의 <b>실적 연결</b>에서 매출처·경로를 이어 두면, 수주 후 실제 월별 매출·매입·이익을 견적 단가와 비교해서 보여 줍니다.'] : [])],
+      ['reqs', '견적 접수함', [
+        '견적 요청 메일이 오면 <b>＋ 견적 요청 등록</b>에서 거래처·메일 제목·본문을 붙여넣고, 받은 첨부파일을 끌어다 놓으세요. 원본 그대로 보관돼요.',
+        '견적을 보내면 상세 화면에서 <b>제출 파일</b>(우리 견적서·엑셀)을 올리고, 제출일·제출 단가 요약을 적고 상태를 <b>제출</b>로 바꿔요.',
+        '사이트에서 계산해 저장한 견적은 <b>견적모음 연결</b>로 이어 두면 상태(제출·수주·미수주)가 자동으로 맞춰져요.',
+        '회신 기한이 2일 안으로 다가오면 접수함과 홈 화면에 표시돼요. 상태 변경·파일 추가는 모두 "기록"에 남아요.'
+      ]],
       ['rates', '업체 단가', [
         '<b>양식 내려받기</b>로 받은 엑셀에 상차지 · 하차지 · 톤수 · 단가를 채워 <b>단가표 올리기</b>로 올려요. 업체마다 달랐던 양식을 이 하나로 통일합니다.',
         '<b>우리 타리프로 비교</b>: 올린 구간을 지금 단가로 계산해서 계약 단가와의 차이(원, %)를 보여 줘요. 계약 단가가 더 낮은 구간은 빨간색이에요.',
@@ -5191,7 +5621,8 @@
         '<b>이익 = 매출 − 매입</b>, <b>이익률 = 이익 ÷ 매출</b>입니다. 비교 기준은 직전 같은 기간 또는 전년 같은 기간 중에서 고릅니다.',
         '<b>확인해 볼 곳</b>은 비교 기간보다 이익률이 떨어졌거나 적자로 바뀐 매출처입니다. 매출처 이름 옆 <b>상세</b>를 누르면 월별 추이와 주력·손실 경로가 나옵니다.',
         '<b>단가 이상치</b>는 같은 발지·착지·중량의 보통 단가(중앙값)보다 매입이 비싸거나 매출이 싼 오더입니다.',
-        '<b>보고서</b> 버튼으로 지금 조건의 월간 보고서를 인쇄/PDF·엑셀로 만들 수 있습니다.'
+        '<b>보고서</b> 버튼으로 지금 조건의 월간 보고서를 인쇄/PDF·엑셀로 만들 수 있습니다.',
+        '<b>📌 단가 변경 기록</b>: 재계약·유가연동·구두 합의처럼 엑셀에 없는 단가 변경을 적어 두면, 그래프에 📌로 표시되고 확인해 볼 곳·매출처 상세·월간 보고서에도 같이 나와요. 지난 기록은 엑셀 양식으로 한꺼번에 올릴 수 있어요.'
       ]]
     );
     if (adm) sec.push(
@@ -5218,7 +5649,7 @@
       '<div><div class="card help-head"><div class="eyebrow">Guide · 사용 안내</div><h2>JOIL 사용법</h2><p class="muted small" style="margin:6px 0 0">' + esc(state.user.name) + '님이 쓸 수 있는 메뉴만 안내합니다.</p></div>' +
       sec.map(function (s) {
         return '<section class="card help-sec" id="help-' + s[0] + '"><h3>' + s[1] + '</h3><ul>' + s[2].map(function (t) { return '<li>' + t + '</li>'; }).join('') + '</ul>' +
-          (['info', 'calc', 'bulk', 'history', 'rates', 'docs', 'analysis', 'admin'].indexOf(s[0]) !== -1 ? '<button class="btn btn-sm" data-open="' + (s[0] === 'history' ? 'quotes' : s[0]) + '">' + s[1].split(' · ')[0] + ' 열기 →</button>' : '') + '</section>';
+          (['info', 'calc', 'bulk', 'history', 'reqs', 'rates', 'docs', 'analysis', 'admin'].indexOf(s[0]) !== -1 ? '<button class="btn btn-sm" data-open="' + (s[0] === 'history' ? 'quotes' : s[0]) + '">' + s[1].split(' · ')[0] + ' 열기 →</button>' : '') + '</section>';
       }).join('') + '</div></div>';
     $$('.help-rail button').forEach(function (b) { b.onclick = function () { var t = $('#help-' + b.dataset.sec); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }; });
     $$('.help-sec [data-open]').forEach(function (b) { b.onclick = function () { state.view = b.dataset.open === 'quotes' ? 'history' : b.dataset.open; render(); window.scrollTo(0, 0); }; });
