@@ -255,20 +255,25 @@
 
   /* ───────── 렌더 ───────── */
 
+  /** 상단 메뉴: 단독 메뉴 [view, 이름] 또는 묶음 { g, label, items } (권한 없는 항목은 빠짐) */
+  function navModel() {
+    var q = can('quote'), any = q || can('analysis') || can('search'), out = [];
+    var grp = function (g, label, items) { items = items.filter(Boolean); if (items.length === 1) out.push(items[0]); else if (items.length) out.push({ g: g, label: label, items: items }); };
+    if (any) out.push(['home', '홈']);
+    if (q) grp('quote', '견적', [['calc', '단건 계산'], ['bulk', '대량 계산'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록']]);
+    grp('data', '업체·자료', [can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['rates', '업체단가'], q && ['docs', '서류함']]);
+    if (any) grp('info', '일정·정보', [['cal', '일정'], ['info', '물류정보']]);
+    if (can('analysis')) out.push(['analysis', '분석']);
+    if (state.user.role === 'admin') out.push(['admin', '관리자']);
+    return out;
+  }
+  /** 갈 수 있는 화면 전체 (주소 지킴이용) */
   function navItems() {
-    var items = [];
-    if (can('quote') || can('analysis') || can('search')) items.push(['home', '홈'], ['cal', '일정'], ['info', '물류정보']);
-    if (can('quote')) items.push(['calc', '단건'], ['reqs', '견적접수'], ['quotes', '견적모음']);
-    if (can('search')) items.push(['search', '배차검색']);
-    if (can('analysis')) items.push(['analysis', '분석']);
-    if (state.user.role === 'admin') items.push(['admin', '관리자']);
-    return items;
+    var out = [];
+    navModel().forEach(function (n) { if (n.items) out = out.concat(n.items); else out.push(n); });
+    return out;
   }
-  /** 자주 안 쓰는 메뉴 → "더보기 ▾" */
-  function moreItems() {
-    return can('quote') ? [['bulk', '대량 계산'], ['custs', '거래처'], ['history', '조회기록'], ['rates', '업체단가'], ['docs', '서류함']] : [];
-  }
-  function allViews() { return navItems().concat(moreItems()); }
+  function allViews() { return navItems(); }
 
   function render() {
     if (!state.user) return renderLogin();
@@ -278,11 +283,11 @@
       '<header class="topbar"><div class="stripe-bar"></div><div class="row">' +
       '<div class="brand"><span class="logo"></span><span class="brand-txt"><b>JOIL</b><small>조일그룹 견적·실적 시스템</small></span></div>' +
       '<nav class="nav">' +
-      navItems().map(function (n) { return '<button data-view="' + n[0] + '" class="' + (state.view === n[0] ? 'on' : '') + '">' + n[1] + '</button>'; }).join('') +
-      (moreItems().length ? (function () {
-        var cur = moreItems().filter(function (n) { return n[0] === state.view; })[0];
-        return '<button type="button" class="nav-more' + (cur ? ' on' : '') + '" id="navMore">' + (cur ? cur[1] : '더보기') + ' ▾</button>';
-      })() : '') +
+      navModel().map(function (n) {
+        if (!n.items) return '<button data-view="' + n[0] + '" class="' + (state.view === n[0] ? 'on' : '') + '">' + n[1] + '</button>';
+        var cur = n.items.filter(function (x) { return x[0] === state.view; })[0];
+        return '<button type="button" class="nav-grp' + (cur ? ' on' : '') + '" data-g="' + n.g + '">' + n.label + (cur ? '<small>' + cur[1] + '</small>' : '') + ' ▾</button>';
+      }).join('') +
       '</nav><div class="spacer"></div>' +
       '<div class="user-chip">' + (DEMO ? '<span class="badge region">데모</span>' : '') +
       (state.user.role === 'admin' ? '<span class="role-badge">ADMIN</span>' : '') +
@@ -293,18 +298,29 @@
       '<button class="btn btn-sm" data-act="logout">로그아웃</button></div>' +
       '</div></header><main id="main"></main>';
 
-    var mb = $('#navMore'); if (mb) mb.onclick = function (e) {
-      e.stopPropagation();
-      var old = $('.nav-pop'); if (old) { old.remove(); return; }
-      var r = mb.getBoundingClientRect(), pop = document.createElement('div');
-      pop.className = 'nav-pop';
-      pop.innerHTML = moreItems().map(function (n) { return '<button data-view="' + n[0] + '" class="' + (state.view === n[0] ? 'on' : '') + '">' + n[1] + '</button>'; }).join('');
-      pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 170)) + 'px';
+    // 묶음 메뉴: 마우스를 올리면 아래로 펼침 (터치는 눌러서)
+    var popT = null, popG = null, popAt = 0;
+    var closePop = function () { var o = $('.nav-pop'); if (o) o.remove(); popG = null; $$('.nav-grp').forEach(function (x) { x.classList.remove('open'); }); };
+    var openPop = function (btn) {
+      clearTimeout(popT);
+      if (popG === btn.dataset.g && $('.nav-pop')) return;
+      closePop();
+      var n = navModel().filter(function (x) { return x.g === btn.dataset.g; })[0]; if (!n) return;
+      var r = btn.getBoundingClientRect(), pop = document.createElement('div');
+      pop.className = 'nav-pop'; popG = n.g; popAt = Date.now(); btn.classList.add('open');
+      pop.innerHTML = n.items.map(function (x) { return '<button data-view="' + x[0] + '" class="' + (state.view === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('');
+      pop.style.top = (r.bottom + 4) + 'px'; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 180)) + 'px';
       document.body.appendChild(pop);
-      var off = function () { pop.remove(); document.removeEventListener('click', off); window.removeEventListener('scroll', off); };
-      setTimeout(function () { document.addEventListener('click', off); window.addEventListener('scroll', off); });
+      pop.onmouseenter = function () { clearTimeout(popT); };
+      pop.onmouseleave = function () { popT = setTimeout(closePop, 250); };
       $$('button', pop).forEach(navGo);
     };
+    $$('.nav-grp').forEach(function (g) {
+      g.onmouseenter = function () { openPop(g); };
+      g.onmouseleave = function () { popT = setTimeout(closePop, 250); };
+      g.onclick = function (e) { e.stopPropagation(); if (popG === g.dataset.g && $('.nav-pop')) { if (Date.now() - popAt > 500) closePop(); } else openPop(g); }; // 터치: 마우스 올림과 눌림이 같이 오면 열린 채로
+    });
+    if (!window.__navPopBound) { window.__navPopBound = true; document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('.nav-pop')) { var o = document.querySelector('.nav-pop'); if (o) o.remove(); } }); window.addEventListener('scroll', function () { var o = document.querySelector('.nav-pop'); if (o) o.remove(); }, { passive: true }); }
     $$('.nav button[data-view]').forEach(navGo);
     function navGo(b) {
       b.onclick = function () {
@@ -319,7 +335,7 @@
           if (state.view === 'custs' && state.custView) { state.custView.sel = ''; state.custs = null; }
         }
         if (b.dataset.view === 'history' && state.view !== 'history') state.hist.logs = null;
-        var pop = $('.nav-pop'); if (pop) pop.remove();
+        closePop();
         state.view = b.dataset.view; render();
       };
     }
@@ -5924,14 +5940,14 @@
     });
     var out = rows.filter(function (r) {
       if (from && String(r[C.date]) < from) return false;
-      if (st.biz && r[C.biz] !== st.biz) return false;
       return conds.every(function (c) {
+        if (c.k === 'weight' && st.exactW) return srNorm(r[C.weight]) === c.terms.join('');
         var v = c.k === 'cust' ? srNorm(r[C.cust]) + '|' + srNorm(r[C.disp]) : c.k === 'phone' ? String(r[C.phone] || '').replace(/\D/g, '') : srNorm(r[C[c.k]]);
         return c.terms.every(function (t) { return v.indexOf(t) !== -1; });
       });
     });
     out.sort(function (a, b) { return a[C.date] < b[C.date] ? 1 : a[C.date] > b[C.date] ? -1 : 0; });
-    return { rows: out, active: conds.length > 0 || !!st.biz };
+    return { rows: out, active: conds.length > 0 };
   }
   function srSummary(rows) {
     var by = {};
@@ -5948,9 +5964,8 @@
     var st = srState(), an = state.an;
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Dispatch search · 배차검색</div><h2>배차검색</h2><p class="muted small" style="margin:4px 0 0">새 오더가 왔을 때 예전에 같은 구간을 얼마에, 어떤 차로 했는지 찾아봐요. 칸마다 일부만 넣어도 돼요.</p></div></div>' +
       '<form class="card sr-form" id="srForm" autocomplete="off"><div class="sr-grid">' + SR_FIELDS.map(function (x) {
-        return '<label class="sr-f"><span>' + x[1] + '</span><input class="input" data-k="' + x[0] + '" value="' + esc(st.f[x[0]] || '') + '" placeholder="' + x[2] + '"></label>';
+        return '<label class="sr-f"><span>' + x[1] + (x[0] === 'weight' ? '<span class="sr-exact"><input type="checkbox" id="srExact"' + (st.exactW ? ' checked' : '') + '> 정확히</span>' : '') + '</span><input class="input" data-k="' + x[0] + '" value="' + esc(st.f[x[0]] || '') + '" placeholder="' + (x[0] === 'weight' && st.exactW ? '예) 1 → 1만 (11·1윙 제외)' : x[2]) + '"></label>';
       }).join('') + '</div><div class="sr-bar"><select class="input input-sm" id="srPeriod" style="width:auto">' + [['all', '전체 기간'], ['12', '최근 1년'], ['6', '최근 6개월'], ['3', '최근 3개월']].map(function (p) { return '<option value="' + p[0] + '"' + (st.period === p[0] ? ' selected' : '') + '>' + p[1] + '</option>'; }).join('') + '</select>' +
-      '<select class="input input-sm" id="srBiz" style="width:auto"><option value="">사업자 전체</option>' + (an.businesses || BIZ_NAMES).map(function (b) { return '<option' + (st.biz === b ? ' selected' : '') + '>' + esc(b) + '</option>'; }).join('') + '</select>' +
       '<span class="hint" style="margin:0">띄어쓰기로 여러 단어를 넣으면 모두 들어간 것만 · 전화번호는 숫자만 맞춰요</span><span class="spacer"></span><button type="button" class="btn btn-sm btn-ghost" id="srReset">초기화</button><button class="btn btn-sm btn-primary" type="submit">검색</button></div></form>' +
       '<div id="srOut" style="margin-top:16px"></div>';
     var go = function () { st.limit = 200; drawSearch(); };
@@ -5958,8 +5973,8 @@
     $$('#srForm [data-k]').forEach(function (inp) { inp.oninput = function () { st.f[inp.dataset.k] = inp.value; clearTimeout(t); t = setTimeout(go, 300); }; });
     $('#srForm').onsubmit = function (e) { e.preventDefault(); clearTimeout(t); go(); };
     $('#srPeriod').onchange = function () { st.period = this.value; go(); };
-    $('#srBiz').onchange = function () { st.biz = this.value; go(); };
-    $('#srReset').onclick = function () { st.f = {}; st.biz = ''; st.period = 'all'; renderSearch(); };
+    $('#srExact').onchange = function () { st.exactW = this.checked; var w = $('#srForm [data-k=weight]'); w.placeholder = st.exactW ? '예) 1 → 1만 (11·1윙 제외)' : '예) 5 또는 2.5윙'; go(); };
+    $('#srReset').onclick = function () { st.f = {}; st.period = 'all'; st.exactW = false; renderSearch(); };
     if (an.rows) return drawSearch();
     $('#srOut').innerHTML = '<div class="card muted"><span class="spinner dark"></span> 배차 데이터 불러오는 중… <span id="anProg"></span></div>';
     loadAnalysis().then(function () { if (state.view === 'search') renderSearch(); })
@@ -5991,14 +6006,14 @@
       }).join('') + '</tbody></table></div></div>' : '') +
       '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><h3 style="margin:0">검색 결과 <span class="muted small">' + won(cnt) + '건 · 최신순</span></h3>' +
       '<button class="btn btn-sm" id="srX"' + (cnt ? '' : ' disabled') + '>엑셀 다운로드</button></div>' +
-      (cnt ? '<div class="bulk-table" style="max-height:70vh"><table class="data bulk sr-tbl"><thead><tr><th class="left">날짜</th><th class="left">매출처</th><th class="left">상차지</th><th class="left">하차지</th><th class="left">중량</th><th>매입가</th><th>청구가</th><th>수익</th><th class="left">차량번호</th><th class="left">기사명</th><th class="left">전화</th><th class="left">비고</th><th class="left">사업자</th></tr></thead><tbody>' +
+      (cnt ? '<div class="bulk-table" style="max-height:70vh"><table class="data bulk sr-tbl"><thead><tr><th class="left">날짜</th><th class="left">매출처</th><th class="left">상차지</th><th class="left">하차지</th><th class="left">중량</th><th>매입가</th><th>청구가</th><th>수익</th><th class="left">차량번호</th><th class="left">기사명</th><th class="left">전화</th><th class="left">비고</th></tr></thead><tbody>' +
         shown.map(function (r) {
           var p = (r[C.sales] || 0) - (r[C.buys] || 0), d = String(r[C.date]);
           return '<tr><td class="left nowrap">' + esc(d) + (/^\d{4}-\d\d-\d\d$/.test(d) ? '<small class="muted">(' + WD[dDow(d)] + ')</small>' : '') + '</td><td class="left">' + hl(r[C.disp] || r[C.cust], 'cust') + '</td>' +
             '<td class="left wrap">' + hl(r[C.from], 'from') + '</td><td class="left wrap">' + hl(r[C.to], 'to') + '</td><td class="left">' + hl(r[C.weight], 'weight') + '</td>' +
             '<td class="num">' + money(r[C.buys]) + '</td><td class="num">' + money(r[C.sales]) + '</td><td class="num' + (p < 0 ? ' neg' : '') + '">' + (r[C.sales] || r[C.buys] ? won(p) : '<span class="muted">–</span>') + '</td>' +
             '<td class="left"><button type="button" class="sr-pick" data-pk="car" data-v="' + esc(r[C.car]) + '">' + hl(r[C.car], 'car') + '</button></td><td class="left"><button type="button" class="sr-pick" data-pk="driver" data-v="' + esc(r[C.driver]) + '">' + hl(r[C.driver], 'driver') + '</button></td>' +
-            '<td class="left small nowrap">' + esc(r[C.phone]) + '</td><td class="left small wrap">' + hl(r[C.note], 'note') + '</td><td class="left small muted">' + esc(r[C.biz]) + '</td></tr>';
+            '<td class="left small nowrap">' + esc(r[C.phone]) + '</td><td class="left small wrap">' + hl(r[C.note], 'note') + '</td></tr>';
         }).join('') + '</tbody></table></div>' + (cnt > shown.length ? '<div style="text-align:center;margin-top:10px"><button class="btn btn-sm" id="srMore">더 보기 (' + won(cnt - shown.length) + '건 남음)</button></div>' : '') +
         '<p class="hint" style="margin:8px 0 0">차량번호·기사명을 누르면 그 차/기사로 다시 검색해요</p>'
         : '<p class="muted" style="margin:0">조건에 맞는 배차가 없어요. 단어를 줄이거나 기간을 "전체"로 바꿔 보세요.</p>') + '</div>';
@@ -6006,9 +6021,9 @@
     $$('.sr-pick', box).forEach(function (b) { b.onclick = function () { if (!b.dataset.v) return; st.f = {}; st.f[b.dataset.pk] = b.dataset.v; renderSearch(); }; });
     var x = $('#srX'); if (x) x.onclick = function () {
       var btn = this; busy(btn, true, '…');
-      downloadXlsx('배차검색_' + todayYmd() + '.xlsx', [{ name: '검색결과', widths: [12, 22, 24, 24, 8, 11, 11, 11, 14, 10, 15, 30, 12],
-        rows: [['날짜', '매출처', '상차지', '하차지', '중량', '매입가', '청구가', '수익', '차량번호', '기사명', '전화', '비고', '사업자']].concat(rows.map(function (r) { return [r[C.date], r[C.disp] || r[C.cust], r[C.from], r[C.to], r[C.weight], r[C.buys] || 0, r[C.sales] || 0, (r[C.sales] || 0) - (r[C.buys] || 0), r[C.car], r[C.driver], r[C.phone], r[C.note], r[C.biz]]; })) },
-        { name: '조건', rows: [['항목', '값']].concat(SR_FIELDS.filter(function (f) { return st.f[f[0]]; }).map(function (f) { return [f[1], st.f[f[0]]]; })).concat([['기간', st.period === 'all' ? '전체' : '최근 ' + st.period + '개월'], ['사업자', st.biz || '전체']]) }])
+      downloadXlsx('배차검색_' + todayYmd() + '.xlsx', [{ name: '검색결과', widths: [12, 22, 24, 24, 8, 11, 11, 11, 14, 10, 15, 30],
+        rows: [['날짜', '매출처', '상차지', '하차지', '중량', '매입가', '청구가', '수익', '차량번호', '기사명', '전화', '비고']].concat(rows.map(function (r) { return [r[C.date], r[C.disp] || r[C.cust], r[C.from], r[C.to], r[C.weight], r[C.buys] || 0, r[C.sales] || 0, (r[C.sales] || 0) - (r[C.buys] || 0), r[C.car], r[C.driver], r[C.phone], r[C.note]]; })) },
+        { name: '조건', rows: [['항목', '값']].concat(SR_FIELDS.filter(function (f) { return st.f[f[0]]; }).map(function (f) { return [f[1], st.f[f[0]]]; })).concat([['중량', st.exactW ? '정확히 일치' : '포함'], ['기간', st.period === 'all' ? '전체' : '최근 ' + st.period + '개월']]) }])
         .catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
   }
@@ -6827,13 +6842,13 @@
       ]]
     );
     if (can('search')) sec.push(['search', '배차검색', [
-      '새 오더가 오면 <b>배차검색</b>에서 업체·상차지·하차지·중량·차량번호·기사명·전화번호·비고를 칸마다 넣어 찾아요. 일부만 넣어도 되고, 여러 칸을 넣으면 모두 맞는 것만 나와요.',
+      '새 오더가 오면 <b>업체·자료 → 배차검색</b>에서 업체·상차지·하차지·중량·차량번호·기사명·전화번호·비고를 칸마다 넣어 찾아요. 일부만 넣어도 되고, 여러 칸을 넣으면 모두 맞는 것만 나와요. 중량 옆 <b>정확히</b>를 켜면 1을 넣었을 때 11·1윙 없이 "1"만 나와요.',
       '예) 상차지 <b>평택</b> + 하차지 <b>창원</b> → 평택에서 창원 간 배차만. 위쪽 <b>중량별 단가</b>에 최근 청구가·매입가와 평균(최저~최고)이 나와요.',
       '차량번호·기사명을 누르면 그 차/기사로 다시 찾아요. 결과는 엑셀로 받을 수 있어요.',
       '데이터는 관리자가 분석 데이터에 올린 월별 엑셀이에요. 금액이 보이니 권한은 관리자가 계정마다 따로 줘요.'
     ]]);
     if (hq) sec.push(['custs', '거래처', [
-      '<b>더보기 → 거래처</b>에서 업체별 담당자·연락처·계약 기간·결제 조건을 적어 두면, 그 업체의 견적 접수·견적모음·업체 단가표·할 일' + (ha ? '·단가 변경 기록' : '') + '이 한 화면에 모여요.',
+      '<b>업체·자료 → 거래처</b>에서 업체별 담당자·연락처·계약 기간·결제 조건을 적어 두면, 그 업체의 견적 접수·견적모음·업체 단가표·할 일' + (ha ? '·단가 변경 기록' : '') + '이 한 화면에 모여요.',
       '이름이 조금씩 다르게 적힌 업체는 "같은 업체로 볼 다른 이름"에 쉼표로 넣으세요 (예: 삼다수, 제주개발공사).',
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
