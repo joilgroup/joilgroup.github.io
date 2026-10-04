@@ -21,6 +21,7 @@
     companies: null, addr: null,
     info: { tab: 'diesel', range: 90, diesel: null, news: null, weather: null, newsKw: '', newsQ: '' },
     an: null,
+    cal: null,
     bulk: { mode: 'one', origin: '', dests: '', pairsText: '', results: [], running: false, cancel: false, page: 0, sort: 'no', search: '', filter: 'all', detail: true, meta: null, opts: null },
     admin: { tab: 'basic', settings: null, keys: null, tariff: null, tariffDirty: false, settingsDirty: false, page: 0, users: null, logs: null }
   };
@@ -63,7 +64,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list'];
+  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all'];
   var TIMEOUT_MS = 25000;
   var inflight = {};
 
@@ -234,6 +235,7 @@
     state.reqs = { list: null, status: '', biz: '', q: '', detail: null, data: null, blobs: {} };
     state.info = { tab: 'diesel', range: 90, diesel: null, news: null, weather: null, newsKw: '', newsQ: '' };
     state.an = newAnState();
+    state.cal = newCalState();
     storage('del', 'joil-token');
   }
 
@@ -255,22 +257,31 @@
 
   function navItems() {
     var items = [];
-    if (can('quote') || can('analysis')) items.push(['home', '홈'], ['info', '물류정보']);
-    if (can('quote')) items.push(['calc', '단건'], ['bulk', '대량'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록'], ['rates', '업체단가'], ['docs', '서류함']);
+    if (can('quote') || can('analysis')) items.push(['home', '홈'], ['cal', '일정'], ['info', '물류정보']);
+    if (can('quote')) items.push(['calc', '단건'], ['bulk', '대량'], ['reqs', '견적접수'], ['quotes', '견적모음']);
     if (can('analysis')) items.push(['analysis', '분석']);
     if (state.user.role === 'admin') items.push(['admin', '관리자']);
     return items;
   }
+  /** 자주 안 쓰는 메뉴 → "더보기 ▾" */
+  function moreItems() {
+    return can('quote') ? [['history', '조회기록'], ['rates', '업체단가'], ['docs', '서류함']] : [];
+  }
+  function allViews() { return navItems().concat(moreItems()); }
 
   function render() {
     if (!state.user) return renderLogin();
-    if (state.pub && state.view !== 'help' && !navItems().some(function (n) { return n[0] === state.view; })) state.view = defaultView();
+    if (state.pub && state.view !== 'help' && !allViews().some(function (n) { return n[0] === state.view; })) state.view = defaultView();
     if (!state.pub) { app.innerHTML = '<div class="login-wrap"><div class="muted">불러오는 중…</div></div>'; return; }
     app.innerHTML =
       '<header class="topbar"><div class="stripe-bar"></div><div class="row">' +
       '<div class="brand"><span class="logo"></span><span class="brand-txt"><b>JOIL</b><small>조일그룹 견적·실적 시스템</small></span></div>' +
       '<nav class="nav">' +
       navItems().map(function (n) { return '<button data-view="' + n[0] + '" class="' + (state.view === n[0] ? 'on' : '') + '">' + n[1] + '</button>'; }).join('') +
+      (moreItems().length ? (function () {
+        var cur = moreItems().filter(function (n) { return n[0] === state.view; })[0];
+        return '<button type="button" class="nav-more' + (cur ? ' on' : '') + '" id="navMore">' + (cur ? cur[1] : '더보기') + ' ▾</button>';
+      })() : '') +
       '</nav><div class="spacer"></div>' +
       '<div class="user-chip">' + (DEMO ? '<span class="badge region">데모</span>' : '') +
       (state.user.role === 'admin' ? '<span class="role-badge">ADMIN</span>' : '') +
@@ -281,7 +292,20 @@
       '<button class="btn btn-sm" data-act="logout">로그아웃</button></div>' +
       '</div></header><main id="main"></main>';
 
-    $$('.nav button').forEach(function (b) {
+    var mb = $('#navMore'); if (mb) mb.onclick = function (e) {
+      e.stopPropagation();
+      var old = $('.nav-pop'); if (old) { old.remove(); return; }
+      var r = mb.getBoundingClientRect(), pop = document.createElement('div');
+      pop.className = 'nav-pop';
+      pop.innerHTML = moreItems().map(function (n) { return '<button data-view="' + n[0] + '" class="' + (state.view === n[0] ? 'on' : '') + '">' + n[1] + '</button>'; }).join('');
+      pop.style.top = (r.bottom + 6) + 'px'; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 170)) + 'px';
+      document.body.appendChild(pop);
+      var off = function () { pop.remove(); document.removeEventListener('click', off); window.removeEventListener('scroll', off); };
+      setTimeout(function () { document.addEventListener('click', off); window.addEventListener('scroll', off); });
+      $$('button', pop).forEach(navGo);
+    };
+    $$('.nav button[data-view]').forEach(navGo);
+    function navGo(b) {
       b.onclick = function () {
         if (state.view === 'admin' && b.dataset.view !== 'admin' && (state.admin.tariffDirty || state.admin.settingsDirty || (state.admin.anMap && state.admin.anMap.dirty) || (state.admin.anRules && state.admin.anRules.dirty) || state.admin.companyDirty) &&
           !confirm('저장하지 않은 관리자 변경사항이 있습니다. 이동할까요? (변경사항은 화면에 남아 있습니다)')) return;
@@ -293,9 +317,10 @@
           if (state.view === 'reqs') { state.reqs.detail = null; state.reqs.list = null; }
         }
         if (b.dataset.view === 'history' && state.view !== 'history') state.hist.logs = null;
+        var pop = $('.nav-pop'); if (pop) pop.remove();
         state.view = b.dataset.view; render();
       };
-    });
+    }
     $('[data-act="logout"]').onclick = function () {
       api('logout').catch(function () { });
       clearSession(); render();
@@ -319,6 +344,7 @@
     else if (state.view === 'help') renderHelp();
     else if (state.view === 'home') renderHome();
     else if (state.view === 'info') renderInfo();
+    else if (state.view === 'cal') renderCal();
     else renderCalc();
   }
 
@@ -4849,6 +4875,406 @@
     bindHomeGo(el);
   }
 
+  /* ───────── 일정 (달력 · 할 일 · 휴가) ───────── */
+
+  var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무'];
+  var WD = ['일', '월', '화', '수', '목', '금', '토'];
+  /* 날짜 문자열(YYYY-MM-DD) 계산 */
+  function dU(s) { return Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)); }
+  function dS(t) { return new Date(t).toISOString().slice(0, 10); }
+  function dAdd(s, n) { return dS(dU(s) + n * 86400000); }
+  function dDow(s) { return new Date(dU(s)).getUTCDay(); }
+  function dim(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  function ymAdd(ym, k) { var y = +ym.slice(0, 4), m = +ym.slice(5, 7) - 1 + k; y += Math.floor(m / 12); m = ((m % 12) + 12) % 12; return y + '-' + ('0' + (m + 1)).slice(-2); }
+  function pad2(n) { return ('0' + n).slice(-2); }
+
+  function calHoli() {
+    var d = state.cal.data, map = {};
+    (d.holidays || []).forEach(function (h) { (map[h.date] = map[h.date] || []).push({ name: h.name, off: h.off }); });
+    (d.companyHolidays || []).forEach(function (h) { (map[h.date] = map[h.date] || []).push({ name: h.name, off: true, company: true }); });
+    return map;
+  }
+  function isOff(s, holi) { var w = dDow(s); return w === 0 || w === 6 || (holi[s] || []).some(function (h) { return h.off; }); }
+  function adjustDay(s, mode, holi) {
+    if (mode === 'none') return s;
+    var k = 0;
+    while (isOff(s, holi) && k++ < 15) s = dAdd(s, mode === 'next' ? 1 : -1);
+    return s;
+  }
+  function ruleText(t) {
+    var r = t.rule || {}, adj = { prev: '쉬는 날이면 앞 영업일', next: '쉬는 날이면 다음 영업일', none: '' }[t.adjust] || '';
+    var base = r.type === 'once' ? '일회 ' + r.date : r.type === 'monthEnd' ? '매월 말일' : r.type === 'monthDay' ? '매월 ' + r.day + '일' : r.type === 'weekly' ? '매주 ' + WD[r.dow] + '요일' : r.type === 'yearly' ? '매년 ' + r.month + '월 ' + r.day + '일' : '';
+    return base + (adj && r.type !== 'weekly' ? ' · ' + adj : '');
+  }
+  /** 할 일 하나의 기한일 목록 (from~to) */
+  function taskOccurrences(t, from, to, holi) {
+    if (!t.active) return [];
+    var r = t.rule || {}, bases = [], lo = dAdd(from, -10), hi = dAdd(to, 10);
+    if (r.type === 'once') bases = [r.date];
+    else if (r.type === 'weekly') { for (var s = lo; s <= hi; s = dAdd(s, 1)) if (dDow(s) === Number(r.dow)) bases.push(s); }
+    else {
+      for (var ym = ymAdd(lo.slice(0, 7), 0); ym <= hi.slice(0, 7); ym = ymAdd(ym, 1)) {
+        var y = +ym.slice(0, 4), m = +ym.slice(5, 7), n = dim(y, m);
+        if (r.type === 'monthEnd') bases.push(ym + '-' + pad2(n));
+        else if (r.type === 'monthDay') bases.push(ym + '-' + pad2(Math.min(r.day, n)));
+        else if (r.type === 'yearly' && m === Number(r.month)) bases.push(ym + '-' + pad2(Math.min(r.day, n)));
+      }
+    }
+    var doneMap = state.cal.doneMap;
+    return bases.filter(function (b) { return !t.start || b >= t.start; }).map(function (b) {
+      var date = r.type === 'weekly' ? b : adjustDay(b, t.adjust, holi);
+      return { task: t, base: b, date: date, done: doneMap[t.id + '|' + b] || null };
+    }).filter(function (o) { return o.date >= from && o.date <= to; });
+  }
+  function allOccurrences(from, to, mineOnly) {
+    var c = state.cal, holi = calHoli(), out = [];
+    c.data.tasks.forEach(function (t) {
+      if (mineOnly && t.assigneeId && t.assigneeId !== state.user.id) return;
+      out = out.concat(taskOccurrences(t, from, to, holi));
+    });
+    return out.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; });
+  }
+  /** 휴가 일수: 연차는 쉬는 날 빼고, 반차 0.5 */
+  function leaveDays(l, holi) {
+    if (/반차/.test(l.kind)) return 0.5;
+    var n = 0;
+    for (var s = l.start; s <= l.end; s = dAdd(s, 1)) if (/근무/.test(l.kind) || !isOff(s, holi)) n++;
+    return n;
+  }
+
+  function loadCal(force) {
+    var c = state.cal;
+    if (c.data && !force) return Promise.resolve(c.data);
+    var extra = [];
+    if (can('quote')) {
+      extra.push((state.reqs.list && !force ? Promise.resolve({ reqs: state.reqs.list }) : api('reqs.list')).then(function (r) { state.reqs.list = r.reqs; }).catch(function () { }));
+      extra.push((state.docs.list && !force ? Promise.resolve({ docs: state.docs.list }) : api('docs.list')).then(function (r) { state.docs.list = r.docs; }).catch(function () { }));
+    }
+    return Promise.all([api('cal.all')].concat(extra)).then(function (res) { setCalData(res[0]); return c.data; });
+  }
+  function setCalData(d) {
+    var c = state.cal;
+    c.data = d; c.doneMap = {};
+    (d.done || []).forEach(function (x) { c.doneMap[x.taskId + '|' + x.date] = x; });
+    if (!c.ym) c.ym = d.today.slice(0, 7);
+    if (!c.year) c.year = d.today.slice(0, 4);
+  }
+  function calSave(action, payload, msg) {
+    return api(action, payload).then(function (d) { setCalData(d); if (msg) toast(msg); if (state.view === 'cal') drawCal(); else if (state.view === 'home') { var h = $('#hcToday'); if (h) homeToday(); } return d; });
+  }
+
+  function renderCal() {
+    var c = state.cal;
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Schedule · 일정</div><h2>일정</h2></div>' +
+      '<div class="segmented" id="calTabs">' + [['month', '📅 달력'], ['tasks', '✅ 할 일'], ['leave', '🌴 휴가·근무']].map(function (t) { return '<button type="button" data-t="' + t[0] + '" class="' + (c.tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div></div>' +
+      '<div id="calBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+    $$('#calTabs button').forEach(function (b) { b.onclick = function () { c.tab = b.dataset.t; $$('#calTabs button').forEach(function (x) { x.classList.toggle('on', x === b); }); drawCal(); }; });
+    loadCal().then(function () { if (state.view === 'cal') drawCal(); }).catch(function (err) { $('#calBody').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+  }
+  function drawCal() {
+    var c = state.cal; if (!c.data || !$('#calBody')) return;
+    if (c.tab === 'tasks') calTasks(); else if (c.tab === 'leave') calLeave(); else calMonth();
+  }
+
+  /** 하루에 보일 항목들 */
+  function dayItems(s, holi, occ) {
+    var c = state.cal, d = c.data, sh = c.show, out = [];
+    if (sh.holi) (holi[s] || []).forEach(function (h) { out.push({ k: h.off ? 'holi' : 'obs', t: h.name }); });
+    if (sh.leave) d.leaves.forEach(function (l) {
+      if (s < l.start || s > l.end) return;
+      if (!/근무/.test(l.kind) && l.start !== l.end && isOff(s, holi)) return;
+      out.push({ k: /근무/.test(l.kind) ? 'work' : 'leave', t: l.name + ' ' + l.kind, ref: l });
+    });
+    if (sh.task) (occ[s] || []).forEach(function (o) { out.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, ref: o }); });
+    if (sh.req) (state.reqs.list || []).forEach(function (r) { if (r.due === s && ['접수', '검토중'].indexOf(r.status) !== -1) out.push({ k: 'req', t: '회신 ' + r.cust, ref: r }); });
+    if (sh.doc) (state.docs.list || []).forEach(function (x) { if (x.expires === s) out.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, ref: x }); });
+    if (sh.event) d.events.forEach(function (e) { if (s >= e.start && s <= e.end) out.push({ k: 'event', t: e.title, ref: e }); });
+    return out;
+  }
+
+  function calMonth() {
+    var c = state.cal, d = c.data, ym = c.ym, holi = calHoli();
+    var y = +ym.slice(0, 4), m = +ym.slice(5, 7), first = ym + '-01', last = ym + '-' + pad2(dim(y, m));
+    var gStart = dAdd(first, -dDow(first)), gEnd = dAdd(last, 6 - dDow(last));
+    var occ = {}; allOccurrences(gStart, gEnd, c.mine).forEach(function (o) { (occ[o.date] = occ[o.date] || []).push(o); });
+    var cells = '';
+    for (var s = gStart; s <= gEnd; s = dAdd(s, 1)) {
+      var w = dDow(s), items = dayItems(s, holi, occ), offH = (holi[s] || []).some(function (h) { return h.off; });
+      cells += '<div class="cal-cell' + (s.slice(0, 7) !== ym ? ' out' : '') + (s === d.today ? ' today' : '') + (w === 0 || offH ? ' sun' : w === 6 ? ' sat' : '') + '" data-d="' + s + '">' +
+        '<div class="cal-num">' + (+s.slice(8)) + '</div>' +
+        items.slice(0, 4).map(function (it) { return '<div class="cal-it k-' + it.k.replace(' ', ' k-') + '" title="' + esc(it.t) + '">' + esc(it.t) + '</div>'; }).join('') +
+        (items.length > 4 ? '<div class="cal-more">+' + (items.length - 4) + '</div>' : '') + '</div>';
+    }
+    var chip = function (k, label) { return '<button type="button" class="chip cal-f k-' + k + (c.show[k] ? ' on' : '') + '" data-f="' + k + '">' + label + '</button>'; };
+    $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px">' +
+      '<div class="cal-nav"><button class="btn btn-sm" id="cmPrev">◀</button><h2>' + y + '년 ' + m + '월</h2><button class="btn btn-sm" id="cmNext">▶</button><button class="btn btn-sm btn-ghost" id="cmToday">오늘</button></div>' +
+      '<div class="actions"><label class="toggle small"><input type="checkbox" id="cmMine"' + (c.mine ? ' checked' : '') + '><span class="track"></span>내 할 일만</label><button class="btn btn-sm btn-primary" id="cmAdd">＋ 일정</button></div></div>' +
+      '<div class="chips cal-filters">' + chip('holi', '공휴일') + chip('leave', '휴가·근무') + chip('task', '할 일') + (can('quote') ? chip('req', '견적 회신') + chip('doc', '서류 만료') : '') + chip('event', '일정') + '</div>' +
+      '<div class="cal-grid">' + WD.map(function (x, i) { return '<div class="cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + x + '</div>'; }).join('') + cells + '</div>' +
+      '<p class="hint" style="margin:10px 0 0">날짜를 누르면 그날 일정을 보고 추가할 수 있어요 · 공휴일은 구글 캘린더 "대한민국의 휴일" 기준' + (state.user.role === 'admin' ? ' · 회사 휴무일은 휴가·근무 탭 아래에서 추가' : '') + '</p></div>';
+    $('#cmPrev').onclick = function () { c.ym = ymAdd(c.ym, -1); calMonth(); };
+    $('#cmNext').onclick = function () { c.ym = ymAdd(c.ym, 1); calMonth(); };
+    $('#cmToday').onclick = function () { c.ym = d.today.slice(0, 7); calMonth(); };
+    $('#cmMine').onchange = function () { c.mine = this.checked; calMonth(); };
+    $('#cmAdd').onclick = function () { editEvent({ start: d.today }); };
+    $$('.cal-f').forEach(function (b) { b.onclick = function () { c.show[b.dataset.f] = !c.show[b.dataset.f]; local('set', 'joil-calshow', c.show); calMonth(); }; });
+    $$('.cal-cell').forEach(function (cell) { cell.onclick = function () { openDay(cell.dataset.d); }; });
+  }
+
+  function openDay(s) {
+    var c = state.cal, holi = calHoli();
+    var occ = {}; allOccurrences(s, s, false).forEach(function (o) { (occ[o.date] = occ[o.date] || []).push(o); });
+    var saveShow = c.show; c.show = { holi: true, leave: true, task: true, req: true, doc: true, event: true };
+    var items = dayItems(s, holi, occ); c.show = saveShow;
+    var close = modal({
+      eyebrow: s.slice(0, 4) + '년 ' + (+s.slice(5, 7)) + '월', title: (+s.slice(8)) + '일 (' + WD[dDow(s)] + ')',
+      body: (items.length ? '<ul class="day-list">' + items.map(function (it, i) {
+        var act = '';
+        if (/^task/.test(it.k)) act = '<label class="chk"><input type="checkbox" data-task="' + i + '"' + (it.ref.done ? ' checked' : '') + '>' + (it.ref.done ? ' 완료 · ' + esc(it.ref.done.by) : ' 완료') + '</label>';
+        if (it.k === 'event') act = '<button class="btn btn-sm btn-ghost" data-ev="' + i + '">수정</button>';
+        if (it.k === 'leave' || it.k === 'work') act = '<span class="small muted">' + esc(it.ref.memo || '') + '</span>';
+        return '<li class="k-' + it.k.replace(' ', ' k-') + '"><span class="dot"></span><span class="txt">' + esc(it.t) + (it.ref && it.ref.task && it.ref.task.assignee ? ' <span class="small muted">· ' + esc(it.ref.task.assignee) + '</span>' : '') + (it.ref && it.ref.memo && it.k === 'event' ? '<br><span class="small muted">' + esc(it.ref.memo) + '</span>' : '') + '</span>' + act + '</li>';
+      }).join('') + '</ul>' : '<p class="muted">일정이 없어요.</p>'),
+      foot: '<button class="btn btn-sm" id="dyEv">＋ 일정</button><button class="btn btn-sm" id="dyTask">＋ 할 일</button><button class="btn btn-sm" id="dyLeave">＋ 휴가·근무</button><button class="btn" data-close>닫기</button>',
+      onMount: function (m, closeFn) {
+        $$('[data-task]', m).forEach(function (cb) { cb.onchange = function () { var o = items[+cb.dataset.task].ref; calSave('cal.taskDone', { id: o.task.id, date: o.base, undo: !cb.checked }, cb.checked ? '완료로 표시했어요.' : '완료를 취소했어요.').then(function () { closeFn(); openDay(s); }); }; });
+        $$('[data-ev]', m).forEach(function (b) { b.onclick = function () { closeFn(); editEvent(items[+b.dataset.ev].ref); }; });
+        $('#dyEv', m).onclick = function () { closeFn(); editEvent({ start: s }); };
+        $('#dyTask', m).onclick = function () { closeFn(); editTask({ rule: { type: 'once', date: s } }); };
+        $('#dyLeave', m).onclick = function () { closeFn(); editLeave({ start: s, end: s }); };
+      }
+    });
+    return close;
+  }
+
+  function editEvent(e) {
+    var isNew = !e.id, mine = !e.ownerId || e.ownerId === state.user.id || state.user.role === 'admin';
+    modal({
+      eyebrow: '일정', title: isNew ? '일정 추가' : '일정 수정',
+      body: '<div class="field"><label>제목 <span style="color:var(--red)">*</span></label><input class="input" id="evT" maxlength="100" value="' + esc(e.title || '') + '" placeholder="예) 삼다수 방문, 월간 회의"></div>' +
+        '<div class="qd-two"><div class="field"><label>시작일</label><input class="input" type="date" id="evS" value="' + esc(e.start || '') + '"></div><div class="field"><label>종료일</label><input class="input" type="date" id="evE" value="' + esc(e.end || e.start || '') + '"></div></div>' +
+        '<div class="field"><label>메모</label><textarea class="input memo" id="evM" maxlength="1000">' + esc(e.memo || '') + '</textarea></div>' +
+        '<label class="toggle"><input type="checkbox" id="evP"' + (e.private ? ' checked' : '') + '><span class="track"></span>나만 보기</label>' +
+        (e.owner ? '<p class="hint" style="margin:10px 0 0">작성 ' + esc(e.owner) + ' · ' + esc(e.at || '') + '</p>' : ''),
+      foot: (!isNew && mine ? '<button class="btn btn-danger btn-sm" id="evDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button>' + (mine ? '<button class="btn btn-primary" id="evSave">저장</button>' : ''),
+      onMount: function (m, close) {
+        var sv = $('#evSave', m); if (sv) sv.onclick = function () {
+          var ev = { title: $('#evT', m).value.trim(), start: $('#evS', m).value, end: $('#evE', m).value || $('#evS', m).value, memo: $('#evM', m).value, private: $('#evP', m).checked };
+          if (!ev.title) return toast('제목을 입력하세요.', 'err');
+          busy(sv, true, '저장 중…');
+          calSave('cal.eventSave', { id: e.id || '', event: ev }, '일정을 저장했어요.').then(close).catch(function (err) { busy(sv, false); toast(err.message, 'err'); });
+        };
+        var del = $('#evDel', m); if (del) del.onclick = function () { if (!confirm('이 일정을 지울까요?')) return; calSave('cal.eventDelete', { id: e.id }, '삭제했어요.').then(close).catch(function (err) { toast(err.message, 'err'); }); };
+      }
+    });
+  }
+
+  function editTask(t) {
+    var isNew = !t.id, r = t.rule || { type: 'monthEnd' }, users = state.cal.data.users;
+    modal({
+      eyebrow: '할 일', title: isNew ? '할 일 추가' : '할 일 수정',
+      body: '<div class="qd-two"><div class="field"><label>업체</label><input class="input" id="tkC" list="tkCs" maxlength="100" value="' + esc(t.cust || '') + '" placeholder="예) 삼다수 (없으면 비워 두기)"><datalist id="tkCs">' +
+        Object.keys((state.cal.data.tasks || []).reduce(function (o, x) { if (x.cust) o[x.cust] = 1; return o; }, {})).concat((state.rateCusts || []).map(function (x) { return x.cust; })).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist></div>' +
+        '<div class="field"><label>담당</label><select class="input" id="tkA"><option value="">팀 전체</option>' + users.map(function (u) { return '<option value="' + esc(u.id) + '"' + ((t.assigneeId || (isNew ? state.user.id : '')) === u.id ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select></div></div>' +
+        '<div class="field"><label>할 일 <span style="color:var(--red)">*</span></label><input class="input" id="tkT" maxlength="200" value="' + esc(t.title || '') + '" placeholder="예) 월말 정산서 발송"></div>' +
+        '<div class="field"><label>반복</label><div class="segmented" id="tkR">' + [['once', '일회'], ['monthEnd', '매월 말일'], ['monthDay', '매월 N일'], ['weekly', '매주'], ['yearly', '매년']].map(function (x) { return '<button type="button" data-v="' + x[0] + '" class="' + (r.type === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
+        '<div class="rule-opts">' +
+        '<div class="field ro ro-once"><label>날짜</label><input class="input" type="date" id="tkD" value="' + esc(r.date || state.cal.data.today) + '"></div>' +
+        '<div class="field ro ro-monthDay"><label>매월 며칠</label><input class="input" type="number" min="1" max="31" id="tkMD" value="' + esc(r.type === 'monthDay' ? r.day : 25) + '"><span class="hint">31처럼 없는 날이 있는 달은 그 달 마지막 날</span></div>' +
+        '<div class="field ro ro-weekly"><label>요일</label><div class="segmented" id="tkW">' + WD.map(function (x, i) { return '<button type="button" data-v="' + i + '" class="' + ((r.type === 'weekly' ? Number(r.dow) : 1) === i ? 'on' : '') + '">' + x + '</button>'; }).join('') + '</div></div>' +
+        '<div class="field ro ro-yearly"><label>매년</label><div class="qd-two"><input class="input" type="number" min="1" max="12" id="tkYM" value="' + esc(r.type === 'yearly' ? r.month : 1) + '" placeholder="월"><input class="input" type="number" min="1" max="31" id="tkYD" value="' + esc(r.type === 'yearly' ? r.day : 1) + '" placeholder="일"></div></div></div>' +
+        '<div class="field ro-adj"><label>기한일이 주말·공휴일이면</label><div class="segmented" id="tkJ">' + [['prev', '앞 영업일로'], ['next', '다음 영업일로'], ['none', '그대로']].map(function (x) { return '<button type="button" data-v="' + x[0] + '" class="' + ((t.adjust || 'prev') === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div></div>' +
+        '<div class="qd-two"><div class="field"><label>시작일 <span class="muted">(이날부터 생김)</span></label><input class="input" type="date" id="tkS" value="' + esc(t.start || state.cal.data.today) + '"></div>' +
+        '<div class="field"><label>사용</label><label class="toggle"><input type="checkbox" id="tkOn"' + (t.active !== false ? ' checked' : '') + '><span class="track"></span>켜짐</label></div></div>' +
+        '<div class="field"><label>메모</label><textarea class="input memo" id="tkM" maxlength="1000">' + esc(t.memo || '') + '</textarea></div>',
+      foot: (!isNew ? '<button class="btn btn-danger btn-sm" id="tkDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="tkSave">저장</button>',
+      onMount: function (m, close) {
+        var seg = function (id) { $$(id + ' button', m).forEach(function (b) { b.onclick = function () { $$(id + ' button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); sync(); }; }); };
+        var sync = function () { var ty = $('#tkR button.on', m).dataset.v; $$('.ro', m).forEach(function (el) { el.classList.toggle('hidden', !el.classList.contains('ro-' + ty)); }); $('.ro-adj', m).classList.toggle('hidden', ty === 'weekly'); };
+        ['#tkR', '#tkW', '#tkJ'].forEach(seg); sync();
+        $('#tkSave', m).onclick = function () {
+          var ty = $('#tkR button.on', m).dataset.v, rule = { type: ty };
+          if (ty === 'once') rule.date = $('#tkD', m).value;
+          if (ty === 'monthDay') rule.day = Number($('#tkMD', m).value);
+          if (ty === 'weekly') rule.dow = Number($('#tkW button.on', m).dataset.v);
+          if (ty === 'yearly') { rule.month = Number($('#tkYM', m).value); rule.day = Number($('#tkYD', m).value); }
+          var asel = $('#tkA', m);
+          var task = { cust: $('#tkC', m).value.trim(), title: $('#tkT', m).value.trim(), rule: rule, adjust: $('#tkJ button.on', m).dataset.v, assigneeId: asel.value, assignee: asel.value ? asel.options[asel.selectedIndex].text : '',
+            start: $('#tkS', m).value, active: $('#tkOn', m).checked, memo: $('#tkM', m).value };
+          if (!task.title) return toast('할 일을 입력하세요.', 'err');
+          var btn = this; busy(btn, true, '저장 중…');
+          calSave('cal.taskSave', { id: t.id || '', task: task }, '할 일을 저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+        var del = $('#tkDel', m); if (del) del.onclick = function () { if (!confirm('이 할 일(반복 규칙 전체)을 지울까요? 완료 기록은 남아요.')) return; calSave('cal.taskDelete', { id: t.id }, '삭제했어요.').then(close).catch(function (err) { toast(err.message, 'err'); }); };
+      }
+    });
+  }
+
+  function taskRowHtml(o, today) {
+    var t = o.task, late = o.date < today;
+    return '<li class="task-row' + (late ? ' late' : '') + '"><label class="chk"><input type="checkbox" data-done="' + esc(t.id) + '|' + o.base + '"></label>' +
+      '<span class="task-date">' + esc(o.date.slice(5).replace('-', '/')) + ' (' + WD[dDow(o.date)] + ')' + (late ? '<br><b>' + Math.round((dU(today) - dU(o.date)) / 86400000) + '일 지남</b>' : '') + '</span>' +
+      '<span class="task-main"><b>' + (t.cust ? '[' + esc(t.cust) + '] ' : '') + esc(t.title) + '</b><small>' + esc(ruleText(t)) + (t.memo ? ' · ' + esc(t.memo) : '') + '</small></span>' +
+      '<span class="task-who small">' + esc(t.assignee || '팀 전체') + '</span></li>';
+  }
+  function bindTaskChecks(root) {
+    $$('[data-done]', root).forEach(function (cb) {
+      cb.onchange = function () {
+        var p = cb.dataset.done.split('|'); cb.disabled = true;
+        cb.closest('li').classList.add('leaving');
+        calSave('cal.taskDone', { id: p[0], date: p[1] }, '완료! 기록에 남겼어요.').catch(function (err) { cb.disabled = false; cb.checked = false; toast(err.message, 'err'); });
+      };
+    });
+  }
+
+  function calTasks() {
+    var c = state.cal, d = c.data, today = d.today;
+    var all = allOccurrences(dAdd(today, -90), dAdd(today, 31), c.mine).filter(function (o) { return !o.done; });
+    var late = all.filter(function (o) { return o.date < today; }), now = all.filter(function (o) { return o.date === today; }),
+      week = all.filter(function (o) { return o.date > today && o.date <= dAdd(today, 7); }), later = all.filter(function (o) { return o.date > dAdd(today, 7); });
+    var sec = function (title, list, cls) { return list.length ? '<h3 class="task-h ' + (cls || '') + '">' + title + ' <span class="cnt">' + list.length + '</span></h3><ul class="task-list">' + list.map(function (o) { return taskRowHtml(o, today); }).join('') + '</ul>' : ''; };
+    var doneList = (d.done || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; }).slice(0, 60);
+    var byId = {}; d.tasks.forEach(function (t) { byId[t.id] = t; });
+    $('#calBody').innerHTML = '<div class="task-grid"><div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:6px"><div><div class="eyebrow">To-do · 할 일</div><h2>해야 할 일</h2></div>' +
+      '<div class="actions"><div class="segmented" id="tkMine"><button type="button" data-v="1" class="' + (c.mine ? 'on' : '') + '">내 할 일</button><button type="button" data-v="" class="' + (!c.mine ? 'on' : '') + '">팀 전체</button></div><button class="btn btn-sm btn-primary" id="tkAdd">＋ 할 일 추가</button></div></div>' +
+      (all.length ? sec('⚠ 밀린 할 일', late, 'late') + sec('오늘', now, 'today') + sec('다음 7일', week) + sec('그 뒤 (한 달 안)', later)
+        : '<p class="muted" style="margin:16px 0">' + (d.tasks.length ? '한 달 안에 남은 할 일이 없어요. 👍' : '아직 할 일이 없어요. "＋ 할 일 추가"로 업체별 반복 할 일을 넣어 보세요.') + '</p>') +
+      '<p class="hint" style="margin:10px 0 0">체크하면 목록에서 사라지고 오른쪽 "완료 기록"에 남아요. 실수로 체크했으면 완료 기록에서 되돌릴 수 있어요.</p></div>' +
+      '<div><div class="card"><div class="eyebrow">Rules · 반복 규칙</div><h3 style="margin-bottom:8px">등록된 할 일 ' + d.tasks.length + '개</h3>' +
+      (d.tasks.length ? '<ul class="rule-list">' + d.tasks.slice().sort(function (a, b) { return (a.cust + a.title).localeCompare(b.cust + b.title); }).map(function (t) {
+        return '<li class="' + (t.active ? '' : 'off') + '"><button data-edit="' + esc(t.id) + '"><b>' + (t.cust ? '[' + esc(t.cust) + '] ' : '') + esc(t.title) + '</b><small>' + esc(ruleText(t)) + ' · ' + esc(t.assignee || '팀 전체') + (t.active ? '' : ' · 꺼짐') + '</small></button></li>';
+      }).join('') + '</ul>' : '<p class="muted small">없어요.</p>') + '</div>' +
+      '<div class="card" style="margin-top:16px"><div class="eyebrow">Done · 완료 기록</div>' +
+      (doneList.length ? '<ul class="rule-list done-list">' + doneList.map(function (x) {
+        var t = byId[x.taskId];
+        return '<li><span><b>' + esc(t ? (t.cust ? '[' + t.cust + '] ' : '') + t.title : '(지운 할 일)') + '</b><small>기한 ' + esc(x.date) + ' · ' + esc(x.by) + ' ' + esc(String(x.at).slice(5, 16)) + '</small></span>' + (t ? '<button class="btn btn-sm btn-ghost" data-undo="' + esc(x.taskId + '|' + x.date) + '">되돌리기</button>' : '') + '</li>';
+      }).join('') + '</ul>' : '<p class="muted small">아직 없어요.</p>') + '</div></div></div>';
+    $$('#tkMine button').forEach(function (b) { b.onclick = function () { c.mine = !!b.dataset.v; calTasks(); }; });
+    $('#tkAdd').onclick = function () { editTask({}); };
+    bindTaskChecks($('#calBody'));
+    $$('[data-edit]').forEach(function (b) { b.onclick = function () { editTask(byId[b.dataset.edit]); }; });
+    $$('[data-undo]').forEach(function (b) { b.onclick = function () { var p = b.dataset.undo.split('|'); calSave('cal.taskDone', { id: p[0], date: p[1], undo: true }, '완료를 취소했어요.'); }; });
+  }
+
+  function editLeave(l) {
+    var isNew = !l.id, adm = state.user.role === 'admin', users = state.cal.data.users;
+    modal({
+      eyebrow: '휴가·근무', title: isNew ? '휴가·근무 등록' : '휴가·근무 수정',
+      body: '<div class="field"><label>사람</label>' + (adm ? '<select class="input" id="lvU">' + users.map(function (u) { return '<option value="' + esc(u.id) + '"' + ((l.userId || state.user.id) === u.id ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select>'
+        : '<input class="input" value="' + esc(state.user.name) + '" disabled>') + '</div>' +
+        '<div class="field"><label>종류</label><div class="segmented wrap-seg" id="lvK">' + LEAVE_KINDS.map(function (k) { return '<button type="button" data-v="' + k + '" class="' + ((l.kind || '연차') === k ? 'on' : '') + (/근무/.test(k) ? ' work' : '') + '">' + k + '</button>'; }).join('') + '</div></div>' +
+        '<div class="qd-two"><div class="field"><label>시작일</label><input class="input" type="date" id="lvS" value="' + esc(l.start || state.cal.data.today) + '"></div><div class="field" id="lvEf"><label>종료일</label><input class="input" type="date" id="lvE" value="' + esc(l.end || l.start || state.cal.data.today) + '"></div></div>' +
+        '<div class="field"><label>메모</label><input class="input" id="lvM" maxlength="500" value="' + esc(l.memo || '') + '" placeholder="예) 가족 여행, 야간 상차 지원"></div><p class="hint" id="lvInfo" style="margin:0"></p>',
+      foot: (!isNew ? '<button class="btn btn-danger btn-sm" id="lvDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="lvSave">저장</button>',
+      onMount: function (m, close) {
+        var holi = calHoli();
+        var info = function () {
+          var k = $('#lvK button.on', m).dataset.v, s = $('#lvS', m).value, e = /반차/.test(k) ? s : ($('#lvE', m).value || s);
+          $('#lvEf', m).classList.toggle('hidden', /반차/.test(k));
+          if (!s || e < s) { $('#lvInfo', m).textContent = ''; return; }
+          var n = leaveDays({ kind: k, start: s, end: e }, holi);
+          $('#lvInfo', m).textContent = /근무/.test(k) ? '근무 기록 ' + n + '일 (연차에서 빠지지 않아요)' : k === '연차' || /반차/.test(k) ? '연차 ' + n + '일 사용 (주말·공휴일 제외)' : n + '일 (연차에서 빠지지 않아요)';
+        };
+        $$('#lvK button', m).forEach(function (b) { b.onclick = function () { $$('#lvK button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); info(); }; });
+        $('#lvS', m).onchange = function () { if ($('#lvE', m).value < this.value) $('#lvE', m).value = this.value; info(); };
+        $('#lvE', m).onchange = info; info();
+        $('#lvSave', m).onclick = function () {
+          var lv = { userId: adm ? $('#lvU', m).value : state.user.id, kind: $('#lvK button.on', m).dataset.v, start: $('#lvS', m).value, end: $('#lvE', m).value, memo: $('#lvM', m).value };
+          var btn = this; busy(btn, true, '저장 중…');
+          calSave('cal.leaveSave', { id: l.id || '', leave: lv }, '저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+        var del = $('#lvDel', m); if (del) del.onclick = function () { if (!confirm('이 기록을 지울까요?')) return; calSave('cal.leaveDelete', { id: l.id }, '삭제했어요.').then(close).catch(function (err) { toast(err.message, 'err'); }); };
+      }
+    });
+  }
+
+  function calLeave() {
+    var c = state.cal, d = c.data, yr = c.year, holi = calHoli(), adm = state.user.role === 'admin';
+    var inYear = d.leaves.filter(function (l) { return l.start.slice(0, 4) === yr || l.end.slice(0, 4) === yr; });
+    var grant = {}; d.grants.forEach(function (g) { if (g.year === yr) grant[g.userId] = g.days; });
+    var stat = {}; d.users.forEach(function (u) { stat[u.id] = { u: u, used: 0, other: 0, night: 0, hol: 0 }; });
+    inYear.forEach(function (l) {
+      var s = stat[l.userId] || (stat[l.userId] = { u: { id: l.userId, name: l.name }, used: 0, other: 0, night: 0, hol: 0 }), n = leaveDays(l, holi);
+      if (l.kind === '연차' || /반차/.test(l.kind)) s.used += n; else if (l.kind === '야간근무') s.night += n; else if (l.kind === '휴일근무') s.hol += n; else s.other += n;
+    });
+    var years = {}; years[d.today.slice(0, 4)] = 1; d.leaves.forEach(function (l) { years[l.start.slice(0, 4)] = 1; }); d.grants.forEach(function (g) { years[g.year] = 1; });
+    var who = c.person || '';
+    var list = inYear.filter(function (l) { return !who || l.userId === who; }).sort(function (a, b) { return a.start < b.start ? 1 : -1; });
+    $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Leave · 휴가·근무</div><h2>' + yr + '년 휴가·근무</h2></div>' +
+      '<div class="actions"><select class="input input-sm" id="lvY" style="width:auto">' + Object.keys(years).sort().reverse().map(function (y) { return '<option' + (y === yr ? ' selected' : '') + '>' + y + '</option>'; }).join('') + '</select>' +
+      (adm ? '<button class="btn btn-sm" id="lvG">연차 부여 일수</button>' : '') + '<button class="btn btn-sm btn-primary" id="lvAdd">＋ 휴가·근무 등록</button></div></div>' +
+      '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">이름</th><th>부여</th><th>사용</th><th>잔여</th><th>그 밖의 휴가</th><th>야간근무</th><th>휴일근무</th></tr></thead><tbody>' +
+      Object.keys(stat).map(function (k) { return stat[k]; }).map(function (s) {
+        var g = grant[s.u.id], rem = g != null ? g - s.used : null;
+        return '<tr class="' + (who === s.u.id ? 'sel' : '') + '" data-p="' + esc(s.u.id) + '"><td class="left"><b>' + esc(s.u.name) + '</b></td><td class="num">' + (g != null ? g : '<span class="muted">–</span>') + '</td><td class="num">' + s.used + '</td>' +
+          '<td class="num' + (rem != null && rem < 0 ? ' neg' : '') + '">' + (rem != null ? '<b>' + rem + '</b>' : '<span class="muted">–</span>') + '</td><td class="num">' + (s.other || '–') + '</td><td class="num">' + (s.night ? s.night + '일' : '–') + '</td><td class="num">' + (s.hol ? s.hol + '일' : '–') + '</td></tr>';
+      }).join('') + '</tbody></table></div><p class="hint" style="margin:8px 0 0">사용 = 연차 + 반차(0.5) · 주말·공휴일 제외 · 이름을 누르면 그 사람 기록만 보여요</p></div>' +
+      '<div class="card" style="margin-top:16px"><div class="row-between"><h3>' + (who ? esc((stat[who] || { u: { name: '' } }).u.name) + ' 기록' : '전체 기록') + ' <span class="muted small">' + list.length + '건</span></h3>' + (who ? '<button class="btn btn-sm btn-ghost" id="lvAll">전체 보기</button>' : '') + '</div>' +
+      (list.length ? '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">기간</th><th class="left">이름</th><th class="left">종류</th><th>일수</th><th class="left">메모</th><th class="left">등록</th><th></th></tr></thead><tbody>' +
+        list.map(function (l) {
+          var canEdit = adm || l.userId === state.user.id;
+          return '<tr><td class="left">' + esc(l.start) + (l.end !== l.start ? ' ~ ' + esc(l.end.slice(5)) : '') + ' <span class="muted small">(' + WD[dDow(l.start)] + ')</span></td><td class="left">' + esc(l.name) + '</td>' +
+            '<td class="left"><span class="lv-kind' + (/근무/.test(l.kind) ? ' work' : '') + '">' + esc(l.kind) + '</span></td><td class="num">' + leaveDays(l, holi) + '</td><td class="left small">' + esc(l.memo) + '</td>' +
+            '<td class="left small muted">' + esc(l.by) + '</td><td>' + (canEdit ? '<button class="btn btn-sm btn-ghost" data-lv="' + esc(l.id) + '">수정</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>' : '<p class="muted small">기록이 없어요.</p>') + '</div>' +
+      (adm ? '<div class="card" style="margin-top:16px"><div class="row-between"><h3>회사 휴무일 <span class="muted small">공휴일 외에 회사가 쉬는 날 (창립기념일 등)</span></h3><button class="btn btn-sm" id="chAdd">＋ 추가</button></div>' +
+        ((d.companyHolidays || []).length ? '<ul class="rule-list">' + d.companyHolidays.map(function (h, i) { return '<li><span><b>' + esc(h.date) + '</b> ' + esc(h.name) + '</span><button class="btn btn-sm btn-ghost" data-ch="' + i + '">삭제</button></li>'; }).join('') + '</ul>' : '<p class="muted small" style="margin:6px 0 0">없어요.</p>') + '</div>' : '');
+    $('#lvY').onchange = function () { c.year = this.value; calLeave(); };
+    $('#lvAdd').onclick = function () { editLeave({ userId: who || state.user.id }); };
+    $$('tr[data-p]').forEach(function (tr) { tr.onclick = function () { c.person = c.person === tr.dataset.p ? '' : tr.dataset.p; calLeave(); }; });
+    var all = $('#lvAll'); if (all) all.onclick = function () { c.person = ''; calLeave(); };
+    var byId = {}; d.leaves.forEach(function (l) { byId[l.id] = l; });
+    $$('[data-lv]').forEach(function (b) { b.onclick = function () { editLeave(byId[b.dataset.lv]); }; });
+    var g = $('#lvG'); if (g) g.onclick = function () {
+      modal({
+        eyebrow: '휴가·근무', title: yr + '년 연차 부여 일수',
+        body: '<p class="muted small" style="margin:0 0 10px">사람마다 올해 쓸 수 있는 연차 일수를 넣으면 사용·잔여가 자동으로 계산돼요. 비워 두면 계산하지 않아요.</p>' +
+          '<div class="grant-grid">' + d.users.map(function (u) { return '<label>' + esc(u.name) + '<input class="input input-sm num" data-g="' + esc(u.id) + '" value="' + (grant[u.id] != null ? grant[u.id] : '') + '" inputmode="decimal" placeholder="–"></label>'; }).join('') + '</div>',
+        foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="gSave">저장</button>',
+        onMount: function (m, close) {
+          $('#gSave', m).onclick = function () {
+            var out = {}; $$('[data-g]', m).forEach(function (inp) { if (inp.value.trim() !== '') out[inp.dataset.g] = Number(inp.value); });
+            var btn = this; busy(btn, true, '저장 중…');
+            calSave('cal.grantsSave', { year: yr, grants: out }, '저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+          };
+        }
+      });
+    };
+    var ch = $('#chAdd'); if (ch) ch.onclick = function () {
+      modal({
+        eyebrow: '회사 휴무일', title: '휴무일 추가',
+        body: '<div class="qd-two"><div class="field"><label>날짜</label><input class="input" type="date" id="chD" value="' + esc(d.today) + '"></div><div class="field"><label>이름</label><input class="input" id="chN" maxlength="40" placeholder="예) 창립기념일"></div></div>',
+        foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="chSave">추가</button>',
+        onMount: function (m, close) {
+          $('#chSave', m).onclick = function () {
+            var list = (d.companyHolidays || []).concat([{ date: $('#chD', m).value, name: $('#chN', m).value.trim() || '회사 휴무' }]);
+            calSave('cal.companyHolidays', { list: list }, '추가했어요.').then(close).catch(function (err) { toast(err.message, 'err'); });
+          };
+        }
+      });
+    };
+    $$('[data-ch]').forEach(function (b) { b.onclick = function () { var list = d.companyHolidays.slice(); list.splice(+b.dataset.ch, 1); calSave('cal.companyHolidays', { list: list }, '삭제했어요.'); }; });
+  }
+
+  /* 홈 카드: 오늘 할 일 · 오늘 휴가 */
+  function homeToday() {
+    var el = $('#hcToday'); if (!el || !state.cal.data) return;
+    var d = state.cal.data, today = d.today, holi = calHoli();
+    var list = allOccurrences(dAdd(today, -90), today, true).filter(function (o) { return !o.done; });
+    var off = d.leaves.filter(function (l) { return today >= l.start && today <= l.end; });
+    var hol = (holi[today] || []).filter(function (h) { return h.off; });
+    el.innerHTML = '<div class="row-between"><div class="eyebrow">Today · 오늘 할 일</div><button class="btn btn-sm btn-ghost" data-go="cal">일정</button></div>' +
+      (hol.length ? '<p class="small" style="margin:6px 0 0">🔴 ' + esc(hol.map(function (h) { return h.name; }).join(', ')) + '</p>' : '') +
+      (list.length ? '<ul class="task-list mini">' + list.slice(0, 6).map(function (o) { return taskRowHtml(o, today); }).join('') + '</ul>' + (list.length > 6 ? '<p class="hint" style="margin:4px 0 0">외 ' + (list.length - 6) + '개</p>' : '')
+        : '<p class="muted small" style="margin:8px 0 0">오늘까지 할 일이 없어요. 👍</p>') +
+      (off.length ? '<p class="small" style="margin:10px 0 0">🌴 ' + off.map(function (l) { return esc(l.name + ' ' + l.kind); }).join(' · ') + '</p>' : '');
+    bindTaskChecks(el); bindHomeGo(el);
+  }
+
+  function newCalState() {
+    return { data: null, tab: 'month', ym: '', year: '', mine: false, person: '', doneMap: {}, show: local('get', 'joil-calshow') || { holi: true, leave: true, task: true, req: true, doc: true, event: true } };
+  }
+
   /* ───────── 서류함 ───────── */
 
   var DOC_CATS = ['사업자등록증', '통장사본', '법인등기부등본', '인감증명서', '운송사업 허가증', '보험증권', '계약서', '견적서 양식', '기타'];
@@ -5212,6 +5638,7 @@
       '<div class="home-grid">' +
       (hq ? '<div class="card home-card" id="hcDiesel"><div class="eyebrow">Diesel · 오늘 경유가</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (ha ? '<div class="card home-card wide2" id="hcAn"><div class="eyebrow">This month · 이번 달 실적</div><p class="muted"><span class="spinner dark"></span> 분석 데이터 불러오는 중…</p></div>' : '') +
+      '<div class="card home-card" id="hcToday"><div class="eyebrow">Today · 오늘 할 일</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       '<div class="card home-card" id="hcWx"><div class="eyebrow">Weather · 오늘 날씨</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       '<div class="card home-card wide2" id="hcNews"><div class="eyebrow">News · 물류 뉴스</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       (hq ? '<div class="card home-card" id="hcReqs"><div class="eyebrow">Requests · 진행 중인 견적 요청</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
@@ -5244,6 +5671,7 @@
       api('history.list', { days: 7, type: '', userId: state.user.id, q: '' }).then(function (r) { if (alive()) homeHist(r.logs); }).catch(fail('#hcHist'));
     }
     if (ha) loadAnalysis().then(function () { if (alive()) homeAn(); }).catch(fail('#hcAn'));
+    loadCal().then(function () { if (alive()) homeToday(); }).catch(fail('#hcToday'));
     infoLoad('weather').then(function (r) { if (alive()) homeWeather(r); }).catch(fail('#hcWx'));
     infoLoad('news').then(function (r) { if (alive()) homeNews(r); }).catch(fail('#hcNews'));
   }
@@ -5639,6 +6067,13 @@
       '<b>뉴스</b>: 화물연대·안전운임·유가 같은 물류 업계 이슈를 구글 뉴스에서 30분마다 모아요. 키워드별로 걸러 보고, 제목을 누르면 원문이 열립니다. ⭐는 관심 업체 기사예요.',
       '<b>날씨</b>: 경기·충청·전라·강원·경상 도별 오늘·내일·모레 날씨. 눈·많은 비·강풍처럼 운행에 영향을 줄 날씨는 맨 위 "운행 주의"에 모아 보여요.'
     ].concat(adm ? ['뉴스 키워드(모을 키워드·관심 업체·제외 단어)는 뉴스 탭의 <b>키워드 설정</b>에서 바꿉니다.'] : [])]);
+    sec.unshift(['cal', '일정 · 할 일 · 휴가', [
+      '<b>달력</b>: 공휴일(구글 캘린더 "대한민국의 휴일"), 휴가·근무, 할 일' + (hq ? ', 견적 회신 기한, 서류 만료일' : '') + ', 일정을 한 달 단위로 봐요. 위쪽 칩으로 보일 것만 고를 수 있어요.',
+      '날짜를 누르면 그날 항목을 보고 바로 <b>일정 · 할 일 · 휴가·근무</b>를 추가할 수 있어요. 일정은 팀 전체가 보고, "나만 보기"를 켜면 나만 봐요.',
+      '<b>할 일</b>: 업체별로 일회·매월 말일·매월 N일·매주·매년 반복을 정해요. 기한이 주말·공휴일이면 앞 영업일(또는 다음 영업일)로 당겨져요.',
+      '체크하면 목록에서 사라지고 <b>완료 기록</b>에 누가 언제 했는지 남아요. 잘못 체크했으면 완료 기록에서 되돌리기.',
+      '<b>휴가·근무</b>: 연차·반차·병가·경조·공가·대체휴무와 야간근무·휴일근무를 등록해요. 반차는 0.5일, 연차는 주말·공휴일을 빼고 셉니다.' + (adm ? ' 관리자는 사람별 <b>연차 부여 일수</b>와 <b>회사 휴무일</b>을 정할 수 있어요.' : '')
+    ]]);
     sec.push(['account', '계정 · 보안', [
       '오른쪽 위 <b>비밀번호</b>에서 언제든 바꿀 수 있습니다. 로그인은 브라우저 창을 닫으면 풀립니다.',
       '비밀번호를 5번 틀리면 10분 동안 잠깁니다. 잊어버렸다면 관리자에게 초기화를 요청하세요.',
@@ -5649,7 +6084,7 @@
       '<div><div class="card help-head"><div class="eyebrow">Guide · 사용 안내</div><h2>JOIL 사용법</h2><p class="muted small" style="margin:6px 0 0">' + esc(state.user.name) + '님이 쓸 수 있는 메뉴만 안내합니다.</p></div>' +
       sec.map(function (s) {
         return '<section class="card help-sec" id="help-' + s[0] + '"><h3>' + s[1] + '</h3><ul>' + s[2].map(function (t) { return '<li>' + t + '</li>'; }).join('') + '</ul>' +
-          (['info', 'calc', 'bulk', 'history', 'reqs', 'rates', 'docs', 'analysis', 'admin'].indexOf(s[0]) !== -1 ? '<button class="btn btn-sm" data-open="' + (s[0] === 'history' ? 'quotes' : s[0]) + '">' + s[1].split(' · ')[0] + ' 열기 →</button>' : '') + '</section>';
+          (['cal', 'info', 'calc', 'bulk', 'history', 'reqs', 'rates', 'docs', 'analysis', 'admin'].indexOf(s[0]) !== -1 ? '<button class="btn btn-sm" data-open="' + (s[0] === 'history' ? 'quotes' : s[0]) + '">' + s[1].split(' · ')[0] + ' 열기 →</button>' : '') + '</section>';
       }).join('') + '</div></div>';
     $$('.help-rail button').forEach(function (b) { b.onclick = function () { var t = $('#help-' + b.dataset.sec); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }; });
     $$('.help-sec [data-open]').forEach(function (b) { b.onclick = function () { state.view = b.dataset.open === 'quotes' ? 'history' : b.dataset.open; render(); window.scrollTo(0, 0); }; });
@@ -5658,6 +6093,7 @@
   /* ───────── 시작 ───────── */
 
   state.an = newAnState();
+  state.cal = newCalState();
 
   window.addEventListener('beforeunload', function (e) {
     if (state.admin.tariffDirty || state.admin.settingsDirty || state.bulk.running) { e.preventDefault(); e.returnValue = ''; }

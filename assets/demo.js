@@ -49,6 +49,36 @@
   function today() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
   function pad(n) { return ('0' + n).slice(-2); }
   function fail(msg) { throw new Error(msg); }
+
+  /* 일정: 데모용 공휴일 (실제 서버는 구글 캘린더 "대한민국의 휴일"에서 가져옴) */
+  function calStore() {
+    store.cal = store.cal || {};
+    ['events', 'tasks', 'done', 'leaves', 'grants', 'companyHolidays'].forEach(function (k) { store.cal[k] = store.cal[k] || []; });
+    return store.cal;
+  }
+  function calId(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+  function calFind(k, id) { var f = calStore()[k].filter(function (x) { return x.id === id; })[0]; if (!f) fail('찾을 수 없습니다.'); return f; }
+  function calUsers() { return store.users.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name }; }); }
+  function demoHolidays() {
+    var out = [], y0 = new Date().getFullYear();
+    [y0 - 1, y0, y0 + 1].forEach(function (y) {
+      [['01-01', '신정'], ['03-01', '삼일절'], ['05-05', '어린이날'], ['06-06', '현충일'], ['08-15', '광복절'], ['10-03', '개천절'], ['10-09', '한글날'], ['12-25', '기독탄신일']]
+        .forEach(function (h) { out.push({ date: y + '-' + h[0], name: h[1], off: true }); });
+      out.push({ date: y + '-05-08', name: '어버이날', off: false });
+    });
+    [['2026-02-16', '설날 연휴'], ['2026-02-17', '설날'], ['2026-02-18', '설날 연휴'], ['2026-03-02', '대체공휴일(삼일절)'], ['2026-05-24', '부처님오신날'], ['2026-05-25', '대체공휴일(부처님오신날)'],
+      ['2026-06-03', '전국동시지방선거'], ['2026-08-17', '대체공휴일(광복절)'], ['2026-09-24', '추석 연휴'], ['2026-09-25', '추석'], ['2026-09-26', '추석 연휴'], ['2026-10-05', '대체공휴일(개천절)'],
+      ['2027-02-06', '설날 연휴'], ['2027-02-07', '설날'], ['2027-02-08', '설날 연휴'], ['2027-02-09', '대체공휴일(설날)'], ['2027-05-13', '부처님오신날'], ['2027-09-14', '추석 연휴'], ['2027-09-15', '추석'], ['2027-09-16', '추석 연휴']]
+      .forEach(function (h) { out.push({ date: h[0], name: h[1], off: true }); });
+    return out.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  }
+  function calAll() {
+    var c = calStore(), d = new Date();
+    return { events: c.events.filter(function (e) { return !e.private || e.ownerId === (curMe || {}).id; }), tasks: c.tasks, done: c.done, leaves: c.leaves,
+      grants: c.grants.map(function (g) { var u = calUsers().filter(function (x) { return x.id === g.userId; })[0]; return Object.assign({}, g, { name: u ? u.name : g.userId }); }),
+      users: calUsers(), holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
+  }
+  var curMe = null;
   function notesSorted() { return (store.notes || []).slice().sort(function (a, b) { return a.month < b.month ? 1 : -1; }); }
   function noteClean(n) {
     if (!/^\d{4}-\d{2}$/.test(String(n.month || ''))) fail('적용 시작 월을 YYYY-MM 형식으로 넣으세요.');
@@ -165,6 +195,7 @@
       return { token: token, user: { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u) }, settings: pubSettings() };
     }
     var me = session(req.token);
+    curMe = me;
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
@@ -292,6 +323,38 @@
       case 'rates.saveSpecials':
         store.custSp = store.custSp || {}; if (Object.keys(req.specials || {}).length) store.custSp[req.cust] = req.specials; else delete store.custSp[req.cust]; save();
         return { specials: req.specials || {} };
+      case 'cal.all': return calAll();
+      case 'cal.eventSave':
+        var ce = req.event || {}; if (!String(ce.title || '').trim()) fail('일정 제목을 입력하세요.');
+        var cv = { start: ce.start, end: ce.end || ce.start, title: String(ce.title).trim(), memo: ce.memo || '', private: !!ce.private };
+        if (req.id) Object.assign(calFind('events', req.id), cv); else store.cal.events.push(Object.assign({ id: calId('C'), ownerId: me.id, owner: me.name, at: today() }, cv));
+        save(); return calAll();
+      case 'cal.eventDelete': store.cal.events = store.cal.events.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
+      case 'cal.taskSave':
+        var ct = req.task || {}; if (!String(ct.title || '').trim()) fail('할 일을 입력하세요.');
+        var tv = { cust: ct.cust || '', title: String(ct.title).trim(), rule: ct.rule || { type: 'once' }, adjust: ct.adjust || 'prev', assigneeId: ct.assigneeId || '', assignee: ct.assignee || '', memo: ct.memo || '', active: ct.active !== false, start: ct.start || '' };
+        if (req.id) Object.assign(calFind('tasks', req.id), tv); else store.cal.tasks.push(Object.assign({ id: calId('T'), by: me.name, at: today() }, tv));
+        save(); return calAll();
+      case 'cal.taskDelete': store.cal.tasks = store.cal.tasks.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
+      case 'cal.taskDone':
+        store.cal.done = store.cal.done.filter(function (x) { return !(x.taskId === req.id && x.date === req.date); });
+        if (!req.undo) store.cal.done.push({ taskId: req.id, date: req.date, at: today(), by: me.name, memo: '' });
+        save(); return calAll();
+      case 'cal.leaveSave':
+        var cl = req.leave || {}, lu = calUsers().filter(function (u) { return u.id === (cl.userId || me.id); })[0] || { id: me.id, name: me.name };
+        var lv = { userId: lu.id, name: lu.name, kind: cl.kind || '연차', start: cl.start, end: /반차/.test(cl.kind) ? cl.start : (cl.end || cl.start), memo: cl.memo || '' };
+        if (lv.end < lv.start) fail('종료일이 시작일보다 빠릅니다.');
+        if (req.id) Object.assign(calFind('leaves', req.id), lv); else store.cal.leaves.push(Object.assign({ id: calId('L'), by: me.name, at: today() }, lv));
+        save(); return calAll();
+      case 'cal.leaveDelete': store.cal.leaves = store.cal.leaves.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
+      case 'cal.grantsSave':
+        if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
+        store.cal.grants = store.cal.grants.filter(function (g) { return g.year !== String(req.year); });
+        Object.keys(req.grants || {}).forEach(function (id) { store.cal.grants.push({ year: String(req.year), userId: id, name: id, days: Number(req.grants[id]) || 0 }); });
+        save(); return calAll();
+      case 'cal.companyHolidays':
+        if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
+        store.cal.companyHolidays = (req.list || []).filter(function (h) { return /^\d{4}-\d\d-\d\d$/.test(h.date); }); save(); return calAll();
       case 'notes.list': return { notes: notesSorted() };
       case 'notes.save':
         store.notes = store.notes || [];

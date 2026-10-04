@@ -119,6 +119,16 @@ function handle_(req) {
     case 'info.diesel': return dieselAll_();
     case 'info.news': return news_(!!req.force && session.role === 'admin');
     case 'info.weather': return weather_();
+    case 'cal.all': return calAll_(session);
+    case 'cal.eventSave': return eventSave_(session, req);
+    case 'cal.eventDelete': return eventDelete_(session, req.id);
+    case 'cal.taskSave': return taskSave_(session, req);
+    case 'cal.taskDelete': return taskDelete_(session, req.id);
+    case 'cal.taskDone': return taskDone_(session, req);
+    case 'cal.leaveSave': return leaveSave_(session, req);
+    case 'cal.leaveDelete': return leaveDelete_(session, req.id);
+    case 'cal.grantsSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return grantsSave_(session, req);
+    case 'cal.companyHolidays': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); saveCompanyHolidays_(req.list); return calAll_(session);
   }
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
@@ -1171,6 +1181,204 @@ function reqsDelete_(session, id) {
   }
   reqsSheet_().deleteRow(found.row);
   return {};
+}
+
+/* ───────────── 일정 (달력 · 할 일 · 휴가 · 공휴일) ─────────────
+ * 로그인한 사람 모두 사용 (팀 공유)
+ * 공휴일: 구글 캘린더 "대한민국의 휴일" 공개 캘린더(키 필요 없음) + 관리자가 넣는 회사 휴무일
+ */
+var SHEET_EVENTS = '일정';
+var EVENT_HEADER = ['ID', '시작일', '종료일', '제목', '메모', '공개', '작성자ID', '작성자', '작성일시'];
+var SHEET_TASKS = '할일규칙';
+var TASK_HEADER = ['ID', '업체', '제목', '규칙', '휴일처리', '담당ID', '담당', '메모', '사용', '시작일', '작성자', '작성일시'];
+var SHEET_TASK_DONE = '할일완료';
+var TASK_DONE_HEADER = ['규칙ID', '기한일', '완료일시', '완료자', '메모'];
+var SHEET_LEAVES = '휴가';
+var LEAVE_HEADER = ['ID', '아이디', '이름', '종류', '시작일', '종료일', '메모', '등록자', '등록일시'];
+var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무'];
+var SHEET_GRANTS = '연차부여';
+var GRANT_HEADER = ['연도', '아이디', '이름', '부여일수'];
+var SHEET_HOLI = '공휴일';
+var HOLI_HEADER = ['날짜', '이름', '구분'];
+var KR_HOLIDAY_ICS = 'https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics';
+
+function ymd_(d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
+function checkDate_(v, label) { v = String(v || '').trim().replace(/^'/, ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error((label || '날짜') + '를 YYYY-MM-DD 형식으로 넣으세요.'); return v; }
+function rowsOf_(sheet, header) { var sh = cacheSheet_(sheet, header); return sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, header.length).getValues().filter(function (r) { return r[0] !== ''; }); }
+function findRow_(sheet, header, id) {
+  var sh = cacheSheet_(sheet, header);
+  if (!id || sh.getLastRow() < 2) return null;
+  var hit = sh.getRange(2, 1, sh.getLastRow() - 1, 1).createTextFinder(String(id)).matchEntireCell(true).findNext();
+  return hit ? { sh: sh, row: hit.getRow(), raw: sh.getRange(hit.getRow(), 1, 1, header.length).getValues()[0] } : null;
+}
+function td_(v) { return textDate_(v); }
+
+/** 대한민국 공휴일: 구글 공개 캘린더 → 12시간 캐시 · 받은 값은 시트에 보관(실패하면 시트 값 사용) */
+function krHolidays_() {
+  var cache = CacheService.getScriptCache(), hit = cache.get('KR_HOLI');
+  if (hit) return JSON.parse(hit);
+  var list = null;
+  try {
+    var res = UrlFetchApp.fetch(KR_HOLIDAY_ICS, { muteHttpExceptions: true });
+    if (res.getResponseCode() === 200) list = parseHolidayIcs_(res.getContentText());
+  } catch (e) { list = null; }
+  var sh = cacheSheet_(SHEET_HOLI, HOLI_HEADER);
+  if (list && list.length) {
+    if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, HOLI_HEADER.length).clearContent();
+    sh.getRange(2, 1, list.length, 3).setValues(list.map(function (h) { return ["'" + h.date, h.name, h.off ? '공휴일' : '기념일']; }));
+  } else {
+    list = rowsOf_(SHEET_HOLI, HOLI_HEADER).map(function (r) { return { date: td_(r[0]), name: String(r[1]), off: String(r[2]) !== '기념일' }; });
+  }
+  try { cache.put('KR_HOLI', JSON.stringify(list), 43200); } catch (e) { /* 생략 */ }
+  return list;
+}
+function parseHolidayIcs_(text) {
+  var lines = String(text).replace(/\r\n[ \t]/g, '').split(/\r?\n/), out = [], ev = null;
+  lines.forEach(function (l) {
+    if (l === 'BEGIN:VEVENT') ev = {};
+    else if (l === 'END:VEVENT') {
+      if (ev && ev.start) {
+        var s = ev.start, e = ev.end || null, d = new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
+        var endD = e ? new Date(Date.UTC(+e.slice(0, 4), +e.slice(4, 6) - 1, +e.slice(6, 8))) : new Date(d.getTime() + 86400000);
+        for (var t = d; t < endD; t = new Date(t.getTime() + 86400000)) out.push({ date: t.toISOString().slice(0, 10), name: ev.name || '', off: !/기념일|observance/i.test(ev.desc || '') });
+      }
+      ev = null;
+    } else if (ev) {
+      var m = /^DTSTART[^:]*:(\d{8})/.exec(l); if (m) ev.start = m[1];
+      m = /^DTEND[^:]*:(\d{8})/.exec(l); if (m) ev.end = m[1];
+      m = /^SUMMARY[^:]*:(.*)$/.exec(l); if (m) ev.name = m[1].replace(/\\,/g, ',').trim();
+      m = /^DESCRIPTION[^:]*:(.*)$/.exec(l); if (m) ev.desc = m[1];
+    }
+  });
+  var seen = {};
+  return out.filter(function (h) { var k = h.date + h.name; if (seen[k]) return false; seen[k] = true; return true; }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+}
+function companyHolidays_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('COMPANY_HOLI');
+  return raw ? JSON.parse(raw) : [];
+}
+function saveCompanyHolidays_(list) {
+  var clean = (list || []).map(function (h) { return { date: checkDate_(h.date), name: String(h.name || '회사 휴무').trim().slice(0, 40) || '회사 휴무' }; }).slice(0, 200);
+  PropertiesService.getScriptProperties().setProperty('COMPANY_HOLI', JSON.stringify(clean));
+  return { companyHolidays: clean };
+}
+
+/** 달력에 필요한 것 한 번에 */
+function calAll_(session) {
+  var events = rowsOf_(SHEET_EVENTS, EVENT_HEADER).map(function (r) {
+    return { id: String(r[0]), start: td_(r[1]), end: td_(r[2]) || td_(r[1]), title: String(r[3]), memo: String(r[4] || ''), private: String(r[5]) === '나만', ownerId: String(r[6]), owner: String(r[7]), at: fmt_(r[8]) };
+  }).filter(function (e) { return !e.private || e.ownerId === session.id; });
+  var tasks = rowsOf_(SHEET_TASKS, TASK_HEADER).map(function (r) {
+    return { id: String(r[0]), cust: String(r[1] || ''), title: String(r[2]), rule: parseJson_(r[3], { type: 'once' }), adjust: String(r[4] || 'prev'), assigneeId: String(r[5] || ''), assignee: String(r[6] || ''),
+      memo: String(r[7] || ''), active: String(r[8]) !== 'N', start: td_(r[9]), by: String(r[10]), at: fmt_(r[11]) };
+  });
+  var since = ymd_(new Date(Date.now() - 400 * 86400000));
+  var done = rowsOf_(SHEET_TASK_DONE, TASK_DONE_HEADER).map(function (r) { return { taskId: String(r[0]), date: td_(r[1]), at: fmt_(r[2]), by: String(r[3]), memo: String(r[4] || '') }; })
+    .filter(function (d) { return d.date >= since; });
+  var leaves = rowsOf_(SHEET_LEAVES, LEAVE_HEADER).map(function (r) {
+    return { id: String(r[0]), userId: String(r[1]), name: String(r[2]), kind: String(r[3]), start: td_(r[4]), end: td_(r[5]) || td_(r[4]), memo: String(r[6] || ''), by: String(r[7]), at: fmt_(r[8]) };
+  });
+  var grants = rowsOf_(SHEET_GRANTS, GRANT_HEADER).map(function (r) { return { year: String(r[0]), userId: String(r[1]), name: String(r[2]), days: Number(r[3]) || 0 }; });
+  var users = listUsers_().filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
+  return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: users, holidays: krHolidays_(), companyHolidays: companyHolidays_(), today: ymd_(new Date()) };
+}
+
+function eventSave_(session, req) {
+  var e = req.event || {}, start = checkDate_(e.start, '시작일'), end = e.end ? checkDate_(e.end, '종료일') : start;
+  if (end < start) throw new Error('종료일이 시작일보다 빠릅니다.');
+  var title = String(e.title || '').trim(); if (!title) throw new Error('일정 제목을 입력하세요.');
+  var row = ["'" + start, "'" + end, title.slice(0, 100), String(e.memo || '').slice(0, 1000), e.private ? '나만' : '팀'];
+  if (req.id) {
+    var f = findRow_(SHEET_EVENTS, EVENT_HEADER, req.id); if (!f) throw new Error('일정을 찾을 수 없습니다.');
+    if (String(f.raw[6]) !== session.id && session.role !== 'admin') throw new Error('작성한 사람이나 관리자만 고칠 수 있습니다.');
+    f.sh.getRange(f.row, 2, 1, row.length).setValues([row]);
+  } else cacheSheet_(SHEET_EVENTS, EVENT_HEADER).appendRow([newId_('C')].concat(row).concat([session.id, session.name, now_()]));
+  return calAll_(session);
+}
+function eventDelete_(session, id) {
+  var f = findRow_(SHEET_EVENTS, EVENT_HEADER, id); if (!f) throw new Error('일정을 찾을 수 없습니다.');
+  if (String(f.raw[6]) !== session.id && session.role !== 'admin') throw new Error('작성한 사람이나 관리자만 지울 수 있습니다.');
+  f.sh.deleteRow(f.row);
+  return calAll_(session);
+}
+
+var TASK_TYPES = ['once', 'monthEnd', 'monthDay', 'weekly', 'yearly'];
+function cleanRule_(r) {
+  r = r || {};
+  var type = TASK_TYPES.indexOf(r.type) !== -1 ? r.type : 'once', out = { type: type };
+  if (type === 'once') out.date = checkDate_(r.date, '날짜');
+  if (type === 'monthDay') { out.day = Math.round(Number(r.day)); if (!(out.day >= 1 && out.day <= 31)) throw new Error('매월 며칠인지 1~31로 넣으세요.'); }
+  if (type === 'weekly') { out.dow = Math.round(Number(r.dow)); if (!(out.dow >= 0 && out.dow <= 6)) throw new Error('요일을 고르세요.'); }
+  if (type === 'yearly') { out.month = Math.round(Number(r.month)); out.day = Math.round(Number(r.day)); if (!(out.month >= 1 && out.month <= 12 && out.day >= 1 && out.day <= 31)) throw new Error('매년 몇 월 며칠인지 넣으세요.'); }
+  return out;
+}
+function taskSave_(session, req) {
+  var t = req.task || {};
+  var title = String(t.title || '').trim(); if (!title) throw new Error('할 일 제목을 입력하세요.');
+  var rule = cleanRule_(t.rule), adjust = ['prev', 'next', 'none'].indexOf(t.adjust) !== -1 ? t.adjust : 'prev';
+  var start = t.start ? checkDate_(t.start, '시작일') : ymd_(new Date());
+  var row = [String(t.cust || '').slice(0, 100), title.slice(0, 200), JSON.stringify(rule), adjust, String(t.assigneeId || ''), String(t.assignee || '').slice(0, 50), String(t.memo || '').slice(0, 1000), t.active === false ? 'N' : 'Y', "'" + start];
+  if (req.id) {
+    var f = findRow_(SHEET_TASKS, TASK_HEADER, req.id); if (!f) throw new Error('할 일을 찾을 수 없습니다.');
+    f.sh.getRange(f.row, 2, 1, row.length).setValues([row]);
+  } else cacheSheet_(SHEET_TASKS, TASK_HEADER).appendRow([newId_('T')].concat(row).concat([session.name, now_()]));
+  return calAll_(session);
+}
+function taskDelete_(session, id) {
+  var f = findRow_(SHEET_TASKS, TASK_HEADER, id); if (!f) throw new Error('할 일을 찾을 수 없습니다.');
+  f.sh.deleteRow(f.row);
+  return calAll_(session);
+}
+/** 체크(완료) · 체크 해제 */
+function taskDone_(session, req) {
+  var id = String(req.id || ''), date = checkDate_(req.date, '기한일');
+  if (!findRow_(SHEET_TASKS, TASK_HEADER, id)) throw new Error('할 일을 찾을 수 없습니다.');
+  var sh = cacheSheet_(SHEET_TASK_DONE, TASK_DONE_HEADER), rows = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, 2).getValues();
+  var idx = -1;
+  rows.forEach(function (r, i) { if (String(r[0]) === id && td_(r[1]) === date) idx = i; });
+  if (req.undo) { if (idx !== -1) sh.deleteRow(idx + 2); }
+  else if (idx === -1) sh.appendRow([id, "'" + date, now_(), session.name, String(req.memo || '').slice(0, 500)]);
+  return calAll_(session);
+}
+
+function leaveSave_(session, req) {
+  var l = req.leave || {};
+  var kind = LEAVE_KINDS.indexOf(l.kind) !== -1 ? l.kind : null; if (!kind) throw new Error('종류를 고르세요.');
+  var start = checkDate_(l.start, '시작일'), end = l.end ? checkDate_(l.end, '종료일') : start;
+  if (/반차/.test(kind)) end = start;
+  if (end < start) throw new Error('종료일이 시작일보다 빠릅니다.');
+  var userId = String(l.userId || session.id);
+  if (userId !== session.id && session.role !== 'admin') throw new Error('다른 사람의 휴가는 관리자만 등록할 수 있습니다.');
+  var u = listUsers_().filter(function (x) { return String(x.id) === userId; })[0];
+  if (!u) throw new Error('계정을 찾을 수 없습니다.');
+  var row = [userId, String(u.name), kind, "'" + start, "'" + end, String(l.memo || '').slice(0, 500)];
+  if (req.id) {
+    var f = findRow_(SHEET_LEAVES, LEAVE_HEADER, req.id); if (!f) throw new Error('기록을 찾을 수 없습니다.');
+    if (String(f.raw[1]) !== session.id && session.role !== 'admin') throw new Error('본인이나 관리자만 고칠 수 있습니다.');
+    f.sh.getRange(f.row, 2, 1, row.length).setValues([row]);
+  } else cacheSheet_(SHEET_LEAVES, LEAVE_HEADER).appendRow([newId_('L')].concat(row).concat([session.name, now_()]));
+  return calAll_(session);
+}
+function leaveDelete_(session, id) {
+  var f = findRow_(SHEET_LEAVES, LEAVE_HEADER, id); if (!f) throw new Error('기록을 찾을 수 없습니다.');
+  if (String(f.raw[1]) !== session.id && session.role !== 'admin') throw new Error('본인이나 관리자만 지울 수 있습니다.');
+  f.sh.deleteRow(f.row);
+  return calAll_(session);
+}
+/** 관리자: 연도별 연차 부여 일수 */
+function grantsSave_(session, req) {
+  var year = String(req.year || ''); if (!/^\d{4}$/.test(year)) throw new Error('연도를 확인하세요.');
+  var users = listUsers_(), sh = cacheSheet_(SHEET_GRANTS, GRANT_HEADER);
+  var keep = rowsOf_(SHEET_GRANTS, GRANT_HEADER).filter(function (r) { return String(r[0]) !== year; });
+  var add = Object.keys(req.grants || {}).map(function (uid) {
+    var u = users.filter(function (x) { return String(x.id) === uid; })[0]; if (!u) return null;
+    var v = Number(req.grants[uid]); if (!(v >= 0 && v <= 100)) throw new Error(u.name + ' 부여 일수를 확인하세요.');
+    return [year, uid, String(u.name), v];
+  }).filter(Boolean);
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, GRANT_HEADER.length).clearContent();
+  var all = keep.concat(add);
+  if (all.length) sh.getRange(2, 1, all.length, GRANT_HEADER.length).setValues(all);
+  return calAll_(session);
 }
 
 /* ───────────── 견적모음 ───────────── */
