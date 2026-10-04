@@ -61,7 +61,7 @@
   function calUsers() {
     var acc = store.users.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name }; }), nm = {};
     acc.forEach(function (u) { nm[u.name] = 1; });
-    return acc.concat(calStore().staff.filter(function (x) { return !nm[x.name]; }).map(function (x) { return { id: x.id, name: x.name, nameOnly: true }; }));
+    return acc.concat(calStore().staff.filter(function (x) { return x.active !== false && !nm[x.name] && !(x.account && acc.some(function (a) { return a.id === x.account; })); }).map(function (x) { return { id: x.id, name: x.name, nameOnly: true }; }));
   }
   function demoLeave(l) {
     var k = { '반차(오전)': '오전 반차', '반차(오후)': '오후 반차' }[l.kind] || l.kind || '연차', w = /근무|당직/.test(k);
@@ -86,9 +86,29 @@
     var c = calStore(), d = new Date();
     return { events: c.events.filter(function (e) { return !e.private || e.ownerId === (curMe || {}).id; }), tasks: c.tasks, done: c.done, leaves: c.leaves,
       grants: c.grants.map(function (g) { var u = calUsers().filter(function (x) { return x.id === g.userId; })[0]; return Object.assign({}, g, { name: u ? u.name : (g.name || g.userId) }); }),
-      users: calUsers(), dutyRules: c.dutyRules, dutyOverrides: c.dutyOvr, holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
+      users: calUsers(), staffInfo: (function () { var o = {}; c.staff.forEach(function (x) { o[x.name] = { biz: x.biz || '', dept: x.dept || '' }; }); return o; })(), dutyRules: c.dutyRules, dutyOverrides: c.dutyOvr, holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
   }
   var curMe = null;
+
+  function demoNotices() { return (store.notices || []).slice().sort(function (a, b) { return (b.pinned - a.pinned) || (a.at < b.at ? 1 : -1); }); }
+  function demoCusts() { return (store.custs || []).slice().sort(function (a, b) { return a.name.localeCompare(b.name); }); }
+  /** 데모용 간단 주간 요약 (실제 서버는 순번 당직·반복 할 일까지 계산) */
+  function demoWeekly(week) {
+    var add = function (s, n) { return new Date(Date.parse(s + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10); };
+    var cal = calAll(), t = week || cal.today, dw = (new Date(t + 'T00:00:00Z').getUTCDay() + 6) % 7, w = add(t, -dw), we = add(w, 6), lw = add(w, -7), lwe = add(w, -1);
+    var by = {};
+    cal.leaves.forEach(function (l) { if (['야간근무', '휴일근무', '당직'].indexOf(l.kind) === -1) return; var k = l.kind === '당직' ? l.end : l.start; if (k < lw || k > lwe) return; var x = by[l.name] || (by[l.name] = { name: l.name, '야간근무': 0, '휴일근무': 0, '당직': 0, total: 0 }); x[l.kind] += l.hours || 0; x.total += l.hours || 0; });
+    var rq = { received: 0, submitted: 0, won: 0, lost: 0, open: 0, due: [] };
+    (store.reqs || []).forEach(function (r) { if (r.received >= lw && r.received <= lwe) rq.received++; if (r.submitted >= lw && r.submitted <= lwe) rq.submitted++; if (r.status === '접수' || r.status === '검토중') { rq.open++; if (r.due && r.due <= we) rq.due.push({ date: r.due, cust: r.cust, title: r.title, late: r.due < cal.today }); } });
+    var lim = add(cal.today, 30);
+    return { week: w, weekEnd: we, lastWeek: lw, today: cal.today, holidays: cal.holidays.filter(function (h) { return h.off && h.date >= w && h.date <= we; }).map(function (h) { return { date: h.date, name: h.name }; }),
+      ot: Object.keys(by).sort().map(function (k) { return by[k]; }),
+      duty: cal.leaves.filter(function (l) { return l.kind === '당직' && l.end >= w && l.start <= we; }).map(function (l) { return { label: '당직', name: l.name, from: l.start < w ? w : l.start, to: l.end > we ? we : l.end }; }),
+      leaves: cal.leaves.filter(function (l) { return l.kind !== '당직' && l.end >= w && l.start <= we; }).map(function (l) { return { name: l.name, kind: l.kind, start: l.start, end: l.end, hours: l.hours }; }),
+      tasks: [], overdue: 0, reqs: rq,
+      contracts: demoCusts().filter(function (c) { return c.end && c.end <= lim && c.end >= add(cal.today, -7); }).map(function (c) { return { name: c.name, end: c.end }; }),
+      docs: [], notices: demoNotices().slice(0, 8).map(function (n) { return { title: n.title, body: n.body, pinned: n.pinned, owner: n.owner, at: n.at.slice(0, 10) }; }) };
+  }
   function notesSorted() { return (store.notes || []).slice().sort(function (a, b) { return a.month < b.month ? 1 : -1; }); }
   function noteClean(n) {
     if (!/^\d{4}-\d{2}$/.test(String(n.month || ''))) fail('적용 시작 월을 YYYY-MM 형식으로 넣으세요.');
@@ -357,13 +377,39 @@
         if (req.id) Object.assign(calFind('leaves', req.id), lv); else store.cal.leaves.push(Object.assign({ id: calId('L'), by: me.name, at: today() }, lv));
         save(); return calAll();
       case 'cal.leaveDelete': store.cal.leaves = store.cal.leaves.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
-      case 'cal.staffSave':
-        calStore().staff = (req.names || []).map(function (n) { return String(n).trim(); }).filter(Boolean).map(function (n) { var o = calStore().staff.filter(function (x) { return x.name === n; })[0]; return o || { id: calId('S'), name: n }; });
-        save(); return calAll();
+      case 'staff.list': if (me.role !== 'admin') fail('관리자만 할 수 있습니다.'); return { staff: calStore().staff.map(function (x) { return Object.assign({ biz: '', dept: '', email: '', account: '', active: true, weekly: false }, x); }), accounts: store.users.map(function (u) { return { id: u.id, name: u.name, active: u.active }; }) };
+      case 'staff.save':
+        if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
+        var seenN = {};
+        calStore().staff = (req.staff || []).filter(function (x) { return String(x.name || '').trim(); }).map(function (x) {
+          var nm2 = String(x.name).trim(); if (seenN[nm2]) fail('"' + nm2 + '" 이름이 두 번 있어요.'); seenN[nm2] = 1;
+          if (x.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.email)) fail(nm2 + ' 메일 주소를 확인하세요.');
+          return { id: x.id || calId('S'), name: nm2, biz: x.biz || '', dept: x.dept || '', email: x.email || '', account: x.account || '', active: x.active !== false, weekly: !!x.weekly && !!x.email };
+        });
+        save(); return { staff: calStore().staff };
+      case 'notice.list': return { notices: demoNotices() };
+      case 'notice.save':
+        var nn2 = req.notice || {}; if (!String(nn2.title || '').trim()) fail('공지 제목을 넣으세요.');
+        store.notices = store.notices || [];
+        if (req.id) { var ex = store.notices.filter(function (x) { return x.id === req.id; })[0]; if (!ex) fail('공지를 찾을 수 없습니다.'); if (ex.ownerId !== me.id && me.role !== 'admin') fail('쓴 사람이나 관리자만 고칠 수 있습니다.'); Object.assign(ex, { title: nn2.title.trim(), body: nn2.body || '', pinned: me.role === 'admin' ? !!nn2.pinned : ex.pinned, updated: today() }); }
+        else store.notices.push({ id: calId('G'), title: nn2.title.trim(), body: nn2.body || '', pinned: me.role === 'admin' && !!nn2.pinned, ownerId: me.id, owner: me.name, at: today() + ':00', updated: '' });
+        save(); return { notices: demoNotices() };
+      case 'notice.delete': store.notices = (store.notices || []).filter(function (x) { return x.id !== req.id; }); save(); return { notices: demoNotices() };
+      case 'custs.list': return { custs: demoCusts() };
+      case 'custs.save':
+        var cc = req.cust || {}; if (!String(cc.name || '').trim()) fail('거래처 이름을 넣으세요.');
+        store.custs = store.custs || [];
+        if (store.custs.some(function (x) { return x.id !== req.id && x.name === cc.name.trim(); })) fail('같은 이름의 거래처가 이미 있어요.');
+        var co2 = { name: cc.name.trim(), aliases: String(cc.aliases || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean), biz: cc.biz || '', owner: cc.owner || '', contact: cc.contact || '', phone: cc.phone || '', email: cc.email || '', start: cc.start || '', end: cc.end || '', payment: cc.payment || '', memo: cc.memo || '', by: me.name, at: today() };
+        var cid = req.id; if (cid) Object.assign(store.custs.filter(function (x) { return x.id === cid; })[0], co2); else { cid = calId('K'); store.custs.push(Object.assign({ id: cid }, co2)); }
+        save(); return { custs: demoCusts(), id: cid };
+      case 'custs.delete': store.custs = (store.custs || []).filter(function (x) { return x.id !== req.id; }); save(); return { custs: demoCusts() };
+      case 'weekly.get': return { weekly: demoWeekly(req.week) };
+      case 'weekly.send': fail('데모 모드에서는 메일을 보낼 수 없어요. (실제 서버에서는 됩니다)');
       case 'cal.import':
         var cs = calStore(), res = { leaves: 0, events: 0, grants: 0, skipped: 0, staff: 0 }, byN = {};
         calUsers().forEach(function (u) { byN[u.name] = u.id; });
-        var whoId = function (n) { if (!byN[n]) { var sid = calId('S'); cs.staff.push({ id: sid, name: n }); byN[n] = sid; res.staff++; } return byN[n]; };
+        var whoId = function (n) { if (!byN[n]) { var sid = calId('S'); cs.staff.push({ id: sid, name: n, active: true }); byN[n] = sid; res.staff++; } return byN[n]; };
         var lk = {}; cs.leaves.forEach(function (l) { lk[l.name + '|' + l.kind + '|' + l.start] = 1; });
         (req.leaves || []).forEach(function (l) { var v = demoLeave(l), k = l.name + '|' + v.kind + '|' + v.start; if (lk[k]) { res.skipped++; return; } lk[k] = 1; cs.leaves.push(Object.assign({ id: calId('L'), userId: whoId(l.name), name: l.name, by: me.name + ' (가져오기)', at: today() }, v)); res.leaves++; });
         var ek = {}; cs.events.forEach(function (e) { ek[e.title + '|' + e.start] = 1; });

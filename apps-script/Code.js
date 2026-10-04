@@ -36,6 +36,7 @@ function onOpen() {
     .addItem('유가 자동 기록 켜기', 'installDieselTrigger')
     .addItem('서류함 준비 (드라이브 권한)', 'setupDocs')
     .addItem('공휴일 받기 (캘린더 권한)', 'setupHolidays')
+    .addItem('주간 요약 메일 켜기 (메일 권한)', 'installWeeklyTrigger')
     .addToUi();
 }
 
@@ -128,7 +129,13 @@ function handle_(req) {
     case 'cal.taskDone': return taskDone_(session, req);
     case 'cal.leaveSave': return leaveSave_(session, req);
     case 'cal.leaveDelete': return leaveDelete_(session, req.id);
-    case 'cal.staffSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return staffSave_(session, req);
+    case 'staff.list': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return { staff: calStaff_(), accounts: listUsers_().map(function (u) { return { id: String(u.id), name: String(u.name), active: u.active }; }) };
+    case 'staff.save': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return staffSave_(session, req);
+    case 'notice.list': return { notices: noticesList_() };
+    case 'notice.save': return noticeSave_(session, req);
+    case 'notice.delete': return noticeDelete_(session, req.id);
+    case 'weekly.get': return { weekly: weekly_(req.week, session) };
+    case 'weekly.send': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return weeklySend_(req.week, req.onlyMe ? session : null);
     case 'cal.dutyRuleSave': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return dutyRuleSave_(session, req);
     case 'cal.dutyRuleDelete': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return dutyRuleDelete_(session, req.id);
     case 'cal.dutyOverride': return dutyOverride_(session, req);
@@ -140,7 +147,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'custs.list', 'custs.save', 'custs.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   if (action === 'analysis.index' || action === 'analysis.load' || /^notes\./.test(action)) requirePerm_(session, 'analysis');
   switch (action) {
@@ -161,6 +168,9 @@ function handle_(req) {
     case 'rates.get': return ratesGet_(req.cust);
     case 'rates.upload': return ratesUpload_(session, req);
     case 'rates.saveSpecials': return saveCustSpecials_(req.cust, req.specials);
+    case 'custs.list': return custsList_();
+    case 'custs.save': return custSave_(session, req);
+    case 'custs.delete': return custDelete_(req.id);
     case 'reqs.list': return reqsList_();
     case 'reqs.get': return reqsGet_(req.id);
     case 'reqs.save': return reqsSave_(session, req);
@@ -1347,7 +1357,7 @@ function calAll_(session) {
   var users = calUsers_();
   var dutyOvr = rowsOf_(SHEET_DUTY_OVR, DUTY_OVR_HEADER).map(function (r) { return { ruleId: String(r[0]), week: td_(r[1]), userId: String(r[2] || ''), name: String(r[3] || ''), hours: r[4] === '' ? null : Number(r[4]), cancel: String(r[5]) === 'Y', memo: String(r[6] || ''), by: String(r[7] || ''), at: fmt_(r[8]) }; });
   return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: users, holidays: krHolidays_(), companyHolidays: companyHolidays_(), today: ymd_(new Date()),
-    dutyRules: dutyRules_(), dutyOverrides: dutyOvr };
+    dutyRules: dutyRules_(), dutyOverrides: dutyOvr, staffInfo: staffInfo_() };
 }
 
 function eventSave_(session, req) {
@@ -1450,18 +1460,52 @@ function leaveRow_(id, userId, name, v, by) {
   return [id, userId, name, v.kind, "'" + v.start, "'" + v.end, v.memo, by, now_(), "'" + v.from, "'" + v.to, v.hours];
 }
 /** 휴가·근무 대상: 사용 중인 계정 + 계정 없는 직원(이름만, 관리자가 추가) */
-function calStaff_() { return parseJson_(PropertiesService.getScriptProperties().getProperty('CAL_STAFF'), []); }
+/* ── 직원 목록 (사업자·부서·메일·계정 연결) ── */
+var SHEET_STAFF = '직원';
+var STAFF_HEADER = ['ID', '이름', '사업자', '부서', '이메일', '계정아이디', '재직', '주간요약', '메모'];
+var BIZ_LIST = ['조일물류', '명일로지스', '조일로지스'];
+function calStaff_() {
+  var rows = rowsOf_(SHEET_STAFF, STAFF_HEADER);
+  if (!rows.length) { // 예전 "계정 없는 직원" 명단 옮기기
+    var old = parseJson_(PropertiesService.getScriptProperties().getProperty('CAL_STAFF'), []);
+    if (old.length) { staffWrite_(old.map(function (x) { return { id: x.id, name: x.name, active: true }; })); rows = rowsOf_(SHEET_STAFF, STAFF_HEADER); }
+  }
+  return rows.map(function (r) { return { id: String(r[0]), name: String(r[1]), biz: String(r[2] || ''), dept: String(r[3] || ''), email: String(r[4] || ''), account: String(r[5] || ''), active: String(r[6]) !== 'N', weekly: String(r[7]) === 'Y', memo: String(r[8] || '') }; });
+}
+function staffWrite_(list) {
+  var sh = cacheSheet_(SHEET_STAFF, STAFF_HEADER);
+  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, STAFF_HEADER.length).clearContent();
+  if (list.length) sh.getRange(2, 1, list.length, STAFF_HEADER.length).setValues(list.map(function (x) {
+    return [x.id, x.name, x.biz || '', x.dept || '', x.email || '', x.account || '', x.active === false ? 'N' : 'Y', x.weekly ? 'Y' : '', x.memo || ''];
+  }));
+}
+/** 휴가·근무 대상: 사용 중인 계정 + 계정 없는 재직 직원 */
 function calUsers_() {
   var acc = listUsers_().filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
-  var names = {}; acc.forEach(function (u) { names[u.name] = 1; });
-  return acc.concat(calStaff_().filter(function (s) { return !names[s.name]; }).map(function (s) { return { id: s.id, name: s.name, nameOnly: true }; }));
+  var names = {}, ids = {}; acc.forEach(function (u) { names[u.name] = 1; ids[u.id] = 1; });
+  return acc.concat(calStaff_().filter(function (s) { return s.active && !names[s.name] && !(s.account && ids[s.account]); }).map(function (s) { return { id: s.id, name: s.name, nameOnly: true }; }));
+}
+/** 이름 → { biz, dept } (메일은 빼고) */
+function staffInfo_() {
+  var accName = {}; listUsers_().forEach(function (u) { accName[String(u.id)] = String(u.name); });
+  var out = {};
+  calStaff_().forEach(function (s) { var v = { biz: s.biz, dept: s.dept }; out[s.name] = v; if (s.account && accName[s.account]) out[accName[s.account]] = v; });
+  return out;
 }
 function staffSave_(session, req) {
-  var seen = {}, old = {}; calStaff_().forEach(function (s) { old[s.name] = s.id; });
-  var list = (req.names || []).map(function (n) { return String(n || '').trim().slice(0, 30); }).filter(function (n) { if (!n || seen[n]) return false; seen[n] = 1; return true; })
-    .map(function (n) { return { id: old[n] || 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), name: n }; });
-  PropertiesService.getScriptProperties().setProperty('CAL_STAFF', JSON.stringify(list));
-  return calAll_(session);
+  var old = {}; calStaff_().forEach(function (s) { old[s.id] = s; });
+  var seen = {};
+  var list = (req.staff || []).map(function (x) {
+    var name = String(x.name || '').trim().slice(0, 30); if (!name) return null;
+    if (seen[name]) throw new Error('"' + name + '" 이름이 두 번 있어요.'); seen[name] = 1;
+    var email = String(x.email || '').trim().slice(0, 100);
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(name + ' 메일 주소를 확인하세요.');
+    var biz = BIZ_LIST.indexOf(x.biz) !== -1 ? x.biz : '';
+    return { id: old[x.id] ? x.id : 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), name: name, biz: biz, dept: String(x.dept || '').trim().slice(0, 30), email: email,
+      account: String(x.account || '').trim(), active: x.active !== false, weekly: !!x.weekly && !!email, memo: String(x.memo || '').slice(0, 200) };
+  }).filter(Boolean);
+  staffWrite_(list);
+  return { staff: calStaff_() };
 }
 /** 관리자: 엑셀 가져오기 (휴가·근무 / 일정 / 연차 부여). 같은 기록은 건너뜀 */
 function calImport_(session, req) {
@@ -1473,7 +1517,7 @@ function calImport_(session, req) {
       name = String(name || '').trim(); if (!name) throw new Error('이름이 비어 있는 줄이 있습니다.');
       if (byName[name]) return byName[name];
       var id = 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10);
-      staff.push({ id: id, name: name.slice(0, 30) }); byName[name] = id; return id;
+      staff.push({ id: id, name: name.slice(0, 30), active: true }); byName[name] = id; return id;
     };
     var res = { leaves: 0, events: 0, grants: 0, skipped: 0, staff: 0 }, n0 = staff.length;
     var sh = leaveSheet_(), have = {};
@@ -1507,7 +1551,7 @@ function calImport_(session, req) {
       if (rows.length) gsh.getRange(2, 1, rows.length, GRANT_HEADER.length).setValues(rows);
     }
     res.staff = staff.length - n0;
-    if (res.staff) PropertiesService.getScriptProperties().setProperty('CAL_STAFF', JSON.stringify(staff));
+    if (res.staff) staffWrite_(staff);
     return { result: res, cal: calAll_(session) };
   } finally { lock.releaseLock(); }
 }
@@ -1573,6 +1617,208 @@ function grantsSave_(session, req) {
   var all = keep.concat(add);
   if (all.length) sh.getRange(2, 1, all.length, GRANT_HEADER.length).setValues(all);
   return calAll_(session);
+}
+
+/* ───────────── 팀 공지 ───────────── */
+
+var SHEET_NOTICE = '공지';
+var NOTICE_HEADER = ['ID', '제목', '내용', '고정', '작성자ID', '작성자', '작성일시', '수정일시'];
+function noticesList_() {
+  return rowsOf_(SHEET_NOTICE, NOTICE_HEADER).map(function (r) {
+    return { id: String(r[0]), title: String(r[1]), body: String(r[2] || ''), pinned: String(r[3]) === 'Y', ownerId: String(r[4]), owner: String(r[5]), at: fmt_(r[6]), updated: fmt_(r[7]) };
+  }).sort(function (a, b) { return (b.pinned - a.pinned) || (a.at < b.at ? 1 : -1); });
+}
+function noticeSave_(session, req) {
+  var n = req.notice || {}, title = String(n.title || '').trim().slice(0, 100);
+  if (!title) throw new Error('공지 제목을 넣으세요.');
+  var body = String(n.body || '').slice(0, 5000), adm = session.role === 'admin';
+  if (req.id) {
+    var f = findRow_(SHEET_NOTICE, NOTICE_HEADER, req.id); if (!f) throw new Error('공지를 찾을 수 없습니다.');
+    if (String(f.raw[4]) !== session.id && !adm) throw new Error('쓴 사람이나 관리자만 고칠 수 있습니다.');
+    f.sh.getRange(f.row, 2, 1, 3).setValues([[title, body, adm ? (n.pinned ? 'Y' : '') : String(f.raw[3])]]);
+    f.sh.getRange(f.row, 8).setValue(now_());
+  } else cacheSheet_(SHEET_NOTICE, NOTICE_HEADER).appendRow([newId_('G'), title, body, adm && n.pinned ? 'Y' : '', session.id, session.name, now_(), '']);
+  return { notices: noticesList_() };
+}
+function noticeDelete_(session, id) {
+  var f = findRow_(SHEET_NOTICE, NOTICE_HEADER, id); if (!f) throw new Error('공지를 찾을 수 없습니다.');
+  if (String(f.raw[4]) !== session.id && session.role !== 'admin') throw new Error('쓴 사람이나 관리자만 지울 수 있습니다.');
+  f.sh.deleteRow(f.row);
+  return { notices: noticesList_() };
+}
+
+/* ───────────── 거래처 카드 ───────────── */
+
+var SHEET_CUSTS = '거래처';
+var CUST_HEADER = ['ID', '이름', '별칭', '사업자', '담당직원', '담당자', '연락처', '이메일', '계약시작', '계약만료', '결제조건', '메모', '수정자', '수정일시'];
+function custsList_() {
+  return { custs: rowsOf_(SHEET_CUSTS, CUST_HEADER).map(function (r) {
+    return { id: String(r[0]), name: String(r[1]), aliases: String(r[2] || '').split(/\s*,\s*/).filter(Boolean), biz: String(r[3] || ''), owner: String(r[4] || ''), contact: String(r[5] || ''), phone: String(r[6] || ''), email: String(r[7] || ''),
+      start: textDate_(r[8]), end: textDate_(r[9]), payment: String(r[10] || ''), memo: String(r[11] || ''), by: String(r[12] || ''), at: fmt_(r[13]) };
+  }).sort(function (a, b) { return a.name.localeCompare(b.name); }) };
+}
+function custSave_(session, req) {
+  var c = req.cust || {}, name = String(c.name || '').trim().slice(0, 100); if (!name) throw new Error('거래처 이름을 넣으세요.');
+  var d = function (v, label) { v = String(v || '').trim(); return v ? checkDate_(v, label) : ''; };
+  var start = d(c.start, '계약 시작일'), end = d(c.end, '계약 만료일');
+  if (start && end && end < start) throw new Error('계약 만료일이 시작일보다 빠릅니다.');
+  var aliases = (Array.isArray(c.aliases) ? c.aliases : String(c.aliases || '').split(',')).map(function (x) { return String(x).trim(); }).filter(Boolean).join(', ').slice(0, 500);
+  var dup = custsList_().custs.filter(function (x) { return x.id !== req.id && x.name === name; })[0]; if (dup) throw new Error('같은 이름의 거래처가 이미 있어요.');
+  var row = [name, aliases, BIZ_LIST.indexOf(c.biz) !== -1 ? c.biz : '', String(c.owner || '').slice(0, 30), String(c.contact || '').slice(0, 60), String(c.phone || '').slice(0, 60), String(c.email || '').slice(0, 100),
+    start ? "'" + start : '', end ? "'" + end : '', String(c.payment || '').slice(0, 200), String(c.memo || '').slice(0, 3000), session.name, now_()];
+  var id = req.id;
+  if (id) { var f = findRow_(SHEET_CUSTS, CUST_HEADER, id); if (!f) throw new Error('거래처를 찾을 수 없습니다.'); f.sh.getRange(f.row, 2, 1, row.length).setValues([row]); }
+  else { id = newId_('K'); cacheSheet_(SHEET_CUSTS, CUST_HEADER).appendRow([id].concat(row)); }
+  var out = custsList_(); out.id = id; return out;
+}
+function custDelete_(id) {
+  var f = findRow_(SHEET_CUSTS, CUST_HEADER, id); if (!f) throw new Error('거래처를 찾을 수 없습니다.');
+  f.sh.deleteRow(f.row); return custsList_();
+}
+
+/* ───────────── 주간 업무 요약 (사이트 + 메일) ───────────── */
+
+function addD_(s, n) { var d = new Date(Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)) + n * 86400000); return d.toISOString().slice(0, 10); }
+function dowD_(s) { return new Date(Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10))).getUTCDay(); }
+function holiMap_(cal) {
+  var m = {};
+  (cal.holidays || []).forEach(function (h) { (m[h.date] = m[h.date] || []).push({ name: h.name, off: h.off }); });
+  (cal.companyHolidays || []).forEach(function (h) { (m[h.date] = m[h.date] || []).push({ name: h.name, off: true }); });
+  return m;
+}
+function isOffD_(s, holi) { var w = dowD_(s); return w === 0 || w === 6 || (holi[s] || []).some(function (h) { return h.off; }); }
+function taskOccD_(t, from, to, holi, today) {
+  if (!t.active) return [];
+  var r = t.rule || {}, bases = [], lo = addD_(from, -10), hi = addD_(to, 10), s;
+  if (r.type === 'once') bases = [r.date];
+  else if (r.type === 'daily') { if (today >= from && today <= to && (r.workdays === false || !isOffD_(today, holi))) bases = [today]; }
+  else if (r.type === 'weekly') { for (s = lo; s <= hi; s = addD_(s, 1)) if (dowD_(s) === Number(r.dow)) bases.push(s); }
+  else for (s = lo.slice(0, 7) + '-01'; s <= hi; s = addD_(s.slice(0, 7) + '-28', 7).slice(0, 7) + '-01') {
+    var y = +s.slice(0, 4), m = +s.slice(5, 7), n = new Date(Date.UTC(y, m, 0)).getUTCDate(), ym = s.slice(0, 7);
+    if (r.type === 'monthEnd') bases.push(ym + '-' + ('0' + n).slice(-2));
+    else if (r.type === 'monthDay') bases.push(ym + '-' + ('0' + Math.min(r.day, n)).slice(-2));
+    else if (r.type === 'yearly' && m === Number(r.month)) bases.push(ym + '-' + ('0' + Math.min(r.day, n)).slice(-2));
+  }
+  return bases.filter(function (b) { return b && (!t.start || b >= t.start); }).map(function (b) {
+    var date = b;
+    if (r.type !== 'weekly' && r.type !== 'daily' && t.adjust !== 'none') { var k = 0; while (isOffD_(date, holi) && k++ < 15) date = addD_(date, t.adjust === 'next' ? 1 : -1); }
+    return { task: t, base: b, date: date };
+  }).filter(function (o) { return o.date >= from && o.date <= to; });
+}
+function dutyEntD_(cal, from, to, holi) {
+  var out = [], real = {}, ovr = {};
+  cal.leaves.forEach(function (l) { if (l.kind === '당직') real[l.name + '|' + l.start] = 1; });
+  (cal.dutyOverrides || []).forEach(function (o) { ovr[o.ruleId + '|' + o.week] = o; });
+  (cal.dutyRules || []).forEach(function (r) {
+    if (!r.active || !r.members.length) return;
+    var w = mondayOf_(from); if (w < r.start) w = r.start;
+    for (; w <= to; w = addD_(w, 7)) {
+      var n = Math.round((Date.parse(w) - Date.parse(r.start)) / 604800000), m = r.members[((n % r.members.length) + r.members.length) % r.members.length];
+      var o = ovr[r.id + '|' + w]; if (o && o.cancel) continue;
+      var who = o && o.name ? o.name : m.name, h = o && o.hours != null ? o.hours : r.hours;
+      if (r.mode === 'week') { if (!real[who + '|' + w]) out.push({ kind: '당직', label: r.name, name: who, start: w, end: addD_(w, 6), hours: h }); }
+      else for (var k = 0; k < 7; k++) {
+        var day = addD_(w, k), hol = (holi[day] || []).some(function (x) { return x.off; });
+        if ((r.days.indexOf(dowD_(day)) !== -1 || (r.holidays && hol)) && !real[who + '|' + day]) out.push({ kind: '당직', label: r.name, name: who, start: day, end: day, hours: h });
+      }
+    }
+  });
+  return out.filter(function (l) { return l.end >= from && l.start <= to; });
+}
+var OT_KINDS_ = ['야간근무', '휴일근무', '당직'];
+function otDate_(l) { return l.kind === '당직' ? l.end : l.start; } // 당직은 끝나는 날 기준
+/** week: 그 주 아무 날 (기본 이번 주). 지난주 정리 + 이번 주 할 일 */
+function weekly_(week, session) {
+  var today = ymd_(new Date()), w = mondayOf_(week ? checkDate_(week, '주') : today), we = addD_(w, 6), lw = addD_(w, -7), lwe = addD_(w, -1);
+  var cal = calAll_(session || { id: '', role: '' }), holi = holiMap_(cal), quote = !session || (session.perms || []).indexOf('quote') !== -1;
+  var res = { week: w, weekEnd: we, lastWeek: lw, today: today, holidays: [], ot: [], duty: [], leaves: [], tasks: [], overdue: 0, reqs: null, contracts: [], docs: [], notices: [] };
+  for (var d = w; d <= we; d = addD_(d, 1)) (holi[d] || []).forEach(function (h) { if (h.off) res.holidays.push({ date: d, name: h.name }); });
+  // 지난주 추가근무 (사람별)
+  var by = {};
+  cal.leaves.concat(dutyEntD_(cal, addD_(lw, -7), lwe, holi)).forEach(function (l) {
+    if (OT_KINDS_.indexOf(l.kind) === -1) return; var k = otDate_(l); if (k < lw || k > lwe) return;
+    var s = by[l.name] || (by[l.name] = { name: l.name, '야간근무': 0, '휴일근무': 0, '당직': 0, total: 0 });
+    s[l.kind] += Number(l.hours) || 0; s.total += Number(l.hours) || 0;
+  });
+  res.ot = Object.keys(by).sort().map(function (k) { return by[k]; });
+  // 이번 주 당직 · 휴가
+  var dmap = {};
+  cal.leaves.filter(function (l) { return l.kind === '당직'; }).concat(dutyEntD_(cal, w, we, holi)).forEach(function (l) {
+    if (l.end < w || l.start > we) return; var lab = l.label || (l.memo && l.memo.length <= 10 ? l.memo : '당직'), k = lab + '|' + l.name;
+    var x = dmap[k] || (dmap[k] = { label: lab, name: l.name, days: [] }); x.days.push(l.start < w ? w : l.start); x.end = l.end > we ? we : l.end;
+  });
+  res.duty = Object.keys(dmap).map(function (k) { var x = dmap[k]; x.days.sort(); return { label: x.label, name: x.name, from: x.days[0], to: x.end }; }).sort(function (a, b) { return a.label.localeCompare(b.label); });
+  res.leaves = cal.leaves.filter(function (l) { return l.kind !== '당직' && l.end >= w && l.start <= we; }).map(function (l) { return { name: l.name, kind: l.kind, start: l.start, end: l.end, hours: l.hours }; })
+    .sort(function (a, b) { return a.start < b.start ? -1 : 1; });
+  // 할 일
+  var done = {}; cal.done.forEach(function (x) { done[x.taskId + '|' + x.date] = 1; });
+  cal.tasks.forEach(function (t) {
+    taskOccD_(t, w, we, holi, today).forEach(function (o) { if (!done[t.id + '|' + o.base]) res.tasks.push({ date: o.date, cust: t.cust, title: t.title, who: t.assignee || '팀 전체' }); });
+    taskOccD_(t, addD_(today, -90), addD_(w < today ? today : w, -1), holi, today).forEach(function (o) { if (!done[t.id + '|' + o.base] && o.date < today) res.overdue++; });
+  });
+  res.tasks.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  // 견적 접수
+  if (quote) {
+    var rq = { received: 0, submitted: 0, won: 0, lost: 0, open: 0, due: [] };
+    rowsOf_(SHEET_REQS, REQ_HEADER).forEach(function (r) {
+      var o = reqRowToObj_(r, false), log = parseJson_(r[15], []);
+      if (o.received >= lw && o.received <= lwe) rq.received++;
+      if (o.submitted >= lw && o.submitted <= lwe) rq.submitted++;
+      log.forEach(function (x) { var dd = String(x.at).slice(0, 10); if (dd >= lw && dd <= lwe) { if (/→ 수주$/.test(x.text)) rq.won++; if (/→ 미수주$/.test(x.text)) rq.lost++; } });
+      if (o.status === '접수' || o.status === '검토중') { rq.open++; if (o.due && o.due <= we) rq.due.push({ date: o.due, cust: o.cust, title: o.title, late: o.due < today }); }
+    });
+    rq.due.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    res.reqs = rq;
+    var lim = addD_(today, 30);
+    custsList_().custs.forEach(function (c) { if (c.end && c.end <= lim && c.end >= addD_(today, -7)) res.contracts.push({ name: c.name, end: c.end }); });
+    docsList_().docs.forEach(function (x) { if (x.expires && x.expires <= lim && x.expires >= addD_(today, -7)) res.docs.push({ name: (x.biz ? x.biz + ' ' : '') + x.name, end: x.expires }); });
+    res.contracts.sort(function (a, b) { return a.end < b.end ? -1 : 1; }); res.docs.sort(function (a, b) { return a.end < b.end ? -1 : 1; });
+  }
+  var since = addD_(today, -14);
+  res.notices = noticesList_().filter(function (n) { return n.pinned || n.at.slice(0, 10) >= since; }).slice(0, 8).map(function (n) { return { title: n.title, body: n.body.slice(0, 300), pinned: n.pinned, owner: n.owner, at: n.at.slice(0, 10) }; });
+  return res;
+}
+function md_(s) { return (+s.slice(5, 7)) + '/' + (+s.slice(8, 10)); }
+function weeklyHtml_(x) {
+  var H = function (s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  var WDN = ['일', '월', '화', '수', '목', '금', '토'], wd = function (s) { return md_(s) + '(' + WDN[dowD_(s)] + ')'; };
+  var sec = function (t, inner) { return '<h3 style="font-size:15px;margin:22px 0 8px;color:#1E1C19;border-left:4px solid #F07A22;padding-left:8px">' + t + '</h3>' + inner; };
+  var tbl = function (head, rows) { return rows.length ? '<table style="border-collapse:collapse;width:100%;font-size:13px">' + '<tr>' + head.map(function (h) { return '<th style="text-align:left;background:#F4EEE3;padding:6px 8px;border:1px solid #DCD2C1">' + h + '</th>'; }).join('') + '</tr>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td style="padding:6px 8px;border:1px solid #DCD2C1">' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>' : '<p style="color:#7A7265;font-size:13px;margin:0">없음</p>'; };
+  var h = '<div style="font-family:\'Malgun Gothic\',sans-serif;max-width:680px;color:#1E1C19">' +
+    '<div style="height:6px;background:linear-gradient(90deg,#E0472E 0 20%,#F07A22 20% 40%,#F4BE2E 40% 60%,#4FA864 60% 80%,#2A9DB0 80%)"></div>' +
+    '<h2 style="margin:14px 0 2px">JOIL 주간 업무 요약</h2><p style="color:#7A7265;margin:0 0 6px">' + wd(x.week) + ' ~ ' + wd(x.weekEnd) + (x.holidays.length ? ' · 공휴일: ' + x.holidays.map(function (d) { return H(md_(d.date) + ' ' + d.name); }).join(', ') : '') + '</p>';
+  if (x.notices.length) h += sec('📢 공지', x.notices.map(function (n) { return '<div style="background:#FBF8F2;border:1px solid #DCD2C1;border-radius:8px;padding:8px 10px;margin-bottom:6px"><b>' + (n.pinned ? '📌 ' : '') + H(n.title) + '</b> <span style="color:#7A7265;font-size:12px">' + H(n.owner) + ' · ' + H(n.at) + '</span>' + (n.body ? '<div style="font-size:13px;white-space:pre-wrap;margin-top:4px">' + H(n.body) + '</div>' : '') + '</div>'; }).join(''));
+  h += sec('🛡 이번 주 당직', tbl(['구분', '담당', '기간'], x.duty.map(function (d) { return [H(d.label), '<b>' + H(d.name) + '</b>', d.from === d.to ? wd(d.from) : wd(d.from) + ' ~ ' + wd(d.to)]; })));
+  h += sec('🌴 이번 주 휴가·근무', tbl(['이름', '종류', '날짜'], x.leaves.map(function (l) { return [H(l.name), H(l.kind) + (l.hours ? ' ' + l.hours + 'h' : ''), l.start === l.end ? wd(l.start) : wd(l.start) + ' ~ ' + wd(l.end)]; })));
+  h += sec('✅ 이번 주 할 일' + (x.overdue ? ' <span style="color:#E0472E;font-size:13px">(밀린 할 일 ' + x.overdue + '건)</span>' : ''), tbl(['기한', '할 일', '담당'], x.tasks.map(function (t) { return [wd(t.date), (t.cust ? '[' + H(t.cust) + '] ' : '') + H(t.title), H(t.who)]; })));
+  if (x.reqs) {
+    h += sec('📨 견적', '<p style="font-size:13px;margin:0 0 8px">지난주 접수 <b>' + x.reqs.received + '</b> · 제출 <b>' + x.reqs.submitted + '</b> · 수주 <b>' + x.reqs.won + '</b> · 미수주 <b>' + x.reqs.lost + '</b> · 지금 진행 중 <b>' + x.reqs.open + '</b>건</p>' +
+      tbl(['회신 기한', '거래처', '제목'], x.reqs.due.map(function (r) { return [(r.late ? '<b style="color:#E0472E">' + wd(r.date) + ' 지남</b>' : wd(r.date)), H(r.cust), H(r.title)]; })));
+    if (x.contracts.length || x.docs.length) h += sec('⏰ 만료 임박 (30일)', tbl(['구분', '이름', '만료일'], x.contracts.map(function (c) { return ['계약', H(c.name), wd(c.end)]; }).concat(x.docs.map(function (c) { return ['서류', H(c.name), wd(c.end)]; }))));
+  }
+  h += sec('⏱ 지난주 추가근무', tbl(['이름', '야간근무', '휴일근무', '당직', '합계'], x.ot.map(function (o) { return [H(o.name), o['야간근무'] || '–', o['휴일근무'] || '–', o['당직'] || '–', '<b>' + o.total + '시간</b>']; })));
+  return h + '<p style="color:#7A7265;font-size:12px;margin-top:24px">JOIL · 조일그룹 견적·실적 시스템에서 자동으로 보낸 메일이에요. 받지 않으려면 관리자에게 말씀해 주세요.</p></div>';
+}
+function weeklySend_(week, onlyMe) {
+  var x = weekly_(week, null), staff = calStaff_(), to;
+  if (onlyMe) {
+    var me = staff.filter(function (s) { return s.email && (s.account === onlyMe.id || s.name === onlyMe.name); })[0];
+    if (!me) throw new Error('직원 목록에서 내 이름(또는 계정)에 메일 주소를 먼저 넣으세요.');
+    to = [me.email];
+  } else to = staff.filter(function (s) { return s.active && s.weekly && s.email; }).map(function (s) { return s.email; });
+  if (!to.length) throw new Error('"주간 요약 받기"를 체크한 직원이 없어요.');
+  var subj = '[JOIL] 주간 업무 요약 ' + md_(x.week) + '~' + md_(x.weekEnd), html = weeklyHtml_(x);
+  to.forEach(function (e) { MailApp.sendEmail({ to: e, subject: subj, htmlBody: html, name: 'JOIL 조일그룹' }); });
+  return { sent: to.length, to: to };
+}
+/** 시간 트리거: 매주 월요일 아침 */
+function sendWeeklySummary() { try { weeklySend_(null, null); } catch (e) { console.error(e); } }
+/** 메뉴에서 실행: 메일 권한 승인 + 매주 월요일 8시 자동 발송 켜기 */
+function installWeeklyTrigger() {
+  MailApp.getRemainingDailyQuota();
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'sendWeeklySummary') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('sendWeeklySummary').timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(8).inTimezone(TZ).create();
+  notify_('매주 월요일 오전 8시에 주간 업무 요약 메일을 보냅니다. ("주간 요약 받기"를 체크한 직원)');
 }
 
 /* ───────────── 견적모음 ───────────── */

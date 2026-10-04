@@ -981,3 +981,42 @@ label.chk input { width: 18px; height: 18px; accent-color: var(--green); cursor:
   .cal-bar.k-duty { background: var(--k); }
   .cal-week .cal-more { font-size: 10px; padding-left: 3px; }
 }
+.doc-view.xls-mode { display: block; place-items: initial; padding: 8px; background: var(--panel-2); }
+.xls-tabs { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+.xls-tabs button { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 4px 10px; font-size: 12.5px; cursor: pointer; }
+.xls-tabs button.on { background: var(--ink); color: #fff; border-color: var(--ink); }
+.xls-wrap { max-height: 64vh; overflow: auto; background: #fff; border: 1px solid var(--line); border-radius: 8px; }
+.xls-tbl { border-collapse: collapse; font-size: 12px; }
+.xls-tbl th, .xls-tbl td { border: 1px solid #e3e3e3; padding: 3px 7px; white-space: nowrap; max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+.xls-tbl thead th { position: sticky; top: 0; background: #f3f3f3; color: #666; font-weight: 600; z-index: 1; }
+.xls-tbl tbody th { position: sticky; left: 0; background: #f3f3f3; color: #666; font-weight: 600; text-align: right; }
+
+/* 공지 · 주간 요약 · 거래처 · 직원 */
+.home-card.full { grid-column: 1 / -1; }
+.notice-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.notice-list.full { grid-template-columns: minmax(0, 1fr); }
+.notice-list li > button { width: 100%; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 10px 12px; cursor: pointer; display: flex; flex-direction: column; gap: 3px; font: inherit; color: inherit; }
+.notice-list li.pin > button { border-color: color-mix(in srgb, var(--orange) 50%, var(--line)); background: color-mix(in srgb, var(--orange) 6%, var(--panel)); }
+.notice-list li > button:hover { border-color: var(--line-strong); }
+.nt-body { font-size: 12.5px; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.nt-full { white-space: pre-wrap; line-height: 1.6; }
+.wk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.wk-card.wide { grid-column: 1 / -1; }
+.wk-card h3 { margin: 0 0 8px; font-size: 15px; }
+.wk-notice { padding: 8px 0; border-bottom: 1px dashed var(--line); } .wk-notice:last-child { border-bottom: 0; }
+.wk-notice .small { white-space: pre-wrap; margin-top: 2px; }
+.wk-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 10px; }
+.wk-kpis > div { background: var(--panel-2); border-radius: 10px; padding: 8px; text-align: center; display: flex; flex-direction: column; }
+.wk-kpis b { font-family: var(--font-display); font-size: 20px; } .wk-kpis small { font-size: 11.5px; color: var(--muted); }
+.cust-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.cust-card { text-align: left; cursor: pointer; display: flex; flex-direction: column; gap: 4px; font: inherit; color: inherit; border: 1px solid transparent; }
+.cust-card:hover { border-color: var(--line-strong); }
+.cust-card small { font-size: 12.5px; color: var(--ink-2); }
+.cust-info { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 18px; margin-top: 14px; }
+.cust-info > div { display: flex; flex-direction: column; gap: 2px; } .cust-info b { font-weight: 650; }
+.cust-memo { margin-top: 12px; padding: 10px 12px; background: var(--panel-2); border-radius: 10px; white-space: pre-wrap; font-size: 13.5px; }
+.cust-sec { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 16px; }
+.hl-row { display: flex; justify-content: space-between; gap: 10px; padding: 7px 4px; }
+.staff-table td { vertical-align: middle; }
+.ot-one { padding: 2px 8px; font-size: 11.5px; margin-left: 4px; }
+@media (max-width: 900px) { .notice-list, .wk-grid, .cust-sec { grid-template-columns: minmax(0, 1fr); } .wk-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }

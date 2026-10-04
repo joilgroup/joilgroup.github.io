@@ -64,7 +64,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all'];
+  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get'];
   var TIMEOUT_MS = 25000;
   var inflight = {};
 
@@ -235,7 +235,7 @@
     state.reqs = { list: null, status: '', biz: '', q: '', detail: null, data: null, blobs: {} };
     state.info = { tab: 'diesel', range: 90, diesel: null, news: null, weather: null, newsKw: '', newsQ: '' };
     state.an = newAnState();
-    state.cal = newCalState();
+    state.cal = newCalState(); state.notices = null; state.custs = null; state.custView = null;
     storage('del', 'joil-token');
   }
 
@@ -265,7 +265,7 @@
   }
   /** 자주 안 쓰는 메뉴 → "더보기 ▾" */
   function moreItems() {
-    return can('quote') ? [['history', '조회기록'], ['rates', '업체단가'], ['docs', '서류함']] : [];
+    return can('quote') ? [['custs', '거래처'], ['history', '조회기록'], ['rates', '업체단가'], ['docs', '서류함']] : [];
   }
   function allViews() { return navItems().concat(moreItems()); }
 
@@ -315,6 +315,7 @@
           if (state.view === 'quotes') { state.quotes.detail = null; state.quotes.list = null; }
           if (state.view === 'docs') state.docs.list = null;
           if (state.view === 'reqs') { state.reqs.detail = null; state.reqs.list = null; }
+          if (state.view === 'custs' && state.custView) { state.custView.sel = ''; state.custs = null; }
         }
         if (b.dataset.view === 'history' && state.view !== 'history') state.hist.logs = null;
         var pop = $('.nav-pop'); if (pop) pop.remove();
@@ -345,6 +346,7 @@
     else if (state.view === 'home') renderHome();
     else if (state.view === 'info') renderInfo();
     else if (state.view === 'cal') renderCal();
+    else if (state.view === 'custs') renderCusts();
     else renderCalc();
   }
 
@@ -3280,6 +3282,7 @@
     ['tariff', '타리프 단가', 'var(--red)'],
     ['special', '특수 운임', 'var(--orange)'],
     ['users', '계정 관리', 'var(--cyan)'],
+    ['staff', '직원 목록', 'var(--green)'],
     ['andata', '분석 데이터', 'var(--green)'],
     ['anmap', '매출처 설정', 'var(--yellow)'],
     ['anrule', '분석 규칙', 'var(--red)'],
@@ -3328,9 +3331,55 @@
       '<p class="hint" style="margin:10px 0 0">서버가 한동안 쉬었다가 처음 깨어날 때는 몇 초 더 걸릴 수 있어요.</p></div>';
   }
 
+  /* ── 관리자: 직원 목록 (사업자·부서·메일) ── */
+  var BIZ_NAMES = ['조일물류', '명일로지스', '조일로지스'];
+  function adminStaff() {
+    var a = state.admin, body = $('#adminBody');
+    if (!a.staff) {
+      body.innerHTML = '<div class="card muted"><span class="spinner dark"></span> 직원 목록 불러오는 중…</div>';
+      api('staff.list').then(function (r) { a.staff = r.staff; a.staffAcc = r.accounts; a.staffDirty = false; if (state.admin.tab === 'staff') adminStaff(); })
+        .catch(function (err) { body.innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+      return;
+    }
+    var acc = a.staffAcc || [];
+    var opt = function (list, v, empty) { return (empty != null ? '<option value="">' + empty + '</option>' : '') + list.map(function (x) { var val = x[0], lab = x[1]; return '<option value="' + esc(val) + '"' + (val === v ? ' selected' : '') + '>' + esc(lab) + '</option>'; }).join(''); };
+    body.innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div><div class="eyebrow">Staff · 직원 목록</div><h2>직원 목록</h2></div>' +
+      '<div class="actions"><button class="btn btn-sm" id="stAdd">＋ 직원 추가</button><button class="btn btn-sm btn-primary" id="stSave"' + (a.staffDirty ? '' : ' disabled') + '>저장</button></div></div>' +
+      '<p class="muted small" style="margin:6px 0 12px">사업자·부서는 <b>시간외근무일지</b>에, 메일은 <b>주간 업무 요약</b>에 쓰여요. 사이트 계정이 있는 직원은 "계정"을 골라 연결하세요. 계정이 없어도 휴가·근무를 기록할 수 있어요.</p>' +
+      '<div class="table-wrap"><table class="data staff-table"><thead><tr><th class="left">이름</th><th class="left">사업자</th><th class="left">부서</th><th class="left">이메일</th><th class="left">사이트 계정</th><th>재직</th><th>주간 요약 받기</th><th></th></tr></thead><tbody>' +
+      a.staff.map(function (s, i) {
+        return '<tr class="' + (s.active === false ? 'muted-row' : '') + '"><td><input class="input input-sm" data-i="' + i + '" data-f="name" value="' + esc(s.name) + '" maxlength="30" placeholder="이름"></td>' +
+          '<td><select class="input input-sm" data-i="' + i + '" data-f="biz">' + opt(BIZ_NAMES.map(function (b) { return [b, b]; }), s.biz, '–') + '</select></td>' +
+          '<td><input class="input input-sm" data-i="' + i + '" data-f="dept" value="' + esc(s.dept) + '" maxlength="30" placeholder="예) 운영부" style="width:110px"></td>' +
+          '<td><input class="input input-sm" data-i="' + i + '" data-f="email" value="' + esc(s.email) + '" maxlength="100" placeholder="name@jo-il.com" style="min-width:200px"></td>' +
+          '<td><select class="input input-sm" data-i="' + i + '" data-f="account">' + opt(acc.map(function (u) { return [u.id, u.name + ' (' + u.id + ')' + (u.active ? '' : ' · 중지')]; }), s.account, '없음') + '</select></td>' +
+          '<td><input type="checkbox" data-i="' + i + '" data-f="active"' + (s.active !== false ? ' checked' : '') + '></td>' +
+          '<td><input type="checkbox" data-i="' + i + '" data-f="weekly"' + (s.weekly ? ' checked' : '') + (s.email ? '' : ' disabled title="메일을 먼저 넣으세요"') + '></td>' +
+          '<td><button class="btn btn-sm btn-ghost" data-del="' + i + '">삭제</button></td></tr>';
+      }).join('') + (a.staff.length ? '' : '<tr><td colspan="8" class="muted left" style="padding:16px">아직 없어요. "＋ 직원 추가"로 넣으세요.</td></tr>') + '</tbody></table></div>' +
+      '<p class="hint" style="margin:10px 0 0">퇴사한 직원은 지우지 말고 "재직"을 끄면 지난 기록은 그대로 남아요 · 주간 요약 메일은 매주 월요일 오전 8시 (서버 메뉴 "주간 요약 메일 켜기"를 한 번 실행해야 해요)</p></div>';
+    var dirty = function () { a.staffDirty = true; $('#stSave').disabled = false; };
+    $$('[data-f]', body).forEach(function (el) {
+      el.onchange = function () {
+        var s = a.staff[+el.dataset.i], f = el.dataset.f;
+        s[f] = el.type === 'checkbox' ? el.checked : el.value.trim();
+        if (f === 'account' && s.account && !s.name) { var u = acc.filter(function (x) { return x.id === s.account; })[0]; if (u) s.name = u.name; adminStaff(); }
+        if (f === 'email') { var w = $('[data-i="' + el.dataset.i + '"][data-f="weekly"]', body); w.disabled = !s.email; if (!s.email) { w.checked = false; s.weekly = false; } }
+        dirty();
+      };
+    });
+    $$('[data-del]', body).forEach(function (b) { b.onclick = function () { var s = a.staff[+b.dataset.del]; if (!confirm('"' + (s.name || '이름 없음') + '"을(를) 목록에서 지울까요? (퇴사자는 "재직"만 끄는 걸 추천해요)')) return; a.staff.splice(+b.dataset.del, 1); dirty(); adminStaff(); }; });
+    $('#stAdd').onclick = function () { a.staff.push({ id: '', name: '', biz: '', dept: '', email: '', account: '', active: true, weekly: false }); dirty(); adminStaff(); var ins = $$('[data-f="name"]', body); if (ins.length) ins[ins.length - 1].focus(); };
+    $('#stSave').onclick = function () {
+      var btn = this; busy(btn, true, '저장 중…');
+      api('staff.save', { staff: a.staff }).then(function (r) { a.staff = r.staff; a.staffDirty = false; state.cal.data = null; toast('직원 목록을 저장했어요.'); adminStaff(); })
+        .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+    };
+  }
+
   function showAdminTab() {
     var a = state.admin, tab = a.tab;
-    var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials };
+    var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials, staff: adminStaff };
     var ready = a.loaded && (tab !== 'tariff' || a.tariff);
     if (ready) {
       views[tab]();
@@ -4763,6 +4812,7 @@
           url = URL.createObjectURL(bl);
           if (k === 'img') v.innerHTML = '<img src="' + url + '" alt="">';
           else if (k === 'pdf') v.innerHTML = '<iframe src="' + url + '" title="' + esc(f.fileName) + '"></iframe>';
+          else if (k === 'xls') xlsPreview(v, bl);
           else v.innerHTML = '<div class="empty" style="min-height:160px"><div><div class="ficon big f-' + k + '">' + DOC_ICON[k] + '</div><p class="muted">이 형식은 미리보기를 지원하지 않아요. 다운로드해서 여세요.</p></div></div>';
         }).catch(function (err) { var v = $('#rfView', m); if (v) v.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
         $('#rfDl', m).onclick = function () { var b = this; busy(b, true, '…'); reqFileBlob(f).then(function (bl) { saveBlob(bl, f.fileName); }).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(b, false); }); };
@@ -4951,6 +5001,7 @@
     if (can('quote')) {
       extra.push((state.reqs.list && !force ? Promise.resolve({ reqs: state.reqs.list }) : api('reqs.list')).then(function (r) { state.reqs.list = r.reqs; }).catch(function () { }));
       extra.push((state.docs.list && !force ? Promise.resolve({ docs: state.docs.list }) : api('docs.list')).then(function (r) { state.docs.list = r.docs; }).catch(function () { }));
+      extra.push(loadCusts(force).catch(function () { }));
     }
     return Promise.all([api('cal.all')].concat(extra)).then(function (res) { setCalData(res[0]); return c.data; });
   }
@@ -4962,20 +5013,20 @@
     if (!c.year) c.year = d.today.slice(0, 4);
   }
   function calSave(action, payload, msg) {
-    return api(action, payload).then(function (d) { setCalData(d); if (msg) toast(msg); if (state.view === 'cal') drawCal(); else if (state.view === 'home') { var h = $('#hcToday'); if (h) homeToday(); } return d; });
+    return api(action, payload).then(function (d) { setCalData(d); state.cal.weekly = {}; if (msg) toast(msg); if (state.view === 'cal') drawCal(); else if (state.view === 'home') { var h = $('#hcToday'); if (h) homeToday(); } return d; });
   }
 
   function renderCal() {
     var c = state.cal;
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Schedule · 일정</div><h2>일정</h2></div>' +
-      '<div class="segmented" id="calTabs">' + [['month', '📅 달력'], ['tasks', '✅ 할 일'], ['leave', '🌴 휴가·근무']].map(function (t) { return '<button type="button" data-t="' + t[0] + '" class="' + (c.tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div></div>' +
+      '<div class="segmented" id="calTabs">' + [['month', '📅 달력'], ['tasks', '✅ 할 일'], ['leave', '🌴 휴가·근무'], ['weekly', '📋 주간 요약']].map(function (t) { return '<button type="button" data-t="' + t[0] + '" class="' + (c.tab === t[0] ? 'on' : '') + '">' + t[1] + '</button>'; }).join('') + '</div></div>' +
       '<div id="calBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
     $$('#calTabs button').forEach(function (b) { b.onclick = function () { c.tab = b.dataset.t; $$('#calTabs button').forEach(function (x) { x.classList.toggle('on', x === b); }); drawCal(); }; });
     loadCal().then(function () { if (state.view === 'cal') drawCal(); }).catch(function (err) { $('#calBody').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
   }
   function drawCal() {
     var c = state.cal; if (!c.data || !$('#calBody')) return;
-    if (c.tab === 'tasks') calTasks(); else if (c.tab === 'leave') calLeave(); else calMonth();
+    if (c.tab === 'tasks') calTasks(); else if (c.tab === 'leave') calLeave(); else if (c.tab === 'weekly') calWeekly(); else calMonth();
   }
 
   /* ── 당직 순번 규칙 → 그 기간의 당직 (화면에서 계산) ── */
@@ -5018,6 +5069,7 @@
     (occ[s] || []).forEach(function (o) { out.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, ref: o }); });
     (state.reqs.list || []).forEach(function (r) { if (r.due === s && ['접수', '검토중'].indexOf(r.status) !== -1) out.push({ k: 'req', t: '회신 ' + r.cust, ref: r }); });
     (state.docs.list || []).forEach(function (x) { if (x.expires === s) out.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, ref: x }); });
+    (state.custs || []).forEach(function (x) { if (x.end === s) out.push({ k: 'doc', t: '계약 만료 ' + x.name, ref: x }); });
     d.events.forEach(function (e) { if (s >= e.start && s <= e.end) out.push({ k: 'event', t: e.title, ref: e }); });
     return out;
   }
@@ -5035,6 +5087,7 @@
     if (calShow('task')) allOccurrences(gStart, gEnd, c.mine).forEach(function (o) { items.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, s: o.date, e: o.date }); });
     if (calShow('req')) (state.reqs.list || []).forEach(function (r) { if (r.due && ['접수', '검토중'].indexOf(r.status) !== -1) items.push({ k: 'req', t: '회신 ' + r.cust, s: r.due, e: r.due }); });
     if (calShow('doc')) (state.docs.list || []).forEach(function (x) { if (x.expires) items.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, s: x.expires, e: x.expires }); });
+    if (calShow('doc')) (state.custs || []).forEach(function (x) { if (x.end) items.push({ k: 'doc', t: '계약 만료 ' + x.name, s: x.end, e: x.end }); });
     // 같은 사람·같은 종류가 이어진 날이면 막대 하나로 (예: 토·일 당직, 이어서 쓴 연차)
     items.sort(function (a, b) { return a.k + a.t < b.k + b.t ? -1 : a.k + a.t > b.k + b.t ? 1 : a.s < b.s ? -1 : 1; });
     items = items.reduce(function (out, it) {
@@ -5072,7 +5125,7 @@
     $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px">' +
       '<div class="cal-nav"><button class="btn btn-sm" id="cmPrev">◀</button><h2>' + y + '년 ' + m + '월</h2><button class="btn btn-sm" id="cmNext">▶</button><button class="btn btn-sm btn-ghost" id="cmToday">오늘</button></div>' +
       '<div class="actions"><label class="toggle small"><input type="checkbox" id="cmMine"' + (c.mine ? ' checked' : '') + '><span class="track"></span>내 할 일만</label><button class="btn btn-sm btn-primary" id="cmAdd">＋ 일정</button></div></div>' +
-      '<div class="chips cal-filters">' + chip('holi', '공휴일') + chip('duty', '당직') + chip('leave', '휴가') + chip('work', '추가근무') + chip('task', '할 일') + (can('quote') ? chip('req', '견적 회신') + chip('doc', '서류 만료') : '') + chip('event', '일정') + '</div>' +
+      '<div class="chips cal-filters">' + chip('holi', '공휴일') + chip('duty', '당직') + chip('leave', '휴가') + chip('work', '추가근무') + chip('task', '할 일') + (can('quote') ? chip('req', '견적 회신') + chip('doc', '만료(서류·계약)') : '') + chip('event', '일정') + '</div>' +
       '<div class="cal-grid2"><div class="cal-wds">' + [1, 2, 3, 4, 5, 6, 0].map(function (i) { return '<div class="cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + WD[i] + '</div>'; }).join('') + '</div>' + weeks + '</div>' +
       '<p class="hint" style="margin:10px 0 0">날짜를 누르면 그날 일정을 보고 추가할 수 있어요 · 공휴일은 구글 캘린더 "대한민국의 휴일" 기준 · 당직 순번은 휴가·근무 탭에서 정해요</p></div>';
     $('#cmPrev').onclick = function () { c.ym = ymAdd(c.ym, -1); calMonth(); };
@@ -5344,6 +5397,8 @@
   }
 
   var OT_KINDS = ['야간근무', '휴일근무', '당직'];
+  /** 추가근무가 집계되는 날: 당직은 끝나는 날 (주가 다 끝난 달), 나머지는 그날 */
+  function otD(l) { return l.kind === '당직' ? l.end : l.start; }
   function hrs(n) { return Math.round(n * 100) / 100; }
   /** 사람 목록 (이름 기준: 계정·계정 없는 직원·기록에만 있는 이름) */
   function calPeople() {
@@ -5356,8 +5411,8 @@
   /** 월별 추가근무 (시작일이 속한 달 기준) */
   function otMonth(ym) {
     var by = {}, today = state.cal.data.today;
-    leavesIn(ym + '-01', ym + '-31').forEach(function (l) {
-      if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 7) !== ym || (l.virtual && l.start > today)) return;
+    leavesIn(dAdd(ym + '-01', -10), ym + '-31').forEach(function (l) {
+      if (OT_KINDS.indexOf(l.kind) === -1 || otD(l).slice(0, 7) !== ym || (l.virtual && otD(l) > today)) return;
       var s = by[l.name] || (by[l.name] = { name: l.name, total: 0, list: [] });
       OT_KINDS.forEach(function (k) { s[k] = s[k] || { n: 0, h: 0 }; });
       s[l.kind].n++; s[l.kind].h += l.hours || 0; s.total += l.hours || 0; s.list.push(l);
@@ -5374,17 +5429,94 @@
     return downloadXlsx('추가근무_' + ym + '.xlsx', [{ name: '요약', rows: sum, widths: [12, 12, 13, 12, 13, 10, 11, 11] }, { name: '상세', rows: det, widths: [12, 12, 10, 10, 9, 9, 7, 36] }]);
   }
 
+  /* ── 시간외근무일지 (회사 양식 그대로) ── */
+  function otFormRows(list) {
+    var md = function (s) { return (+s.slice(5, 7)) + '/' + (+s.slice(8)); };
+    var items = list.slice().sort(function (a, b) { return otD(a) < otD(b) ? -1 : otD(a) > otD(b) ? 1 : 0; });
+    // 이어진 하루짜리 당직(토·일 등)은 한 줄로
+    var merged = [];
+    items.forEach(function (l) {
+      var p = merged[merged.length - 1], lab = l.label || (l.memo && l.memo.length <= 10 ? l.memo : '');
+      if (p && l.kind === '당직' && p.kind === '당직' && l.start === l.end && p.single && p.lab === lab && p.name === l.name && l.start === dAdd(p.end, 1)) { p.end = l.start; p.hours += l.hours || 0; return; }
+      merged.push({ kind: l.kind, name: l.name, start: l.start, end: l.end, from: l.from, to: l.to, hours: l.hours || 0, memo: l.virtual ? '' : (l.memo || ''), lab: lab, single: l.kind === '당직' && l.start === l.end });
+    });
+    return merged.map(function (x) {
+      var range = x.start !== x.end, date = x.kind === '당직' ? x.end : x.start;
+      var t = function (v) { if (!v) return ''; var m = /^(\d\d):(\d\d)$/.exec(v); return m ? (+m[1] * 60 + +m[2]) / 1440 : ''; };
+      var memo = x.kind === '당직' ? (range ? md(x.start) + '~' + md(x.end) + ' ' : '') + (x.lab || '당직') + (x.memo && x.memo !== x.lab ? ' ' + x.memo : '') : x.memo;
+      return { date: date, label: (+date.slice(5, 7)) + '월' + (+date.slice(8)) + '일', dow: range ? WD[dDow(x.start)] + '~' + WD[dDow(x.end)] : WD[dDow(date)], kind: x.kind,
+        from: range ? WD[dDow(x.start)] : t(x.from), to: range ? WD[dDow(x.end)] : t(x.to), hours: Math.round(x.hours * 100) / 100, memo: memo };
+    });
+  }
+  function otFormSheet(wb, sheetName, name, ym, rows, info) {
+    var ws = wb.addWorksheet(sheetName, { views: [{ showGridLines: false, zoomScale: 115 }],
+      pageSetup: { paperSize: 9, orientation: 'portrait', horizontalCentered: true, fitToPage: true, fitToWidth: 1, fitToHeight: 1, printArea: 'A1:I29', margins: { left: 0.197, right: 0.197, top: 1.268, bottom: 0.551, header: 0, footer: 0 } } });
+    [10.5, 7.6, 7.9, 6.4, 6.5, 5.9, 25.9, 9.5, 8.9].forEach(function (w, i) { ws.getColumn(i + 1).width = w; });
+    var F = function (o) { return Object.assign({ name: '나눔고딕', size: 9, color: { argb: 'FF000000' } }, o || {}); };
+    var C = { horizontal: 'center', vertical: 'middle' }, thin = { style: 'thin' }, med = { style: 'medium' };
+    var cell = function (a, v, o) { var c = ws.getCell(a); if (v !== undefined) c.value = v; o = o || {}; c.font = F(o.font); c.alignment = o.al || C; if (o.border) c.border = o.border; if (o.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } }; if (o.nf) c.numFmt = o.nf; return c; };
+    var box = function (t, l, b, r) { return { top: t || thin, left: l || thin, bottom: b || thin, right: r || thin }; };
+    ws.getRow(1).height = 60.75; [2, 3, 4].forEach(function (r) { ws.getRow(r).height = 28.5; }); ws.getRow(5).height = 14.25; ws.getRow(6).height = 15.75; ws.getRow(7).height = 15.75;
+    for (var r = 8; r <= 28; r++) ws.getRow(r).height = 21; ws.getRow(29).height = 21.75;
+    ws.mergeCells('A1:I1'); cell('A1', '시간외 근무일지', { font: { bold: true, size: 20 } });
+    var y = +ym.slice(0, 4), m = +ym.slice(5, 7), last = ym + '-' + pad2(dim(y, m));
+    cell('A2', '부 서 명 :', { font: { bold: true, size: 10 }, al: { vertical: 'middle' } });
+    cell('A3', '근 무 자 :', { font: { bold: true, size: 10 }, al: { vertical: 'middle' } });
+    cell('A4', '작성일자 :', { font: { bold: true, size: 10 }, al: { vertical: 'middle' } });
+    ws.mergeCells('B2:D2'); cell('B2', info.dept || '', { border: box(), font: { size: 10 } }); ['C2', 'D2'].forEach(function (a) { cell(a, undefined, { border: box() }); });
+    ws.mergeCells('B3:C3'); cell('B3', name, { border: box(), font: { size: 10 }, al: { horizontal: 'left', vertical: 'middle', indent: 1 } }); cell('C3', undefined, { border: box() });
+    cell('D3', '(인)', { border: box(), font: { size: 10 } });
+    ws.mergeCells('B4:D4'); cell('B4', new Date(Date.UTC(y, m - 1, dim(y, m))), { border: box(), font: { size: 10 }, nf: 'yyyy-mm-dd', al: { horizontal: 'left', vertical: 'middle', indent: 1 } }); ['C4', 'D4'].forEach(function (a) { cell(a, undefined, { border: box() }); });
+    ws.mergeCells('H2:I2'); cell('H2', '부서장', { border: box(), font: { size: 10 } }); cell('I2', undefined, { border: box() });
+    ws.mergeCells('H3:I4'); cell('H3', '(인)', { border: box(), font: { size: 10 } }); ['I3', 'H4', 'I4'].forEach(function (a) { cell(a, undefined, { border: box() }); });
+    var head = 'FFF2F2F2';
+    [['A', '일자'], ['B', '요일'], ['C', '구분'], ['G', '업무내용'], ['H', '확인'], ['I', '비고']].forEach(function (h) { ws.mergeCells(h[0] + '6:' + h[0] + '7'); });
+    ws.mergeCells('D6:F6');
+    'ABCDEFGHI'.split('').forEach(function (col) {
+      [6, 7].forEach(function (r) {
+        var v = r === 6 ? { A: '일자', B: '요일', C: '구분', D: '업무시간', G: '업무내용', H: '확인', I: '비고' }[col] : { D: '시작', E: '종료', F: '시간' }[col];
+        cell(col + r, v, { fill: head, border: box(r === 6 ? med : thin, col === 'A' ? med : thin, thin, col === 'I' ? med : thin) });
+      });
+    });
+    for (var i = 0; i < 20; i++) {
+      var rr = 8 + i, x = rows[i];
+      'ABCDEFGHI'.split('').forEach(function (col) {
+        var v = !x ? undefined : { A: x.label, B: x.dow, C: x.kind, D: x.from, E: x.to, F: x.hours, G: x.memo }[col];
+        cell(col + rr, v === '' ? undefined : v, { border: box(thin, col === 'A' ? med : thin, thin, col === 'I' ? med : thin),
+          al: col === 'G' ? { horizontal: 'left', vertical: 'middle', shrinkToFit: true } : C, nf: (col === 'D' || col === 'E') && typeof v === 'number' ? 'h:mm' : col === 'F' ? '0.##_);[Red](0.##)' : undefined });
+      });
+    }
+    ws.mergeCells('A28:C28'); cell('A28', '합  계', { border: box(thin, med, med, thin) }); ['B28', 'C28'].forEach(function (a) { cell(a, undefined, { border: box(thin, thin, med, thin) }); });
+    'DEFGHI'.split('').forEach(function (col) { cell(col + '28', col === 'F' ? { formula: 'SUM(F8:F27)', result: rows.slice(0, 20).reduce(function (a, x) { return a + (x.hours || 0); }, 0) } : undefined, { border: box(thin, thin, med, col === 'I' ? med : thin), nf: col === 'F' ? '0.##_);[Red](0.##)' : undefined }); });
+    cell('A29', '***. 작업내용은 수기로 작성해 주시고, 부서장 사전승인 후, 작업진행해 주시길 바랍니다.', { al: { vertical: 'middle' } });
+    cell('I29', info.biz ? '㈜' + info.biz : '', { font: { bold: true, color: { argb: 'FF17365D' } }, al: { horizontal: 'right', vertical: 'middle' } });
+    return ws;
+  }
+  /** names: 일지를 만들 사람들 (그 달 추가근무가 있는 사람) */
+  function otFormXlsx(ym, names) {
+    var by = otMonth(ym), info = state.cal.data.staffInfo || {}, missing = [];
+    return loadExcelJS().then(function (ExcelJS) {
+      var wb = new ExcelJS.Workbook();
+      names.forEach(function (n) {
+        var rows = otFormRows(by[n] ? by[n].list : []), inf = info[n] || {};
+        if (!inf.biz || !inf.dept) missing.push(n);
+        for (var p = 0; p < Math.max(1, Math.ceil(rows.length / 20)); p++) otFormSheet(wb, (n + (p ? ' (' + (p + 1) + ')' : '')).slice(0, 31), n, ym, rows.slice(p * 20, p * 20 + 20), inf);
+      });
+      return saveWorkbook(wb, '시간외근무일지_' + ym + (names.length === 1 ? '_' + names[0] : '') + '.xlsx').then(function () { return missing; });
+    });
+  }
+
   function calLeave() {
     var c = state.cal, d = c.data, yr = c.year, holi = calHoli(), adm = state.user.role === 'admin';
     if (!c.otm || c.otm.slice(0, 4) !== yr) c.otm = yr === d.today.slice(0, 4) ? d.today.slice(0, 7) : yr + '-12';
     var people = calPeople();
     var inYear = d.leaves.filter(function (l) { return l.start.slice(0, 4) === yr || l.end.slice(0, 4) === yr; });
-    var dutyYear = dutyEntries(yr + '-01-01', yr + '-12-31').filter(function (l) { return l.start.slice(0, 4) === yr && l.start <= d.today; });
+    var dutyYear = dutyEntries(dAdd(yr + '-01-01', -10), yr + '-12-31').filter(function (l) { return otD(l).slice(0, 4) === yr && otD(l) <= d.today; });
     var grant = {}; d.grants.forEach(function (g) { if (g.year === yr) grant[g.name] = g.days; });
     var stat = {}; people.forEach(function (p) { stat[p.name] = { p: p, used: 0, other: 0, ot: 0, otN: 0 }; });
     inYear.concat(dutyYear).forEach(function (l) {
       var s = stat[l.name]; if (!s) return;
-      if (OT_KINDS.indexOf(l.kind) !== -1) { if (l.start.slice(0, 4) === yr) { s.ot += l.hours || 0; s.otN++; } }
+      if (OT_KINDS.indexOf(l.kind) !== -1) { if (otD(l).slice(0, 4) === yr) { s.ot += l.hours || 0; s.otN++; } }
       else if (l.kind === '연차' || /반차/.test(l.kind)) s.used += leaveDays(l, holi); else s.other += leaveDays(l, holi);
     });
     var shown = people.filter(function (p) { var s = stat[p.name]; return !p.nameOnly || s.used || s.other || s.ot || s.otN || grant[p.name] != null || d.users.some(function (u) { return u.name === p.name; }); });
@@ -5393,13 +5525,13 @@
     var list = inYear.filter(function (l) { return !who || l.name === who; }).sort(function (a, b) { return a.start < b.start ? 1 : -1; });
     // 월별 추가근무
     var om = otMonth(c.otm), omNames = Object.keys(om).sort(), mon = +c.otm.slice(5);
-    var matrix = {}; d.leaves.concat(dutyYear).forEach(function (l) { if (OT_KINDS.indexOf(l.kind) === -1 || l.start.slice(0, 4) !== yr) return; var r = matrix[l.name] || (matrix[l.name] = {}); var k = +l.start.slice(5, 7); r[k] = (r[k] || 0) + (l.hours || 0); });
+    var matrix = {}; d.leaves.concat(dutyYear).forEach(function (l) { if (OT_KINDS.indexOf(l.kind) === -1 || otD(l).slice(0, 4) !== yr) return; var r = matrix[l.name] || (matrix[l.name] = {}); var k = +otD(l).slice(5, 7); r[k] = (r[k] || 0) + (l.hours || 0); });
     var mNames = Object.keys(matrix).sort();
     var cell = function (s) { return s.n ? '<b>' + hrs(s.h) + '</b><small> h · ' + s.n + '건</small>' : '<span class="muted">–</span>'; };
 
     $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Leave · 휴가·근무</div><h2>' + yr + '년 휴가·근무</h2></div>' +
       '<div class="actions"><select class="input input-sm" id="lvY" style="width:auto">' + Object.keys(years).sort().reverse().map(function (y) { return '<option' + (y === yr ? ' selected' : '') + '>' + y + '</option>'; }).join('') + '</select>' +
-      (adm ? '<button class="btn btn-sm" id="lvStaff">직원 명단</button><button class="btn btn-sm" id="lvG">연차 부여 일수</button><button class="btn btn-sm" id="lvImp">엑셀 가져오기</button>' : '') + '<button class="btn btn-sm btn-primary" id="lvAdd">＋ 휴가·근무 등록</button></div></div>' +
+      (adm ? '<button class="btn btn-sm" id="lvStaff">직원 목록</button><button class="btn btn-sm" id="lvG">연차 부여 일수</button><button class="btn btn-sm" id="lvImp">엑셀 가져오기</button>' : '') + '<button class="btn btn-sm btn-primary" id="lvAdd">＋ 휴가·근무 등록</button></div></div>' +
       '<div class="table-wrap"><table class="data leave-table"><thead><tr><th class="left">이름</th><th>부여</th><th>사용</th><th>잔여</th><th>그 밖의 휴가</th><th>추가근무 (연간)</th></tr></thead><tbody>' +
       shown.map(function (p) {
         var s = stat[p.name], g = grant[p.name], rem = g != null ? g - s.used : null;
@@ -5409,15 +5541,15 @@
 
       '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Overtime · 월별 추가근무</div>' +
       '<div class="cal-nav"><button class="btn btn-sm" id="otPrev"' + (mon <= 1 ? ' disabled' : '') + '>◀</button><h2>' + yr + '년 ' + mon + '월</h2><button class="btn btn-sm" id="otNext"' + (mon >= 12 ? ' disabled' : '') + '>▶</button></div></div>' +
-      '<button class="btn btn-sm" id="otX"' + (omNames.length ? '' : ' disabled') + '>엑셀 (요약·상세)</button></div>' +
+      '<div class="actions"><button class="btn btn-sm" id="otX"' + (omNames.length ? '' : ' disabled') + '>엑셀 (요약·상세)</button><button class="btn btn-sm btn-primary" id="otF"' + (omNames.length ? '' : ' disabled') + '>시간외근무일지 (전체)</button></div></div>' +
       (omNames.length ? '<div class="table-wrap"><table class="data leave-table ot-table"><thead><tr><th class="left">이름</th><th>야간근무</th><th>휴일근무</th><th>당직</th><th>합계</th></tr></thead><tbody>' +
-        omNames.map(function (n) { var s = om[n]; return '<tr data-otp="' + esc(n) + '"><td class="left"><b>' + esc(n) + '</b></td><td class="num">' + cell(s['야간근무']) + '</td><td class="num">' + cell(s['휴일근무']) + '</td><td class="num">' + cell(s['당직']) + '</td><td class="num tot"><b>' + hrs(s.total) + '</b> 시간</td></tr>'; }).join('') +
+        omNames.map(function (n) { var s = om[n]; return '<tr data-otp="' + esc(n) + '"><td class="left"><b>' + esc(n) + '</b> <button class="btn btn-sm btn-ghost ot-one" data-otf="' + esc(n) + '" title="이 사람 시간외근무일지">일지</button></td><td class="num">' + cell(s['야간근무']) + '</td><td class="num">' + cell(s['휴일근무']) + '</td><td class="num">' + cell(s['당직']) + '</td><td class="num tot"><b>' + hrs(s.total) + '</b> 시간</td></tr>'; }).join('') +
         '</tbody></table></div>' : '<p class="muted small" style="margin:6px 0 10px">' + mon + '월에는 추가근무 기록이 없어요.</p>') +
       (mNames.length ? '<h3 style="margin:18px 0 6px;font-size:14px">' + yr + '년 월별 합계 <span class="muted small">(시간 · 누르면 그 달로)</span></h3><div class="table-wrap"><table class="data leave-table ot-year"><thead><tr><th class="left">이름</th>' +
         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (k) { return '<th class="' + (k === mon ? 'on' : '') + '" data-m="' + k + '">' + k + '월</th>'; }).join('') + '<th>합계</th></tr></thead><tbody>' +
         mNames.map(function (n) { var r = matrix[n], t = 0; return '<tr><td class="left"><b>' + esc(n) + '</b></td>' + [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(function (k) { t += r[k] || 0; return '<td class="num' + (k === mon ? ' on' : '') + '" data-m="' + k + '">' + (r[k] ? hrs(r[k]) : '<span class="muted">·</span>') + '</td>'; }).join('') + '<td class="num"><b>' + hrs(t) + '</b></td></tr>'; }).join('') +
         '</tbody></table></div>' : '') +
-      '<p class="hint" style="margin:8px 0 0">시작일이 속한 달로 집계해요 (월을 넘기는 당직은 시작한 달)</p></div>' +
+      '<p class="hint" style="margin:8px 0 0">야간·휴일근무는 그날, 당직은 끝나는 날이 속한 달로 집계해요 (시간외근무일지와 같은 기준)</p></div>' +
 
       dutyCardHtml() +
       '<div class="card" style="margin-top:16px"><div class="row-between"><h3>' + (who ? esc(who) + ' 기록' : '전체 기록') + ' <span class="muted small">' + list.length + '건</span></h3>' + (who ? '<button class="btn btn-sm btn-ghost" id="lvAll">전체 보기</button>' : '') + '</div>' +
@@ -5441,6 +5573,13 @@
     $('#otPrev').onclick = function () { c.otm = ymAdd(c.otm, -1); calLeave(); };
     $('#otNext').onclick = function () { c.otm = ymAdd(c.otm, 1); calLeave(); };
     $$('.ot-year [data-m]').forEach(function (x) { x.onclick = function () { c.otm = yr + '-' + pad2(+x.dataset.m); calLeave(); }; });
+    var formGo = function (btn, names) {
+      busy(btn, true, '만드는 중…');
+      otFormXlsx(c.otm, names).then(function (miss) { busy(btn, false); if (miss.length) toast('직원 목록에 사업자·부서가 없는 사람: ' + miss.join(', ') + ' (관리자 → 직원 목록)', 'err'); })
+        .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+    };
+    $('#otF').onclick = function () { formGo(this, omNames); };
+    $$('[data-otf]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); formGo(b, [b.dataset.otf]); }; });
     $('#otX').onclick = function () { var b = this; busy(b, true, '만드는 중…'); otXlsx(c.otm).then(function () { busy(b, false); }).catch(function (err) { busy(b, false); toast(err.message, 'err'); }); };
     var byId = {}; d.leaves.forEach(function (l) { byId[l.id] = l; });
     $$('[data-lv]').forEach(function (b) { b.onclick = function () { editLeave(byId[b.dataset.lv]); }; });
@@ -5460,21 +5599,7 @@
         }
       });
     };
-    var st = $('#lvStaff'); if (st) st.onclick = function () {
-      var cur = d.users.filter(function (u) { return u.nameOnly; }).map(function (u) { return u.name; });
-      modal({
-        eyebrow: '휴가·근무', title: '계정 없는 직원',
-        body: '<p class="muted small" style="margin:0 0 10px">사이트 계정이 없는 직원도 휴가·근무를 기록할 수 있게 이름을 한 줄에 한 명씩 넣으세요. 계정이 있는 사람은 넣지 않아도 돼요. (계정과 이름이 같으면 같은 사람으로 봐요)</p>' +
-          '<textarea class="input memo" id="stN" style="min-height:160px" placeholder="김기중">' + esc(cur.join('\n')) + '</textarea>',
-        foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="stSave">저장</button>',
-        onMount: function (m, close) {
-          $('#stSave', m).onclick = function () {
-            var btn = this; busy(btn, true, '저장 중…');
-            calSave('cal.staffSave', { names: $('#stN', m).value.split(/\n/) }, '저장했어요.').then(close).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
-          };
-        }
-      });
-    };
+    var st = $('#lvStaff'); if (st) st.onclick = function () { state.admin.tab = 'staff'; state.view = 'admin'; render(); };
     var imp = $('#lvImp'); if (imp) imp.onclick = openCalImport;
     var re = $('#hoRe'); if (re) re.onclick = function () {
       busy(re, true, '받는 중…');
@@ -5601,6 +5726,191 @@
     return { data: null, tab: 'month', ym: '', year: '', mine: false, person: '', doneMap: {}, show: local('get', 'joil-calshow') || {} };
   }
 
+  /* ───────── 주간 업무 요약 (일정 탭) ───────── */
+  function calWeekly() {
+    var c = state.cal, d = c.data;
+    c.wk = c.wk || mondayOf(d.today);
+    c.weekly = c.weekly || {};
+    var box = $('#calBody'), adm = state.user.role === 'admin';
+    var show = function (x) {
+      var md = function (s) { return (+s.slice(5, 7)) + '/' + (+s.slice(8)) + '(' + WD[dDow(s)] + ')'; };
+      var tbl = function (head, rows) { return rows.length ? '<div class="table-wrap"><table class="data wk-table"><thead><tr>' + head.map(function (h) { return '<th class="left">' + h + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.map(function (r) { return '<tr>' + r.map(function (v) { return '<td class="left">' + v + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div>' : '<p class="muted small" style="margin:4px 0 0">없어요.</p>'; };
+      var card = function (t, inner, wide) { return '<div class="card wk-card' + (wide ? ' wide' : '') + '"><h3>' + t + '</h3>' + inner + '</div>'; };
+      box.innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div class="cal-nav"><button class="btn btn-sm" id="wkPrev">◀</button><h2>' + md(x.week) + ' ~ ' + md(x.weekEnd) + '</h2><button class="btn btn-sm" id="wkNext">▶</button><button class="btn btn-sm btn-ghost" id="wkNow">이번 주</button></div>' +
+        (adm ? '<div class="actions"><button class="btn btn-sm" id="wkMe">나에게 메일로 보내기</button><button class="btn btn-sm btn-primary" id="wkAll">받기 체크한 직원에게 보내기</button></div>' : '') + '</div>' +
+        (x.holidays.length ? '<p class="small" style="margin:8px 0 0;color:var(--red)">🔴 ' + x.holidays.map(function (h) { return esc(md(h.date) + ' ' + h.name); }).join(' · ') + '</p>' : '') +
+        '<p class="hint" style="margin:6px 0 0">매주 월요일 오전 8시에 같은 내용이 메일로 가요 (관리자 → 직원 목록에서 "주간 요약 받기"를 체크한 직원) · 금액은 메일에 넣지 않아요</p></div>' +
+        '<div class="wk-grid">' +
+        (x.notices.length ? card('📢 공지', x.notices.map(function (n) { return '<div class="wk-notice"><b>' + (n.pinned ? '📌 ' : '') + esc(n.title) + '</b> <span class="muted small">' + esc(n.owner + ' · ' + n.at) + '</span>' + (n.body ? '<div class="small">' + esc(n.body) + '</div>' : '') + '</div>'; }).join(''), true) : '') +
+        card('🛡 이번 주 당직', tbl(['구분', '담당', '기간'], x.duty.map(function (v) { return [esc(v.label), '<b>' + esc(v.name) + '</b>', v.from === v.to ? md(v.from) : md(v.from) + ' ~ ' + md(v.to)]; }))) +
+        card('🌴 휴가·근무', tbl(['이름', '종류', '날짜'], x.leaves.map(function (l) { return [esc(l.name), esc(l.kind) + (l.hours ? ' ' + l.hours + 'h' : ''), l.start === l.end ? md(l.start) : md(l.start) + ' ~ ' + md(l.end)]; }))) +
+        card('✅ 이번 주 할 일' + (x.overdue ? ' <span class="small" style="color:var(--red)">밀린 할 일 ' + x.overdue + '건</span>' : ''), tbl(['기한', '할 일', '담당'], x.tasks.map(function (t) { return [md(t.date), (t.cust ? '[' + esc(t.cust) + '] ' : '') + esc(t.title), esc(t.who)]; })), true) +
+        (x.reqs ? card('📨 견적', '<div class="wk-kpis">' + [['지난주 접수', x.reqs.received], ['제출', x.reqs.submitted], ['수주', x.reqs.won], ['미수주', x.reqs.lost], ['진행 중', x.reqs.open]].map(function (k) { return '<div><b>' + k[1] + '</b><small>' + k[0] + '</small></div>'; }).join('') + '</div>' +
+          tbl(['회신 기한', '거래처', '제목'], x.reqs.due.map(function (r) { return [r.late ? '<b style="color:var(--red)">' + md(r.date) + ' 지남</b>' : md(r.date), esc(r.cust), esc(r.title)]; }))) : '') +
+        (x.reqs ? card('⏰ 만료 임박 (30일)', tbl(['구분', '이름', '만료일'], x.contracts.map(function (v) { return ['계약', esc(v.name), md(v.end)]; }).concat(x.docs.map(function (v) { return ['서류', esc(v.name), md(v.end)]; })))) : '') +
+        card('⏱ 지난주 추가근무', tbl(['이름', '야간', '휴일', '당직', '합계'], x.ot.map(function (o) { return [esc(o.name), o['야간근무'] || '–', o['휴일근무'] || '–', o['당직'] || '–', '<b>' + o.total + '시간</b>']; }))) +
+        '</div>';
+      $('#wkPrev').onclick = function () { c.wk = dAdd(c.wk, -7); calWeekly(); };
+      $('#wkNext').onclick = function () { c.wk = dAdd(c.wk, 7); calWeekly(); };
+      $('#wkNow').onclick = function () { c.wk = mondayOf(d.today); calWeekly(); };
+      var send = function (btn, onlyMe) {
+        if (!onlyMe && !confirm('주간 요약 메일을 "받기" 체크한 직원 모두에게 지금 보낼까요?')) return;
+        busy(btn, true, '보내는 중…');
+        api('weekly.send', { week: x.week, onlyMe: onlyMe }).then(function (r) { busy(btn, false); toast(r.sent + '명에게 보냈어요: ' + r.to.join(', ')); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+      };
+      var me = $('#wkMe'); if (me) me.onclick = function () { send(this, true); };
+      var al = $('#wkAll'); if (al) al.onclick = function () { send(this, false); };
+    };
+    if (c.weekly[c.wk]) return show(c.weekly[c.wk]);
+    box.innerHTML = '<div class="card muted"><span class="spinner dark"></span> 주간 요약 만드는 중…</div>';
+    var wk = c.wk;
+    api('weekly.get', { week: wk }).then(function (r) { c.weekly[wk] = r.weekly; if (state.view === 'cal' && c.tab === 'weekly' && c.wk === wk) show(r.weekly); })
+      .catch(function (err) { box.innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+  }
+
+  /* ───────── 팀 공지 ───────── */
+  function loadNotices(force) {
+    if (state.notices && !force) return Promise.resolve(state.notices);
+    return api('notice.list').then(function (r) { state.notices = r.notices; return r.notices; });
+  }
+  function homeNotice() {
+    var el = $('#hcNotice'); if (!el) return;
+    var list = state.notices || [], top = list.filter(function (n) { return n.pinned; }).concat(list.filter(function (n) { return !n.pinned; })).slice(0, 3);
+    el.innerHTML = '<div class="row-between"><div class="eyebrow">Notice · 팀 공지</div><span class="actions"><button class="btn btn-sm btn-ghost" id="ntAll">전체 ' + list.length + '</button><button class="btn btn-sm" id="ntNew">＋ 공지</button></span></div>' +
+      (top.length ? '<ul class="notice-list">' + top.map(function (n) { return '<li class="' + (n.pinned ? 'pin' : '') + '"><button data-nt="' + esc(n.id) + '"><b>' + (n.pinned ? '📌 ' : '') + esc(n.title) + '</b><span class="small muted">' + esc(n.owner) + ' · ' + esc(n.at.slice(5, 10).replace('-', '/')) + '</span>' + (n.body ? '<span class="nt-body">' + esc(n.body) + '</span>' : '') + '</button></li>'; }).join('') + '</ul>'
+        : '<p class="muted small" style="margin:8px 0 0">공지가 없어요.</p>');
+    $('#ntNew').onclick = function () { editNotice({}); };
+    $('#ntAll').onclick = openNotices;
+    $$('[data-nt]', el).forEach(function (b) { b.onclick = function () { viewNotice(list.filter(function (n) { return n.id === b.dataset.nt; })[0]); }; });
+  }
+  function noticeChanged(r) { state.notices = r.notices; homeNotice(); var m = $('#ntList'); if (m) drawNoticeList(m); }
+  function canEditNotice(n) { return n.ownerId === state.user.id || state.user.role === 'admin'; }
+  function viewNotice(n) {
+    if (!n) return;
+    modal({ eyebrow: '팀 공지' + (n.pinned ? ' · 📌 고정' : ''), title: n.title,
+      body: '<p class="small muted" style="margin:0 0 10px">' + esc(n.owner) + ' · ' + esc(n.at) + (n.updated ? ' (수정 ' + esc(n.updated) + ')' : '') + '</p><div class="nt-full">' + esc(n.body || '') + '</div>',
+      foot: (canEditNotice(n) ? '<button class="btn btn-danger btn-sm" id="nvDel" style="margin-right:auto">삭제</button><button class="btn" id="nvEdit">수정</button>' : '') + '<button class="btn btn-primary" data-close>닫기</button>',
+      onMount: function (m, close) {
+        var e = $('#nvEdit', m); if (e) e.onclick = function () { close(); editNotice(n); };
+        var dl = $('#nvDel', m); if (dl) dl.onclick = function () { if (!confirm('이 공지를 지울까요?')) return; api('notice.delete', { id: n.id }).then(function (r) { close(); noticeChanged(r); toast('삭제했어요.'); }).catch(function (err) { toast(err.message, 'err'); }); };
+      } });
+  }
+  function editNotice(n) {
+    var adm = state.user.role === 'admin';
+    modal({ eyebrow: '팀 공지', title: n.id ? '공지 수정' : '공지 쓰기',
+      body: '<div class="field"><label>제목</label><input class="input" id="neT" maxlength="100" value="' + esc(n.title || '') + '" placeholder="예) 10월 마감 일정 안내"></div>' +
+        '<div class="field"><label>내용</label><textarea class="input memo" id="neB" style="min-height:160px" maxlength="5000">' + esc(n.body || '') + '</textarea></div>' +
+        (adm ? '<label class="toggle"><input type="checkbox" id="neP"' + (n.pinned ? ' checked' : '') + '><span class="track"></span>📌 맨 위에 고정</label>' : ''),
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="neS">저장</button>',
+      onMount: function (m, close) {
+        $('#neS', m).onclick = function () {
+          var btn = this, p = $('#neP', m); busy(btn, true, '저장 중…');
+          api('notice.save', { id: n.id || '', notice: { title: $('#neT', m).value, body: $('#neB', m).value, pinned: p ? p.checked : false } })
+            .then(function (r) { close(); noticeChanged(r); toast('공지를 올렸어요.'); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      } });
+  }
+  function drawNoticeList(el) {
+    var list = state.notices || [];
+    el.innerHTML = list.length ? '<ul class="notice-list full">' + list.map(function (n) { return '<li class="' + (n.pinned ? 'pin' : '') + '"><button data-nt="' + esc(n.id) + '"><b>' + (n.pinned ? '📌 ' : '') + esc(n.title) + '</b><span class="small muted">' + esc(n.owner) + ' · ' + esc(n.at.slice(0, 10)) + '</span></button></li>'; }).join('') + '</ul>' : '<p class="muted">공지가 없어요.</p>';
+    $$('[data-nt]', el).forEach(function (b) { b.onclick = function () { viewNotice(list.filter(function (n) { return n.id === b.dataset.nt; })[0]); }; });
+  }
+  function openNotices() {
+    modal({ eyebrow: '팀 공지', title: '전체 공지', body: '<div id="ntList"></div>', foot: '<button class="btn" id="ntNew2">＋ 공지 쓰기</button><button class="btn btn-primary" data-close>닫기</button>',
+      onMount: function (m, close) { drawNoticeList($('#ntList', m)); $('#ntNew2', m).onclick = function () { close(); editNotice({}); }; } });
+  }
+
+  /* ───────── 거래처 카드 ───────── */
+  function custNorm(s) { return String(s || '').replace(/\(주\)|㈜|주식회사|\s/g, '').toLowerCase(); }
+  function custNames(c) { return [c.name].concat(c.aliases || []).map(custNorm).filter(Boolean); }
+  function custMatch(c, name) { var n = custNorm(name); return !!n && custNames(c).indexOf(n) !== -1; }
+  function loadCusts(force) {
+    if (state.custs && !force) return Promise.resolve(state.custs);
+    return api('custs.list').then(function (r) { state.custs = r.custs; return r.custs; });
+  }
+  function custDays(c) { return c.end ? Math.round((dU(c.end) - dU(todayYmd())) / 86400000) : null; }
+  function todayYmd() { var t = new Date(); return t.getFullYear() + '-' + pad2(t.getMonth() + 1) + '-' + pad2(t.getDate()); }
+  function custBadge(c) { var n = custDays(c); if (n == null) return ''; return n < 0 ? '<span class="badge exp-x">계약 만료</span>' : n <= 30 ? '<span class="badge exp-soon">만료 D-' + n + '</span>' : '<span class="badge off">~' + esc(c.end) + '</span>'; }
+  function renderCusts() {
+    var cs = state.custView = state.custView || { q: '', sel: '' };
+    if (cs.sel) return renderCustDetail();
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Customers · 거래처</div><h2>거래처</h2></div><div class="actions"><input class="input input-sm" id="ctQ" placeholder="이름·담당자 검색" value="' + esc(cs.q) + '" style="width:200px"><button class="btn btn-sm btn-primary" id="ctAdd">＋ 거래처 추가</button></div></div><div id="ctList" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+    var draw = function () {
+      var q = custNorm(cs.q), list = (state.custs || []).filter(function (c) { return !q || custNorm(c.name + c.aliases.join('') + c.contact + c.owner).indexOf(q) !== -1; });
+      $('#ctList').innerHTML = list.length ? '<div class="cust-grid">' + list.map(function (c) {
+        return '<button class="card cust-card" data-c="' + esc(c.id) + '"><div class="row-between"><b>' + esc(c.name) + '</b>' + custBadge(c) + '</div>' +
+          '<small>' + esc([c.biz, c.owner && '담당 ' + c.owner, c.contact].filter(Boolean).join(' · ') || '정보 없음') + '</small>' + (c.aliases.length ? '<small class="muted">= ' + esc(c.aliases.join(', ')) + '</small>' : '') + '</button>';
+      }).join('') + '</div>' : '<div class="card empty"><div><h3>' + (state.custs && state.custs.length ? '검색 결과가 없어요' : '아직 거래처가 없어요') + '</h3><p class="muted" style="margin:0">"＋ 거래처 추가"로 담당자·계약 만료일을 넣으면 견적·접수·단가·할 일이 한 화면에 모여요.</p></div></div>';
+      $$('[data-c]').forEach(function (b) { b.onclick = function () { cs.sel = b.dataset.c; renderCustDetail(); window.scrollTo(0, 0); }; });
+    };
+    var st; $('#ctQ').oninput = function () { var v = this.value; clearTimeout(st); st = setTimeout(function () { cs.q = v; draw(); }, 150); };
+    $('#ctAdd').onclick = function () { editCust({}); };
+    loadCusts().then(function () { if (state.view === 'custs' && !cs.sel) draw(); }).catch(function (err) { $('#ctList').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+  }
+  function editCust(c) {
+    var staffNames = state.cal.data ? state.cal.data.users.map(function (u) { return u.name; }) : [];
+    var f = function (id, label, v, ph, type) { return '<div class="field"><label>' + label + '</label><input class="input" id="' + id + '"' + (type ? ' type="' + type + '"' : '') + ' value="' + esc(v || '') + '" placeholder="' + esc(ph || '') + '"></div>'; };
+    modal({ eyebrow: '거래처', title: c.id ? c.name + ' 수정' : '거래처 추가', wide: true,
+      body: '<div class="qd-two">' + f('cfN', '거래처 이름 *', c.name, '예) 제주삼다수') + f('cfA', '같은 업체로 볼 다른 이름 (쉼표로)', (c.aliases || []).join(', '), '예) 삼다수, 제주개발공사') + '</div>' +
+        '<div class="qd-two"><div class="field"><label>우리 쪽 사업자</label><select class="input" id="cfB"><option value="">–</option>' + BIZ_NAMES.map(function (b) { return '<option' + (b === c.biz ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select></div>' +
+        '<div class="field"><label>담당 직원</label><input class="input" id="cfO" list="cfOs" value="' + esc(c.owner || '') + '"><datalist id="cfOs">' + staffNames.map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist></div></div>' +
+        '<div class="qd-two">' + f('cfC', '거래처 담당자', c.contact, '예) 박과장') + f('cfP', '연락처', c.phone, '010-0000-0000') + '</div>' +
+        '<div class="qd-two">' + f('cfE', '이메일', c.email, '') + f('cfPay', '결제 조건', c.payment, '예) 월말 마감 익월 말 현금') + '</div>' +
+        '<div class="qd-two">' + f('cfS', '계약 시작일', c.start, '', 'date') + f('cfEnd', '계약 만료일 (30일 전부터 알림)', c.end, '', 'date') + '</div>' +
+        '<div class="field"><label>메모</label><textarea class="input memo" id="cfM" maxlength="3000">' + esc(c.memo || '') + '</textarea></div>',
+      foot: (c.id ? '<button class="btn btn-danger btn-sm" id="cfDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="cfSave">저장</button>',
+      onMount: function (m, close) {
+        $('#cfSave', m).onclick = function () {
+          var btn = this; busy(btn, true, '저장 중…');
+          var v = { name: $('#cfN', m).value, aliases: $('#cfA', m).value, biz: $('#cfB', m).value, owner: $('#cfO', m).value, contact: $('#cfC', m).value, phone: $('#cfP', m).value, email: $('#cfE', m).value, payment: $('#cfPay', m).value, start: $('#cfS', m).value, end: $('#cfEnd', m).value, memo: $('#cfM', m).value };
+          api('custs.save', { id: c.id || '', cust: v }).then(function (r) { state.custs = r.custs; close(); toast('저장했어요.'); var cs = state.custView = state.custView || { q: '' }; cs.sel = r.id; if (state.view === 'custs') renderCustDetail(); else { state.view = 'custs'; render(); } })
+            .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+        var dl = $('#cfDel', m); if (dl) dl.onclick = function () { if (!confirm('"' + c.name + '" 거래처 카드를 지울까요? (견적·접수 기록은 그대로 남아요)')) return; api('custs.delete', { id: c.id }).then(function (r) { state.custs = r.custs; close(); state.custView.sel = ''; renderCusts(); toast('삭제했어요.'); }).catch(function (err) { toast(err.message, 'err'); }); };
+      } });
+  }
+  function renderCustDetail() {
+    var cs = state.custView, c = (state.custs || []).filter(function (x) { return x.id === cs.sel; })[0];
+    if (!c) { cs.sel = ''; return renderCusts(); }
+    var row = function (k, v) { return v ? '<div><span class="muted small">' + k + '</span><b>' + v + '</b></div>' : ''; };
+    $('#main').innerHTML = '<div class="row-between" style="margin-bottom:14px;flex-wrap:wrap;gap:8px"><button class="btn btn-sm" id="cdBack">← 거래처</button><div class="actions">' + (can('analysis') ? '<button class="btn btn-sm" id="cdAn">실적 상세</button>' : '') + '<button class="btn btn-sm" id="cdQuote">＋ 견적 요청 등록</button><button class="btn btn-sm btn-primary" id="cdEdit">수정</button></div></div>' +
+      '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div><div class="eyebrow">Customer · 거래처</div><h2>' + esc(c.name) + ' ' + custBadge(c) + '</h2>' + (c.aliases.length ? '<p class="muted small" style="margin:2px 0 0">같은 업체: ' + esc(c.aliases.join(', ')) + '</p>' : '') + '</div></div>' +
+      '<div class="cust-info">' + row('우리 사업자', esc(c.biz)) + row('담당 직원', esc(c.owner)) + row('거래처 담당자', esc(c.contact)) + row('연락처', c.phone ? '<a href="tel:' + esc(c.phone.replace(/[^\d+]/g, '')) + '">' + esc(c.phone) + '</a>' : '') + row('이메일', c.email ? '<a href="mailto:' + esc(c.email) + '">' + esc(c.email) + '</a>' : '') +
+      row('계약 기간', (c.start || c.end) ? esc((c.start || '?') + ' ~ ' + (c.end || '?')) : '') + row('결제 조건', esc(c.payment)) + '</div>' +
+      (c.memo ? '<div class="cust-memo">' + esc(c.memo) + '</div>' : '') + '<p class="hint" style="margin:10px 0 0">수정 ' + esc(c.by) + ' · ' + esc(c.at) + '</p></div>' +
+      '<div class="cust-sec" id="cdLinks"><div class="card muted"><span class="spinner dark"></span> 관련 기록 모으는 중…</div></div>';
+    $('#cdBack').onclick = function () { cs.sel = ''; renderCusts(); };
+    $('#cdEdit').onclick = function () { editCust(c); };
+    $('#cdQuote').onclick = function () { state.view = 'reqs'; render(); setTimeout(function () { if (typeof openNewReq === 'function') { openNewReq(); var i = $('.modal [data-r=cust]'); if (i) i.value = c.name; } }, 50); };
+    var an = $('#cdAn'); if (an) an.onclick = function () { var b = this; busy(b, true, '…'); loadAnalysis().then(function () { busy(b, false); openCustCard(c.name); }).catch(function (err) { busy(b, false); toast(err.message, 'err'); }); };
+    var jobs = [
+      state.quotes.list ? Promise.resolve() : api('quotes.list').then(function (r) { state.quotes.list = r.quotes; }),
+      state.reqs.list ? Promise.resolve() : api('reqs.list').then(function (r) { state.reqs.list = r.reqs; }),
+      state.rateCusts ? Promise.resolve() : api('rates.list').then(function (r) { state.rateCusts = r.custs; }),
+      loadCal().catch(function () { }),
+      can('analysis') ? loadAnalysis().catch(function () { }) : Promise.resolve()
+    ];
+    Promise.all(jobs).then(function () {
+      if (state.view !== 'custs' || cs.sel !== c.id) return;
+      var qs = (state.quotes.list || []).filter(function (q) { return custMatch(c, q.client); });
+      var rq = (state.reqs.list || []).filter(function (r) { return custMatch(c, r.cust); });
+      var rt = (state.rateCusts || []).filter(function (r) { return custMatch(c, r.cust); });
+      var tk = state.cal.data ? state.cal.data.tasks.filter(function (t) { return custMatch(c, t.cust); }) : [];
+      var ns = can('analysis') ? (state.an.notes || []).filter(function (n) { return custMatch(c, n.cust); }) : [];
+      var sec = function (t, n, inner, go) { return '<div class="card"><div class="row-between"><h3>' + t + ' <span class="muted small">' + n + '</span></h3>' + (go ? '<button class="btn btn-sm btn-ghost" data-go="' + go + '">열기</button>' : '') + '</div>' + (n ? inner : '<p class="muted small" style="margin:6px 0 0">없어요.</p>') + '</div>'; };
+      $('#cdLinks').innerHTML =
+        sec('📨 견적 접수', rq.length, '<ul class="home-list">' + rq.slice(0, 8).map(function (r) { return '<li><button data-rq="' + esc(r.id) + '"><span>' + esc(r.title) + '</span><span>' + reqPill(r.status) + ' <span class="small muted">' + esc(r.received || '') + '</span></span></button></li>'; }).join('') + '</ul>', 'reqs') +
+        sec('📁 견적모음', qs.length, '<ul class="home-list">' + qs.slice(0, 8).map(function (q) { return '<li><button data-q="' + esc(q.id) + '"><span>' + esc(q.name) + '</span><span>' + statusPill(q.status) + ' <span class="small muted">' + esc(String(q.savedAt).slice(0, 10)) + '</span></span></button></li>'; }).join('') + '</ul>', 'quotes') +
+        sec('💲 업체 단가표', rt.length, '<ul class="home-list">' + rt.map(function (r) { return '<li><button data-rt="' + esc(r.cust) + '"><span>' + esc(r.cust) + '</span><span class="small muted">' + won(r.count) + '구간' + (r.hasSpecial ? ' · 특수운임' : '') + '</span></button></li>'; }).join('') + '</ul>', 'rates') +
+        sec('✅ 할 일', tk.length, '<ul class="home-list">' + tk.map(function (t) { return '<li><span class="hl-row"><span>' + esc(t.title) + '</span><span class="small muted">' + esc(ruleText(t)) + ' · ' + esc(t.assignee || '팀 전체') + '</span></span></li>'; }).join('') + '</ul>') +
+        (can('analysis') ? sec('📌 단가 변경 기록', ns.length, '<ul class="home-list">' + ns.slice(0, 10).map(function (n) { return '<li><span class="hl-row"><span>' + esc(n.month) + '</span><span class="small">' + esc(noteText(n)) + '</span></span></li>'; }).join('') + '</ul>') : '');
+      $$('[data-rq]').forEach(function (b) { b.onclick = function () { state.reqs.detail = b.dataset.rq; state.reqs.data = null; state.view = 'reqs'; render(); }; });
+      $$('[data-q]').forEach(function (b) { b.onclick = function () { state.quotes.detail = b.dataset.q; state.quotes.detailData = null; state.view = 'quotes'; render(); }; });
+      $$('[data-rt]').forEach(function (b) { b.onclick = function () { state.rates.sel = b.dataset.rt; state.rates.data = null; state.view = 'rates'; render(); }; });
+      bindHomeGo($('#cdLinks'));
+    }).catch(function (err) { $('#cdLinks').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+  }
+
   /* ───────── 서류함 ───────── */
 
   var DOC_CATS = ['사업자등록증', '통장사본', '법인등기부등본', '인감증명서', '운송사업 허가증', '보험증권', '계약서', '견적서 양식', '기타'];
@@ -5628,6 +5938,24 @@
     return 'etc';
   }
   var DOC_ICON = { img: '🖼', pdf: 'PDF', xls: 'XLS', doc: 'DOC', etc: 'FILE' };
+  /** 엑셀 미리보기: 시트 탭 + 표 (시트당 최대 500줄 · 40열) */
+  function xlsPreview(v, blob) {
+    v.innerHTML = '<p class="muted"><span class="spinner dark"></span> 엑셀 읽는 중…</p>';
+    Promise.all([loadXlsx(), blob.arrayBuffer()]).then(function (r) {
+      var X = r[0], wb = X.read(r[1], { type: 'array', cellDates: true }), names = wb.SheetNames, cur = 0;
+      var draw = function () {
+        var ws = wb.Sheets[names[cur]], rows = X.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '', blankrows: false });
+        var nc = Math.min(40, rows.reduce(function (a, x) { return Math.max(a, x.length); }, 0)), more = rows.length > 500;
+        var colName = function (i) { var t = ''; i++; while (i) { var mm = (i - 1) % 26; t = String.fromCharCode(65 + mm) + t; i = Math.floor((i - 1) / 26); } return t; };
+        v.innerHTML = (names.length > 1 ? '<div class="xls-tabs">' + names.map(function (n, i) { return '<button type="button" class="' + (i === cur ? 'on' : '') + '" data-i="' + i + '">' + esc(n) + '</button>'; }).join('') + '</div>' : '') +
+          '<div class="xls-wrap"><table class="xls-tbl"><thead><tr><th></th>' + Array.apply(null, Array(nc)).map(function (_, i) { return '<th>' + colName(i) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+          (rows.length ? rows.slice(0, 500).map(function (row, ri) { return '<tr><th>' + (ri + 1) + '</th>' + Array.apply(null, Array(nc)).map(function (_, i) { return '<td>' + esc(row[i] == null ? '' : row[i]) + '</td>'; }).join('') + '</tr>'; }).join('') : '<tr><td class="muted" style="padding:16px">빈 시트예요.</td></tr>') +
+          '</tbody></table></div>' + (more ? '<p class="hint" style="margin:6px 0 0">처음 500줄만 보여요. 전체는 다운로드해서 여세요.</p>' : '');
+        $$('.xls-tabs button', v).forEach(function (b) { b.onclick = function () { cur = +b.dataset.i; draw(); }; });
+      };
+      v.classList.add('xls-mode'); draw();
+    }).catch(function (err) { v.innerHTML = '<p class="err-text">엑셀을 읽지 못했어요: ' + esc(err.message) + '</p>'; });
+  }
 
   function renderDocs() {
     var ds = state.docs;
@@ -5728,6 +6056,7 @@
           url = URL.createObjectURL(bl);
           if (k === 'img') v.innerHTML = '<img src="' + url + '" alt="' + esc(d.name) + '">';
           else if (k === 'pdf') v.innerHTML = '<iframe src="' + url + '" title="' + esc(d.name) + '"></iframe>';
+          else if (k === 'xls') xlsPreview(v, bl);
           else v.innerHTML = '<div class="empty" style="min-height:160px"><div><div class="ficon big f-' + k + '">' + DOC_ICON[k] + '</div><p class="muted">이 형식은 미리보기를 지원하지 않아요. 다운로드해서 여세요.</p></div></div>';
         }).catch(function (err) { var v = $('#dView', m); if (v) v.innerHTML = '<p style="color:var(--red)">' + esc(err.message) + '</p>'; });
         $('#dDl', m).onclick = function () { var b = this; busy(b, true, '…'); docBlob(d).then(function (bl) { saveBlob(bl, d.fileName); }).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(b, false); }); };
@@ -5962,13 +6291,14 @@
       (hq ? '<form class="home-quick" id="homeQuick" autocomplete="off"><input class="input" id="hqFrom" list="addrList" placeholder="상차지"><span class="hq-arrow">→</span><input class="input" id="hqTo" list="addrList" placeholder="하차지"><button class="btn btn-accent" type="submit">바로 계산</button></form>' : '') +
       '</div>' +
       '<div class="home-grid">' +
+      '<div class="card home-card full" id="hcNotice"><div class="eyebrow">Notice · 팀 공지</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       (hq ? '<div class="card home-card" id="hcDiesel"><div class="eyebrow">Diesel · 오늘 경유가</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (ha ? '<div class="card home-card wide2" id="hcAn"><div class="eyebrow">This month · 이번 달 실적</div><p class="muted"><span class="spinner dark"></span> 분석 데이터 불러오는 중…</p></div>' : '') +
       '<div class="card home-card" id="hcToday"><div class="eyebrow">Today · 오늘 할 일</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       '<div class="card home-card" id="hcWx"><div class="eyebrow">Weather · 오늘 날씨</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       '<div class="card home-card wide2" id="hcNews"><div class="eyebrow">News · 물류 뉴스</div><p class="muted"><span class="spinner dark"></span></p></div>' +
       (hq ? '<div class="card home-card" id="hcReqs"><div class="eyebrow">Requests · 진행 중인 견적 요청</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
-      (hq ? '<div class="card home-card" id="hcDocs"><div class="eyebrow">Documents · 만료 임박 서류</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
+      (hq ? '<div class="card home-card" id="hcDocs"><div class="eyebrow">Expiring · 만료 임박</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (hq ? '<div class="card home-card" id="hcQuotes"><div class="eyebrow">Quotes · 최근 내 견적</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       (hq ? '<div class="card home-card" id="hcHist"><div class="eyebrow">History · 최근 조회 (7일)</div><p class="muted"><span class="spinner dark"></span></p></div>' : '') +
       '</div>';
@@ -5991,13 +6321,14 @@
         $('#calcForm').requestSubmit ? $('#calcForm').requestSubmit() : $('#calcBtn').click();
       };
       api('diesel.recent').then(function (r) { if (alive()) homeDiesel(r); }).catch(fail('#hcDiesel'));
-      (state.docs.list ? Promise.resolve({ docs: state.docs.list }) : api('docs.list')).then(function (r) { state.docs.list = r.docs; if (alive()) homeDocs(r.docs); }).catch(fail('#hcDocs'));
+      Promise.all([(state.docs.list ? Promise.resolve({ docs: state.docs.list }) : api('docs.list')), loadCusts().catch(function () { return []; })]).then(function (r) { state.docs.list = r[0].docs; if (alive()) homeDocs(r[0].docs); }).catch(fail('#hcDocs'));
       api('quotes.list').then(function (r) { state.quotes.list = r.quotes; if (alive()) homeQuotes(r.quotes); }).catch(fail('#hcQuotes'));
       api('reqs.list').then(function (r) { state.reqs.list = r.reqs; if (alive()) homeReqs(r.reqs); }).catch(fail('#hcReqs'));
       api('history.list', { days: 7, type: '', userId: state.user.id, q: '' }).then(function (r) { if (alive()) homeHist(r.logs); }).catch(fail('#hcHist'));
     }
     if (ha) loadAnalysis().then(function () { if (alive()) homeAn(); }).catch(fail('#hcAn'));
     loadCal().then(function () { if (alive()) homeToday(); }).catch(fail('#hcToday'));
+    loadNotices(true).then(function () { if (alive()) homeNotice(); }).catch(fail('#hcNotice'));
     infoLoad('weather').then(function (r) { if (alive()) homeWeather(r); }).catch(fail('#hcWx'));
     infoLoad('news').then(function (r) { if (alive()) homeNews(r); }).catch(fail('#hcNews'));
   }
@@ -6082,12 +6413,16 @@
   function homeDocs(docs) {
     var el = $('#hcDocs');
     var list = docs.map(function (d) { return { d: d, n: docDays(d) }; }).filter(function (x) { return x.n != null && x.n <= 60; }).sort(function (a, b) { return a.n - b.n; });
-    el.innerHTML = '<div class="row-between"><div class="eyebrow">Documents · 만료 임박 서류</div><button class="btn btn-sm btn-ghost" data-go="docs">서류함</button></div>' +
+    var cl = (state.custs || []).map(function (c) { return { c: c, n: custDays(c) }; }).filter(function (x) { return x.n != null && x.n <= 60 && x.n >= -30; }).sort(function (a, b) { return a.n - b.n; });
+    var dbadge = function (n) { return n < 0 ? '<span class="badge exp-x">만료됨</span>' : '<span class="badge ' + (n <= 30 ? 'exp-soon' : 'off') + '">D-' + n + '</span>'; };
+    el.innerHTML = '<div class="row-between"><div class="eyebrow">Expiring · 만료 임박 (서류·계약)</div><span class="actions"><button class="btn btn-sm btn-ghost" data-go="custs">거래처</button><button class="btn btn-sm btn-ghost" data-go="docs">서류함</button></span></div>' +
+      (cl.length ? '<ul class="home-list">' + cl.slice(0, 4).map(function (x) { return '<li><button data-ct="' + esc(x.c.id) + '"><span>계약 · ' + esc(x.c.name) + '</span><span>' + dbadge(x.n) + '</span></button></li>'; }).join('') + '</ul>' : '') +
       (list.length ? '<ul class="home-list">' + list.slice(0, 6).map(function (x) {
         return '<li><button data-doc="' + esc(x.d.id) + '"><span>' + esc((x.d.biz ? x.d.biz + ' · ' : '') + x.d.name) + '</span><span>' +
           (x.n < 0 ? '<span class="badge exp-x">만료됨</span>' : '<span class="badge ' + (x.n <= 30 ? 'exp-soon' : 'off') + '">D-' + x.n + '</span>') + '</span></button></li>';
       }).join('') + '</ul>' : '<p class="muted small" style="margin:8px 0 0">60일 안에 만료되는 서류가 없어요. (' + won(docs.length) + '개 보관 중)</p>');
     $$('[data-doc]', el).forEach(function (b) { b.onclick = function () { var d = docs.filter(function (x) { return x.id === b.dataset.doc; })[0]; if (d) previewDoc(d); }; });
+    $$('[data-ct]', el).forEach(function (b) { b.onclick = function () { state.custView = { q: '', sel: b.dataset.ct }; state.view = 'custs'; render(); }; });
     bindHomeGo(el);
   }
 
@@ -6385,9 +6720,16 @@
         '<b>계정 관리</b>에서 직원 계정을 만들고 메뉴 권한(견적·분석)을 정합니다. 퇴사자는 바로 <b>사용 중지</b>하세요.',
         '<b>분석 데이터</b>에 매월 사업자별 엑셀을 올립니다. 같은 달을 다시 올리면 덮어씁니다.',
         '<b>회사 정보</b>에 사업자 3곳의 정보와 직인을 넣으면 견적서에 들어갑니다.',
+        '<b>직원 목록</b>에 직원마다 사업자·부서·메일을 넣으세요. 시간외근무일지와 주간 요약 메일에 쓰여요. 퇴사자는 지우지 말고 "재직"을 끄세요.',
         '서버 코드가 바뀌는 업데이트가 있으면 SETUP.md의 "업데이트가 나왔을 때" 순서대로 Apps Script에 붙여넣고 새 버전으로 배포하세요.'
       ]]
     );
+    if (hq) sec.push(['custs', '거래처', [
+      '<b>더보기 → 거래처</b>에서 업체별 담당자·연락처·계약 기간·결제 조건을 적어 두면, 그 업체의 견적 접수·견적모음·업체 단가표·할 일' + (ha ? '·단가 변경 기록' : '') + '이 한 화면에 모여요.',
+      '이름이 조금씩 다르게 적힌 업체는 "같은 업체로 볼 다른 이름"에 쉼표로 넣으세요 (예: 삼다수, 제주개발공사).',
+      '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
+    ]]);
+    sec.unshift(['notice', '팀 공지', ['홈 화면 맨 위 <b>팀 공지</b>에서 누구나 공지를 쓸 수 있어요. 본인 글과 관리자만 고치거나 지울 수 있고, 📌 고정은 관리자만 해요. 최근 공지는 주간 요약 메일에도 들어가요.']]);
     sec.unshift(['info', '물류 정보', [
       '<b>유가</b>: 오피넷 전국 평균 경유가를 주식 화면처럼 기간별(1주~전체) 그래프로 봅니다. 그래프에 마우스를 올리면 그날 가격과 전일 대비가 나와요.',
       '<b>뉴스</b>: 화물연대·안전운임·유가 같은 물류 업계 이슈를 구글 뉴스에서 30분마다 모아요. 키워드별로 걸러 보고, 제목을 누르면 원문이 열립니다. ⭐는 관심 업체 기사예요.',
@@ -6400,8 +6742,10 @@
       '체크하면 목록에서 사라지고 <b>완료 기록</b>에 누가 언제 했는지 남아요. 잘못 체크했으면 완료 기록에서 되돌리기.',
       '<b>휴가·근무</b>: 연차·반차·병가·경조·공가·대체휴무와 야간근무·휴일근무를 등록해요. 반차는 0.5일, 연차는 주말·공휴일을 빼고 셉니다.' + (adm ? ' 관리자는 사람별 <b>연차 부여 일수</b>와 <b>회사 휴무일</b>을 정할 수 있어요.' : ''),
       '<b>당직 순번</b>: 휴가·근무 탭의 "당직 순번 규칙"에 순서·시작 주·시간을 정해 두면 앞으로의 당직이 달력에 자동으로 나오고 추가근무(당직)에도 들어가요. 한 주만 바꾸려면 달력에서 그 날짜를 눌러 "바꾸기".',
+      '<b>시간외근무일지</b>: 휴가·근무 탭의 월별 추가근무에서 이름 옆 <b>일지</b> 또는 <b>시간외근무일지 (전체)</b>를 누르면 회사 양식 엑셀이 나와요. 부서·사업자는 관리자 → 직원 목록에서 가져와요. 당직은 끝나는 날이 속한 달로 들어가요.',
+      '<b>주간 요약</b>: 일정의 📋 주간 요약 탭에서 이번 주 당직·휴가·할 일·견적 회신·만료 임박과 지난주 추가근무를 한눈에 봐요. 같은 내용이 매주 월요일 오전 8시 메일로 가요.',
       '<b>추가근무</b>: 야간근무·휴일근무·당직에 시작·종료 시각과 시간을 넣으면 <b>월별 추가근무</b> 표에 사람별 시간 합계가 나와요. 월말에 그 달을 골라 <b>엑셀</b>로 받으면 요약·상세가 들어 있어요.'
-    ].concat(adm ? ['관리자: <b>직원 명단</b>에서 계정 없는 직원을 이름으로 추가하고, <b>엑셀 가져오기</b>로 예전 기록(휴가근무·일정·연차부여 시트)을 한 번에 넣을 수 있어요. 같은 기록은 건너뛰어요.'] : [])]);
+    ].concat(adm ? ['관리자: <b>관리자 → 직원 목록</b>에서 계정 없는 직원도 추가하고, <b>엑셀 가져오기</b>로 예전 기록(휴가근무·일정·연차부여 시트)을 한 번에 넣을 수 있어요. 같은 기록은 건너뛰어요.'] : [])]);
     sec.push(['account', '계정 · 보안', [
       '오른쪽 위 <b>비밀번호</b>에서 언제든 바꿀 수 있습니다. 로그인은 브라우저 창을 닫으면 풀립니다.',
       '비밀번호를 5번 틀리면 10분 동안 잠깁니다. 잊어버렸다면 관리자에게 초기화를 요청하세요.',
@@ -6412,7 +6756,7 @@
       '<div><div class="card help-head"><div class="eyebrow">Guide · 사용 안내</div><h2>JOIL 사용법</h2><p class="muted small" style="margin:6px 0 0">' + esc(state.user.name) + '님이 쓸 수 있는 메뉴만 안내합니다.</p></div>' +
       sec.map(function (s) {
         return '<section class="card help-sec" id="help-' + s[0] + '"><h3>' + s[1] + '</h3><ul>' + s[2].map(function (t) { return '<li>' + t + '</li>'; }).join('') + '</ul>' +
-          (['cal', 'info', 'calc', 'bulk', 'history', 'reqs', 'rates', 'docs', 'analysis', 'admin'].indexOf(s[0]) !== -1 ? '<button class="btn btn-sm" data-open="' + (s[0] === 'history' ? 'quotes' : s[0]) + '">' + s[1].split(' · ')[0] + ' 열기 →</button>' : '') + '</section>';
+          (['cal', 'custs', 'info', 'calc', 'bulk', 'history', 'reqs', 'rates', 'docs', 'analysis', 'admin'].indexOf(s[0]) !== -1 ? '<button class="btn btn-sm" data-open="' + (s[0] === 'history' ? 'quotes' : s[0]) + '">' + s[1].split(' · ')[0] + ' 열기 →</button>' : '') + '</section>';
       }).join('') + '</div></div>';
     $$('.help-rail button').forEach(function (b) { b.onclick = function () { var t = $('#help-' + b.dataset.sec); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }; });
     $$('.help-sec [data-open]').forEach(function (b) { b.onclick = function () { state.view = b.dataset.open === 'quotes' ? 'history' : b.dataset.open; render(); window.scrollTo(0, 0); }; });
