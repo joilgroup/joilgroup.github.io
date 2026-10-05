@@ -107,6 +107,7 @@ function doPost(e) {
 }
 
 function handle_(req) {
+  CAL_LINK_ = null;
   var action = String(req.action || '');
   if (action === 'login') return login_(req.id, req.password);
 
@@ -1371,8 +1372,10 @@ function calAll_(session) {
       from: hm_(r[9]), to: hm_(r[10]), hours: Number(r[11]) || 0 };
   });
   var grants = rowsOf_(SHEET_GRANTS, GRANT_HEADER).map(function (r) { return { year: String(r[0]), userId: String(r[1]), name: String(r[2]), days: Number(r[3]) || 0 }; });
-  var users = calUsers_();
+  var users = calUsers_(), link = calLink_(), rl = function (x) { return calRelink_(x, link); };
+  leaves.forEach(rl); grants.forEach(rl);
   var dutyOvr = rowsOf_(SHEET_DUTY_OVR, DUTY_OVR_HEADER).map(function (r) { return { ruleId: String(r[0]), week: td_(r[1]), userId: String(r[2] || ''), name: String(r[3] || ''), hours: r[4] === '' ? null : Number(r[4]), cancel: String(r[5]) === 'Y', memo: String(r[6] || ''), by: String(r[7] || ''), at: fmt_(r[8]) }; });
+  dutyOvr.forEach(function (o) { if (o.userId) rl(o); });
   return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: users, holidays: krHolidays_(), companyHolidays: companyHolidays_(), today: ymd_(new Date()),
     dutyRules: dutyRules_(), dutyOverrides: dutyOvr, staffInfo: staffInfo_() };
 }
@@ -1438,7 +1441,7 @@ function taskDone_(session, req) {
 
 function leaveSave_(session, req) {
   var l = req.leave || {};
-  var userId = String(l.userId || session.id);
+  var userId = String(l.userId || session.id), lk = calLink_().byStaff[userId]; if (lk) userId = lk;
   if (userId !== session.id && session.role !== 'admin') throw new Error('다른 사람의 휴가는 관리자만 등록할 수 있습니다.');
   var u = calUsers_().filter(function (x) { return x.id === userId; })[0];
   if (!u) throw new Error('직원을 찾을 수 없습니다.');
@@ -1497,8 +1500,24 @@ function staffWrite_(list) {
   }));
 }
 /** 휴가·근무 대상: 사용 중인 계정 + 계정 없는 재직 직원 */
+/** 직원 목록에서 계정과 연결된 사람: 직원ID → 계정ID, 계정ID → 직원 이름 */
+var CAL_LINK_ = null; // 한 번의 요청 안에서만 재사용
+function calLink_() {
+  if (CAL_LINK_) return CAL_LINK_;
+  var acc = {}; listUsers_().forEach(function (u) { if (u.active) acc[String(u.id)] = 1; });
+  var out = { byStaff: {}, nameOf: {} };
+  calStaff_().forEach(function (s) { if (s.active && s.account && acc[s.account]) { out.byStaff[s.id] = s.account; out.nameOf[s.account] = s.name; } });
+  CAL_LINK_ = out; return out;
+}
+/** 예전 기록(직원ID로 남은 것, 계정 이름으로 남은 것)을 연결된 계정 · 직원 이름으로 맞춤 */
+function calRelink_(x, link) {
+  if (link.byStaff[x.userId]) x.userId = link.byStaff[x.userId];
+  if (link.nameOf[x.userId]) x.name = link.nameOf[x.userId];
+  return x;
+}
 function calUsers_() {
-  var acc = listUsers_().filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
+  var link = calLink_();
+  var acc = listUsers_().filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: link.nameOf[String(u.id)] || String(u.name) }; });
   var names = {}, ids = {}; acc.forEach(function (u) { names[u.name] = 1; ids[u.id] = 1; });
   return acc.concat(calStaff_().filter(function (s) { return s.active && !names[s.name] && !(s.account && ids[s.account]); }).map(function (s) { return { id: s.id, name: s.name, nameOnly: true }; }));
 }
@@ -1521,7 +1540,12 @@ function staffSave_(session, req) {
     return { id: old[x.id] ? x.id : 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), name: name, biz: biz, dept: String(x.dept || '').trim().slice(0, 30), email: email,
       account: String(x.account || '').trim(), active: x.active !== false, weekly: !!x.weekly && !!email, memo: String(x.memo || '').slice(0, 200), team: String(x.team || '').trim().slice(0, 30) };
   }).filter(Boolean);
-  staffWrite_(list);
+  staffWrite_(list); CAL_LINK_ = null;
+  var accs = {}; listUsers_().forEach(function (u) { accs[String(u.id)] = u; });
+  list.forEach(function (s) { // 계정을 연결하면 계정 이름도 직원 이름으로 (같은 사람이 두 이름으로 나뉘지 않게)
+    var u = s.active && s.account && accs[s.account]; if (!u || String(u.name) === s.name) return;
+    var f = findUser_(s.account); if (f) { setUserCell_(f.row, '이름', s.name); dropUserCache_(s.account); }
+  });
   return { staff: calStaff_() };
 }
 /** 관리자: 엑셀 가져오기 (휴가·근무 / 일정 / 연차 부여). 같은 기록은 건너뜀 */
@@ -1575,7 +1599,11 @@ function calImport_(session, req) {
 /* ── 당직 순번 규칙 ──
  * { id, name, members:[{id,name}] (첫 사람이 시작 주 담당), start(월요일), mode:'week'|'days', hours, days:[0..6], holidays:bool, active }
  * week: 월~일 한 주를 통째로 (시간은 주당) · days: 그 주의 정해진 요일(+공휴일)마다 하루씩 (시간은 하루당) */
-function dutyRules_() { return parseJson_(PropertiesService.getScriptProperties().getProperty('DUTY_RULES'), []); }
+function dutyRules_() {
+  var list = parseJson_(PropertiesService.getScriptProperties().getProperty('DUTY_RULES'), []), link = calLink_();
+  list.forEach(function (r) { (r.members || []).forEach(function (m) { var x = calRelink_({ userId: m.id, name: m.name }, link); m.id = x.userId; m.name = x.name; }); });
+  return list;
+}
 function mondayOf_(s) { var d = new Date(Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10))), w = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - w * 86400000).toISOString().slice(0, 10); }
 function dutyRuleSave_(session, req) {
   var r = req.rule || {}, list = dutyRules_();

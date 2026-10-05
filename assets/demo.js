@@ -59,7 +59,8 @@
   function calId(p) { return p + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
   function calFind(k, id) { var f = calStore()[k].filter(function (x) { return x.id === id; })[0]; if (!f) fail('찾을 수 없습니다.'); return f; }
   function calUsers() {
-    var acc = store.users.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: u.name }; }), nm = {};
+    var lnk = {}; calStore().staff.forEach(function (x) { if (x.active !== false && x.account) lnk[x.account] = x.name; });
+    var acc = store.users.filter(function (u) { return u.active; }).map(function (u) { return { id: u.id, name: lnk[u.id] || u.name }; }), nm = {};
     acc.forEach(function (u) { nm[u.name] = 1; });
     return acc.concat(calStore().staff.filter(function (x) { return x.active !== false && !nm[x.name] && !(x.account && acc.some(function (a) { return a.id === x.account; })); }).map(function (x) { return { id: x.id, name: x.name, nameOnly: true }; }));
   }

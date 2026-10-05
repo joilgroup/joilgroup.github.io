@@ -3455,15 +3455,15 @@
     var opt = function (list, v, empty) { return (empty != null ? '<option value="">' + empty + '</option>' : '') + list.map(function (x) { var val = x[0], lab = x[1]; return '<option value="' + esc(val) + '"' + (val === v ? ' selected' : '') + '>' + esc(lab) + '</option>'; }).join(''); };
     body.innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div><div class="eyebrow">Staff · 직원 목록</div><h2>직원 목록</h2></div>' +
       '<div class="actions"><button class="btn btn-sm" id="stAdd">＋ 직원 추가</button><button class="btn btn-sm btn-primary" id="stSave"' + (a.staffDirty ? '' : ' disabled') + '>저장</button></div></div>' +
-      '<p class="muted small" style="margin:6px 0 12px">사업자·부서는 <b>시간외근무일지</b>에, 메일은 <b>주간 업무 요약</b>에 쓰여요. 사이트 계정이 있는 직원은 "계정"을 골라 연결하세요. 계정이 없어도 휴가·근무를 기록할 수 있어요.</p>' +
+      '<p class="muted small" style="margin:6px 0 12px">사업자·부서는 <b>시간외근무일지</b>에, 메일은 <b>주간 업무 요약</b>에 쓰여요. 사이트 계정이 있는 직원은 "계정"을 골라 연결하세요 (연결하면 계정 이름도 직원 이름으로 맞춰지고, 예전 기록도 한 사람으로 합쳐 보여요). 계정이 없어도 휴가·근무를 기록할 수 있어요.</p>' +
       '<div class="table-wrap"><table class="data staff-table"><thead><tr><th class="left">이름</th><th class="left">사업자</th><th class="left">부서</th><th class="left">팀</th><th class="left">이메일</th><th class="left">사이트 계정</th><th>재직</th><th>주간 요약 받기</th><th></th></tr></thead><tbody>' +
       a.staff.map(function (s, i) {
-        return '<tr class="' + (s.active === false ? 'muted-row' : '') + '"><td><input class="input input-sm" data-i="' + i + '" data-f="name" value="' + esc(s.name) + '" maxlength="30" placeholder="이름"></td>' +
-          '<td><select class="input input-sm" data-i="' + i + '" data-f="biz">' + opt(BIZ_NAMES.map(function (b) { return [b, b]; }), s.biz, '–') + '</select></td>' +
+        return '<tr class="' + (s.active === false ? 'muted-row' : '') + '"><td><input class="input input-sm" data-i="' + i + '" data-f="name" value="' + esc(s.name) + '" maxlength="30" placeholder="이름" style="min-width:96px"></td>' +
+          '<td><select class="input input-sm" data-i="' + i + '" data-f="biz" style="min-width:128px">' + opt(BIZ_NAMES.map(function (b) { return [b, b]; }), s.biz, '–') + '</select></td>' +
           '<td><input class="input input-sm" data-i="' + i + '" data-f="dept" value="' + esc(s.dept) + '" maxlength="30" placeholder="예) 운영부" style="width:110px"></td>' +
           '<td><input class="input input-sm" data-i="' + i + '" data-f="team" value="' + esc(s.team || '') + '" maxlength="30" placeholder="예) 일반팀" style="width:96px"></td>' +
-          '<td><input class="input input-sm" data-i="' + i + '" data-f="email" value="' + esc(s.email) + '" maxlength="100" placeholder="name@jo-il.com" style="min-width:200px"></td>' +
-          '<td><select class="input input-sm" data-i="' + i + '" data-f="account">' + opt(acc.map(function (u) { return [u.id, u.name + ' (' + u.id + ')' + (u.active ? '' : ' · 중지')]; }), s.account, '없음') + '</select></td>' +
+          '<td><input class="input input-sm" data-i="' + i + '" data-f="email" value="' + esc(s.email) + '" maxlength="100" placeholder="name@jo-il.com" style="min-width:170px"></td>' +
+          '<td><select class="input input-sm" data-i="' + i + '" data-f="account" style="min-width:150px">' + opt(acc.map(function (u) { return [u.id, u.name + ' (' + u.id + ')' + (u.active ? '' : ' · 중지')]; }), s.account, '없음') + '</select></td>' +
           '<td><input type="checkbox" data-i="' + i + '" data-f="active"' + (s.active !== false ? ' checked' : '') + '></td>' +
           '<td><input type="checkbox" data-i="' + i + '" data-f="weekly"' + (s.weekly ? ' checked' : '') + (s.email ? '' : ' disabled title="메일을 먼저 넣으세요"') + '></td>' +
           '<td><button class="btn btn-sm btn-ghost" data-del="' + i + '">삭제</button></td></tr>';
