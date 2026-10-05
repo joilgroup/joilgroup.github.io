@@ -257,6 +257,18 @@
           { title: '[데모] 쿠팡, 충청권 새 물류센터 착공', source: '데모산업', at: ago(20), link: 'https://news.google.com/', kws: ['쿠팡'], watch: true },
           { title: '[데모] 부산항 컨테이너 부두 노조 부분 파업', source: '데모항만', at: ago(30), link: 'https://news.google.com/', kws: ['항만 파업'], watch: false }
         ] };
+      case 'stock.quotes':
+        var SK = { KOSPI: ['코스피', 2650], KOSDAQ: ['코스닥', 850], '005930': ['삼성전자', 71000], '000660': ['SK하이닉스', 185000], '086280': ['현대글로비스', 112000], '000120': ['CJ대한통운', 92000], '028260': ['삼성물산', 128000] };
+        var t = Math.floor(Date.now() / 60000);
+        return { at: today() + ':00', quotes: ['KOSPI', 'KOSDAQ'].concat((req.codes || []).slice(0, 5)).map(function (c, i) {
+          var b = SK[c] || ['종목' + c, 50000], idx = c === 'KOSPI' || c === 'KOSDAQ', r = Math.round((Math.sin(t / 7 + i) * 2.2) * 100) / 100, p = b[1] * (1 + r / 100);
+          return { code: c, name: b[0], index: idx, price: idx ? Math.round(p * 100) / 100 : Math.round(p / 50) * 50, diff: idx ? Math.round(b[1] * r) / 100 : Math.round(b[1] * r / 100 / 50) * 50, rate: r, open: b[1], high: Math.round(b[1] * 1.02), low: Math.round(b[1] * 0.98), volume: 1234567, market: 'OPEN' }; }) };
+      case 'stock.search':
+        var all = [['005930', '삼성전자', '코스피'], ['028260', '삼성물산', '코스피'], ['000660', 'SK하이닉스', '코스피'], ['086280', '현대글로비스', '코스피'], ['000120', 'CJ대한통운', '코스피']];
+        var qq = String(req.q || '').trim(); return { items: all.filter(function (x) { return qq && (x[0] === qq || x[1].indexOf(qq) !== -1); }).map(function (x) { return { code: x[0], name: x[1], market: x[2] }; }) };
+      case 'stock.chart':
+        var base = 70000, pts = [], d0 = new Date(); for (var di = 69; di >= 0; di--) { var dd = new Date(d0.getTime() - di * 86400000); if (dd.getDay() === 0 || dd.getDay() === 6) continue; base *= 1 + Math.sin(di / 5) * 0.01; pts.push({ d: dd.toISOString().slice(0, 10), c: Math.round(base / 50) * 50 }); }
+        return { code: req.code, points: pts };
       case 'info.weather':
         var dd = function (k) { var d = new Date(); d.setDate(d.getDate() + k); return d.toISOString().slice(0, 10); };
         var mk = function (name, city, c, tmp, snow, rain) { return { name: name, city: city, now: { temp: tmp, code: c, wind: 10 }, days: [0, 1, 2].map(function (k) { return { date: dd(k), code: k ? 3 : c, max: tmp + 4 - k, min: tmp - 6 + k, pop: k ? 20 : (rain || snow ? 80 : 10), rain: k ? 0 : rain, snow: k ? 0 : snow, wind: 15 }; }) }; };
