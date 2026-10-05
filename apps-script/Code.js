@@ -150,7 +150,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'custs.list', 'custs.save', 'custs.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -173,6 +173,18 @@ function handle_(req) {
     case 'rates.get': return ratesGet_(req.cust);
     case 'rates.upload': return ratesUpload_(session, req);
     case 'rates.saveSpecials': return saveCustSpecials_(req.cust, req.specials);
+    case 'manual.list': return manualList_();
+    case 'manual.save': return manualSave_(session, req);
+    case 'manual.delete': return manualDelete_(session, req.id);
+    case 'manual.upload': return manualUpload_(session, req);
+    case 'manual.file': return manualFile_(req.fileId);
+    case 'manual.fileDelete': return manualFileDelete_(session, req.fileId);
+    case 'inq.list': return inqList_();
+    case 'inq.save': return inqSave_(session, req);
+    case 'inq.delete': return inqDelete_(session, req.id);
+    case 'owners.list': return ownersList_();
+    case 'owners.save': return ownerSave_(session, req);
+    case 'owners.delete': return ownerDelete_(session, req.id);
     case 'custs.list': return custsList_();
     case 'custs.save': return custSave_(session, req);
     case 'custs.delete': return custDelete_(req.id);
@@ -1467,7 +1479,7 @@ function leaveRow_(id, userId, name, v, by) {
 /** 휴가·근무 대상: 사용 중인 계정 + 계정 없는 직원(이름만, 관리자가 추가) */
 /* ── 직원 목록 (사업자·부서·메일·계정 연결) ── */
 var SHEET_STAFF = '직원';
-var STAFF_HEADER = ['ID', '이름', '사업자', '부서', '이메일', '계정아이디', '재직', '주간요약', '메모'];
+var STAFF_HEADER = ['ID', '이름', '사업자', '부서', '이메일', '계정아이디', '재직', '주간요약', '메모', '팀'];
 var BIZ_LIST = ['조일물류', '명일로지스', '조일로지스'];
 function calStaff_() {
   var rows = rowsOf_(SHEET_STAFF, STAFF_HEADER);
@@ -1475,13 +1487,13 @@ function calStaff_() {
     var old = parseJson_(PropertiesService.getScriptProperties().getProperty('CAL_STAFF'), []);
     if (old.length) { staffWrite_(old.map(function (x) { return { id: x.id, name: x.name, active: true }; })); rows = rowsOf_(SHEET_STAFF, STAFF_HEADER); }
   }
-  return rows.map(function (r) { return { id: String(r[0]), name: String(r[1]), biz: String(r[2] || ''), dept: String(r[3] || ''), email: String(r[4] || ''), account: String(r[5] || ''), active: String(r[6]) !== 'N', weekly: String(r[7]) === 'Y', memo: String(r[8] || '') }; });
+  return rows.map(function (r) { return { id: String(r[0]), name: String(r[1]), biz: String(r[2] || ''), dept: String(r[3] || ''), email: String(r[4] || ''), account: String(r[5] || ''), active: String(r[6]) !== 'N', weekly: String(r[7]) === 'Y', memo: String(r[8] || ''), team: String(r[9] || '') }; });
 }
 function staffWrite_(list) {
   var sh = cacheSheet_(SHEET_STAFF, STAFF_HEADER);
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, STAFF_HEADER.length).clearContent();
   if (list.length) sh.getRange(2, 1, list.length, STAFF_HEADER.length).setValues(list.map(function (x) {
-    return [x.id, x.name, x.biz || '', x.dept || '', x.email || '', x.account || '', x.active === false ? 'N' : 'Y', x.weekly ? 'Y' : '', x.memo || ''];
+    return [x.id, x.name, x.biz || '', x.dept || '', x.email || '', x.account || '', x.active === false ? 'N' : 'Y', x.weekly ? 'Y' : '', x.memo || '', x.team || ''];
   }));
 }
 /** 휴가·근무 대상: 사용 중인 계정 + 계정 없는 재직 직원 */
@@ -1494,7 +1506,7 @@ function calUsers_() {
 function staffInfo_() {
   var accName = {}; listUsers_().forEach(function (u) { accName[String(u.id)] = String(u.name); });
   var out = {};
-  calStaff_().forEach(function (s) { var v = { biz: s.biz, dept: s.dept }; out[s.name] = v; if (s.account && accName[s.account]) out[accName[s.account]] = v; });
+  calStaff_().forEach(function (s) { var v = { biz: s.biz, dept: s.dept, team: s.team }; out[s.name] = v; if (s.account && accName[s.account]) out[accName[s.account]] = v; });
   return out;
 }
 function staffSave_(session, req) {
@@ -1507,7 +1519,7 @@ function staffSave_(session, req) {
     if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error(name + ' 메일 주소를 확인하세요.');
     var biz = BIZ_LIST.indexOf(x.biz) !== -1 ? x.biz : '';
     return { id: old[x.id] ? x.id : 'S' + Utilities.getUuid().replace(/-/g, '').slice(0, 10), name: name, biz: biz, dept: String(x.dept || '').trim().slice(0, 30), email: email,
-      account: String(x.account || '').trim(), active: x.active !== false, weekly: !!x.weekly && !!email, memo: String(x.memo || '').slice(0, 200) };
+      account: String(x.account || '').trim(), active: x.active !== false, weekly: !!x.weekly && !!email, memo: String(x.memo || '').slice(0, 200), team: String(x.team || '').trim().slice(0, 30) };
   }).filter(Boolean);
   staffWrite_(list);
   return { staff: calStaff_() };
@@ -1622,6 +1634,124 @@ function grantsSave_(session, req) {
   var all = keep.concat(add);
   if (all.length) sh.getRange(2, 1, all.length, GRANT_HEADER.length).setValues(all);
   return calAll_(session);
+}
+
+/* ───────────── 업무 매뉴얼 · 문의 기록 · 업무 담당표 ───────────── */
+
+var SHEET_MANUAL = '매뉴얼';
+var MANUAL_HEADER = ['ID', '거래처', '제목', '분류', '처리순서', '연락처', '문제와대처', '주의사항', '메모', '첨부', '작성자', '작성일시', '수정자', '수정일시', '이력'];
+var MANUAL_FIELDS = ['steps', 'contacts', 'issues', 'cautions', 'memo'];
+function manualRow_(r) {
+  return { id: String(r[0]), cust: String(r[1] || ''), title: String(r[2]), cat: String(r[3] || ''), steps: String(r[4] || ''), contacts: String(r[5] || ''), issues: String(r[6] || ''), cautions: String(r[7] || ''), memo: String(r[8] || ''),
+    files: parseJson_(r[9], []), by: String(r[10] || ''), at: fmt_(r[11]), updBy: String(r[12] || ''), updAt: fmt_(r[13]), log: parseJson_(r[14], []) };
+}
+function manualList_() { return { manuals: rowsOf_(SHEET_MANUAL, MANUAL_HEADER).map(manualRow_).sort(function (a, b) { return (a.cust ? 0 : 1) - (b.cust ? 0 : 1) || a.cust.localeCompare(b.cust) || a.title.localeCompare(b.title); }) }; }
+function manualSave_(session, req) {
+  var m = req.manual || {}, title = String(m.title || '').trim().slice(0, 100); if (!title) throw new Error('매뉴얼 제목을 넣으세요.');
+  var vals = MANUAL_FIELDS.map(function (k) { var v = String(m[k] || ''); if (v.length > 40000) throw new Error('내용이 너무 길어요 (칸마다 4만 자까지).'); return v; });
+  var head = [String(m.cust || '').trim().slice(0, 100), title, String(m.cat || '').trim().slice(0, 30)].concat(vals);
+  var id = req.id, now = now_();
+  if (id) {
+    var f = findRow_(SHEET_MANUAL, MANUAL_HEADER, id); if (!f) throw new Error('매뉴얼을 찾을 수 없습니다.');
+    var old = manualRow_(f.raw), changed = [];
+    [['title', '제목'], ['cust', '업체'], ['cat', '분류'], ['steps', '처리 순서'], ['contacts', '연락처'], ['issues', '문제와 대처'], ['cautions', '주의사항'], ['memo', '메모']].forEach(function (x) {
+      var nv = x[0] === 'title' ? title : x[0] === 'cust' ? head[0] : x[0] === 'cat' ? head[2] : vals[MANUAL_FIELDS.indexOf(x[0])];
+      if (String(old[x[0]]) !== nv) changed.push(x[1]);
+    });
+    var log = old.log; if (changed.length) log.push({ at: now, by: session.name, what: changed.join(', ') + ' 수정' }); if (log.length > 60) log = log.slice(-60);
+    f.sh.getRange(f.row, 2, 1, head.length).setValues([head]);
+    f.sh.getRange(f.row, 13, 1, 3).setValues([[session.name, now, JSON.stringify(log)]]);
+  } else {
+    id = newId_('M');
+    cacheSheet_(SHEET_MANUAL, MANUAL_HEADER).appendRow([id].concat(head).concat(['[]', session.name, now, session.name, now, JSON.stringify([{ at: now, by: session.name, what: '작성' }])]));
+  }
+  var out = manualList_(); out.id = id; return out;
+}
+function manualDelete_(session, id) {
+  var f = findRow_(SHEET_MANUAL, MANUAL_HEADER, id); if (!f) throw new Error('매뉴얼을 찾을 수 없습니다.');
+  parseJson_(f.raw[9], []).forEach(function (x) { try { DriveApp.getFileById(x.id).setTrashed(true); } catch (e) { /* 무시 */ } });
+  f.sh.deleteRow(f.row); return manualList_();
+}
+function manualUpload_(session, req) {
+  var f = findRow_(SHEET_MANUAL, MANUAL_HEADER, req.id); if (!f) throw new Error('매뉴얼을 찾을 수 없습니다.');
+  var bytes = Utilities.base64Decode(String(req.data || '')); if (!bytes.length) throw new Error('파일이 비어 있습니다.');
+  if (bytes.length > DOC_MAX_BYTES) throw new Error('파일은 20MB까지 올릴 수 있습니다.');
+  var name = String(req.fileName || '파일').replace(/[\\/:*?"<>|]/g, '_').slice(0, 150), mime = String(req.mime || 'application/octet-stream');
+  var file = docsFolder_().createFile(Utilities.newBlob(bytes, mime, name));
+  var files = parseJson_(f.raw[9], []); files.push({ id: file.getId(), name: name, mime: mime, size: bytes.length, by: session.name, at: now_() });
+  var log = parseJson_(f.raw[14], []); log.push({ at: now_(), by: session.name, what: '첨부 추가: ' + name });
+  f.sh.getRange(f.row, 10).setValue(JSON.stringify(files)); f.sh.getRange(f.row, 15).setValue(JSON.stringify(log.slice(-60)));
+  return manualList_();
+}
+function manualFileFind_(fileId) {
+  var hit = null; rowsOf_(SHEET_MANUAL, MANUAL_HEADER).some(function (r) { var x = parseJson_(r[9], []).filter(function (y) { return y.id === fileId; })[0]; if (x) hit = { m: String(r[0]), f: x }; return !!x; });
+  if (!hit) throw new Error('파일을 찾을 수 없습니다.'); return hit;
+}
+function manualFile_(fileId) { var h = manualFileFind_(fileId); return { data: Utilities.base64Encode(DriveApp.getFileById(h.f.id).getBlob().getBytes()), fileName: h.f.name, mime: h.f.mime }; }
+function manualFileDelete_(session, fileId) {
+  var h = manualFileFind_(fileId), f = findRow_(SHEET_MANUAL, MANUAL_HEADER, h.m);
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) { /* 무시 */ }
+  var files = parseJson_(f.raw[9], []).filter(function (y) { return y.id !== fileId; }), log = parseJson_(f.raw[14], []); log.push({ at: now_(), by: session.name, what: '첨부 삭제: ' + h.f.name });
+  f.sh.getRange(f.row, 10).setValue(JSON.stringify(files)); f.sh.getRange(f.row, 15).setValue(JSON.stringify(log.slice(-60)));
+  return manualList_();
+}
+
+var SHEET_INQ = '문의기록';
+var INQ_HEADER = ['ID', '일시', '거래처', '문의자', '내용', '처리', '상태', '응대자ID', '응대자', '자주묻는질문', '수정일시'];
+function inqRow_(r) { return { id: String(r[0]), at: String(fmt_(r[1])).replace(/^'/, ''), cust: String(r[2] || ''), who: String(r[3] || ''), body: String(r[4] || ''), answer: String(r[5] || ''), status: String(r[6] || '처리 중'), byId: String(r[7] || ''), by: String(r[8] || ''), faq: String(r[9]) === 'Y', upd: fmt_(r[10]) }; }
+function inqList_() { return { inqs: rowsOf_(SHEET_INQ, INQ_HEADER).map(inqRow_).sort(function (a, b) { return a.at < b.at ? 1 : -1; }) }; }
+function inqSave_(session, req) {
+  var q = req.inq || {}, body = String(q.body || '').trim(); if (!body) throw new Error('문의 내용을 넣으세요.');
+  var at = String(q.at || '').trim(); if (at && !/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?/.test(at)) throw new Error('일시를 확인하세요.');
+  var status = q.status === '완료' ? '완료' : '처리 중';
+  var vals = [String(q.cust || '').trim().slice(0, 100), String(q.who || '').trim().slice(0, 60), body.slice(0, 5000), String(q.answer || '').slice(0, 5000), status];
+  if (req.id) {
+    var f = findRow_(SHEET_INQ, INQ_HEADER, req.id); if (!f) throw new Error('문의 기록을 찾을 수 없습니다.');
+    if (at) f.sh.getRange(f.row, 2).setValue("'" + at);
+    f.sh.getRange(f.row, 3, 1, vals.length).setValues([vals]); f.sh.getRange(f.row, 10, 1, 2).setValues([[q.faq ? 'Y' : '', now_()]]);
+  } else cacheSheet_(SHEET_INQ, INQ_HEADER).appendRow([newId_('Q'), "'" + (at || now_().slice(0, 16))].concat(vals).concat([session.id, session.name, q.faq ? 'Y' : '', now_()]));
+  return inqList_();
+}
+function inqDelete_(session, id) {
+  var f = findRow_(SHEET_INQ, INQ_HEADER, id); if (!f) throw new Error('문의 기록을 찾을 수 없습니다.');
+  if (String(f.raw[7]) !== session.id && session.role !== 'admin') throw new Error('응대한 사람이나 관리자만 지울 수 있습니다.');
+  f.sh.deleteRow(f.row); return inqList_();
+}
+
+var SHEET_OWNERS = '업무담당';
+var OWNER_HEADER = ['ID', '업무', '거래처', '주담당', '부담당', '메모', '수정자', '수정일시'];
+var SHEET_OWNER_LOG = '담당변경기록';
+function ownersList_() {
+  var list = rowsOf_(SHEET_OWNERS, OWNER_HEADER).map(function (r) { return { id: String(r[0]), task: String(r[1]), cust: String(r[2] || ''), main: String(r[3] || ''), sub: String(r[4] || ''), memo: String(r[5] || ''), by: String(r[6] || ''), at: fmt_(r[7]) }; });
+  var log = rowsOf_(SHEET_OWNER_LOG, ['일시', '업무', '내용', '수정자']).slice(-80).reverse().map(function (r) { return { at: fmt_(r[0]), task: String(r[1]), text: String(r[2]), by: String(r[3]) }; });
+  return { owners: list, log: log };
+}
+function ownerSave_(session, req) {
+  var o = req.owner || {}, task = String(o.task || '').trim().slice(0, 100); if (!task) throw new Error('업무 이름을 넣으세요.');
+  var row = [task, String(o.cust || '').trim().slice(0, 100), String(o.main || '').trim().slice(0, 30), String(o.sub || '').trim().slice(0, 30), String(o.memo || '').slice(0, 500), session.name, now_()];
+  var lg = cacheSheet_(SHEET_OWNER_LOG, ['일시', '업무', '내용', '수정자']);
+  if (req.id) {
+    var f = findRow_(SHEET_OWNERS, OWNER_HEADER, req.id); if (!f) throw new Error('업무를 찾을 수 없습니다.');
+    var ch = [];
+    if (String(f.raw[3]) !== row[2]) ch.push('주담당 ' + (f.raw[3] || '없음') + ' → ' + (row[2] || '없음'));
+    if (String(f.raw[4]) !== row[3]) ch.push('부담당 ' + (f.raw[4] || '없음') + ' → ' + (row[3] || '없음'));
+    if (ch.length) lg.appendRow([now_(), task, ch.join(' · '), session.name]);
+    f.sh.getRange(f.row, 2, 1, row.length).setValues([row]);
+  } else { cacheSheet_(SHEET_OWNERS, OWNER_HEADER).appendRow([newId_('W')].concat(row)); lg.appendRow([now_(), task, '추가 (주담당 ' + (row[2] || '없음') + ', 부담당 ' + (row[3] || '없음') + ')', session.name]); }
+  return ownersList_();
+}
+function ownerDelete_(session, id) {
+  var f = findRow_(SHEET_OWNERS, OWNER_HEADER, id); if (!f) throw new Error('업무를 찾을 수 없습니다.');
+  cacheSheet_(SHEET_OWNER_LOG, ['일시', '업무', '내용', '수정자']).appendRow([now_(), String(f.raw[1]), '삭제', session.name]);
+  f.sh.deleteRow(f.row); return ownersList_();
+}
+/** 기간 안에 휴가인 주담당 → 부담당이 대신 (주간 요약·홈) */
+function ownerCover_(cal, from, to) {
+  var off = {};
+  cal.leaves.forEach(function (l) { if (/근무|당직/.test(l.kind) || l.end < from || l.start > to) return; (off[l.name] = off[l.name] || []).push(l); });
+  return ownersList_().owners.filter(function (o) { return o.main && off[o.main]; }).map(function (o) {
+    var l = off[o.main][0]; return { task: o.task, cust: o.cust, main: o.main, sub: o.sub, kind: l.kind, start: l.start, end: l.end };
+  });
 }
 
 /* ───────────── 팀 공지 ───────────── */
@@ -1779,6 +1909,7 @@ function weekly_(week, session) {
     docsList_().docs.forEach(function (x) { if (x.expires && x.expires <= lim && x.expires >= addD_(today, -7)) res.docs.push({ name: (x.biz ? x.biz + ' ' : '') + x.name, end: x.expires }); });
     res.contracts.sort(function (a, b) { return a.end < b.end ? -1 : 1; }); res.docs.sort(function (a, b) { return a.end < b.end ? -1 : 1; });
   }
+  res.cover = ownerCover_(cal, w, we);
   var since = addD_(today, -14);
   res.notices = noticesList_().filter(function (n) { return n.pinned || n.at.slice(0, 10) >= since; }).slice(0, 8).map(function (n) { return { title: n.title, body: n.body.slice(0, 300), pinned: n.pinned, owner: n.owner, at: n.at.slice(0, 10) }; });
   return res;
@@ -1794,6 +1925,7 @@ function weeklyHtml_(x) {
     '<h2 style="margin:14px 0 2px">JOIL 주간 업무 요약</h2><p style="color:#7A7265;margin:0 0 6px">' + wd(x.week) + ' ~ ' + wd(x.weekEnd) + (x.holidays.length ? ' · 공휴일: ' + x.holidays.map(function (d) { return H(md_(d.date) + ' ' + d.name); }).join(', ') : '') + '</p>';
   if (x.notices.length) h += sec('📢 공지', x.notices.map(function (n) { return '<div style="background:#FBF8F2;border:1px solid #DCD2C1;border-radius:8px;padding:8px 10px;margin-bottom:6px"><b>' + (n.pinned ? '📌 ' : '') + H(n.title) + '</b> <span style="color:#7A7265;font-size:12px">' + H(n.owner) + ' · ' + H(n.at) + '</span>' + (n.body ? '<div style="font-size:13px;white-space:pre-wrap;margin-top:4px">' + H(n.body) + '</div>' : '') + '</div>'; }).join(''));
   h += sec('🛡 이번 주 당직', tbl(['구분', '담당', '기간'], x.duty.map(function (d) { return [H(d.label), '<b>' + H(d.name) + '</b>', d.from === d.to ? wd(d.from) : wd(d.from) + ' ~ ' + wd(d.to)]; })));
+  if (x.cover && x.cover.length) h += sec('🔁 휴가로 대신 맡는 업무', tbl(['업무', '주담당 (휴가)', '대신', '기간'], x.cover.map(function (c) { return [H(c.task) + (c.cust ? ' <span style="color:#7A7265">' + H(c.cust) + '</span>' : ''), H(c.main) + ' · ' + H(c.kind), '<b>' + H(c.sub || '미정') + '</b>', c.start === c.end ? wd(c.start) : wd(c.start) + ' ~ ' + wd(c.end)]; })));
   h += sec('🌴 이번 주 휴가·근무', tbl(['이름', '종류', '날짜'], x.leaves.map(function (l) { return [H(l.name), H(l.kind) + (l.hours ? ' ' + l.hours + 'h' : ''), l.start === l.end ? wd(l.start) : wd(l.start) + ' ~ ' + wd(l.end)]; })));
   h += sec('✅ 이번 주 할 일' + (x.overdue ? ' <span style="color:#E0472E;font-size:13px">(밀린 할 일 ' + x.overdue + '건)</span>' : ''), tbl(['기한', '할 일', '담당'], x.tasks.map(function (t) { return [wd(t.date), (t.cust ? '[' + H(t.cust) + '] ' : '') + H(t.title), H(t.who)]; })));
   if (x.reqs) {

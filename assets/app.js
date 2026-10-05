@@ -64,7 +64,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart'];
+  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list'];
   var TIMEOUT_MS = 25000;
   var inflight = {};
 
@@ -235,7 +235,7 @@
     state.reqs = { list: null, status: '', biz: '', q: '', detail: null, data: null, blobs: {} };
     state.info = { tab: 'diesel', range: 90, diesel: null, news: null, weather: null, newsKw: '', newsQ: '' };
     state.an = newAnState();
-    state.cal = newCalState(); state.notices = null; state.custs = null; state.custView = null; state.srch = null;
+    state.cal = newCalState(); state.notices = null; state.custs = null; state.custView = null; state.srch = null; state.manuals = null; state.inqs = null; state.owners = null; state.manView = null; state.inqView = null; state.rptView = null;
     storage('del', 'joil-token');
     routing.last = null;
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* 무시 */ }
@@ -276,6 +276,7 @@
       set: function (o) { var h = state.hist, nd = o.d || 30; if (h.days !== nd || h.type !== (o.t || '') || h.userId !== (o.u || '') || h.q !== (o.q || '')) h.logs = null; h.days = nd; h.type = o.t || ''; h.userId = o.u || ''; h.q = o.q || ''; } },
     rates: { get: function () { var r = state.rates; return pick({ c: r.sel, q: r.q }); }, set: function (o) { var r = state.rates; if ((o.c || '') !== r.sel) { r.sel = o.c || ''; r.data = null; r.cmp = null; } r.q = o.q || ''; } },
     info: { get: function () { var i = state.info; return i.tab === 'news' ? pick({ k: i.newsKw }) : {}; }, set: function (o) { state.info.newsKw = o.k || ''; } },
+    inq: { get: function () { var i = state.inqView || {}; return pick({ s: i.st, q: i.q, m: i.mine ? 1 : 0 }); }, set: function (o) { var i = state.inqView = state.inqView || { limit: 100 }; i.st = o.s || ''; i.q = o.q || ''; i.mine = !!o.m; } },
     cal: { get: function () { var c = state.cal; return c.tab === 'leave' ? pick({ y: c.year, o: c.otm, p: c.person }) : c.tab === 'weekly' ? pick({ w: c.wk }) : c.tab === 'tasks' ? pick({ m: c.mine ? 1 : 0 }) : pick({ ym: c.ym, m: c.mine ? 1 : 0 }); },
       set: function (o) { var c = state.cal; if (o.y) c.year = o.y; if (o.o) c.otm = o.o; c.person = o.p || ''; if (o.w) c.wk = o.w; if (o.ym) c.ym = o.ym; c.mine = !!o.m; } }
   };
@@ -289,6 +290,7 @@
     else if (v === 'reqs') s = state.reqs.detail;
     else if (v === 'history') s = state.hist.detail;
     else if (v === 'custs') s = state.custView && state.custView.sel;
+    else if (v === 'manual') s = state.manView && state.manView.sel;
     if (s) p.push(s);
     var sub = subOf(v);
     return '#/' + p.map(function (x) { return encodeURIComponent(x); }).join('/') + (sub ? '?' + encodeURIComponent(sub) : '');
@@ -319,6 +321,7 @@
     if (v === 'reqs' && (state.reqs.detail || '') !== s) { state.reqs.detail = s || null; state.reqs.data = null; if (!s) state.reqs.list = null; }
     if (v === 'history' && (state.hist.detail || '') !== s) { state.hist.detail = s || null; state.hist.detailData = null; }
     if (v === 'custs') { state.custView = state.custView || { q: '', sel: '' }; state.custView.sel = s; }
+    if (v === 'manual') { state.manView = state.manView || { q: '', sel: '' }; state.manView.sel = s; }
     if (SUB[v]) { var so = {}; if (subS) { try { so = JSON.parse(decodeURIComponent(subS)); } catch (e) { so = {}; } } try { SUB[v].set(so); } catch (e) { /* 무시 */ } }
     return true;
   }
@@ -341,9 +344,9 @@
     var grp = function (g, label, items) { items = items.filter(Boolean); if (items.length === 1) out.push(items[0]); else if (items.length) out.push({ g: g, label: label, items: items }); };
     if (any) out.push(['home', '홈']);
     if (q) grp('quote', '견적', [['calc', '단건 계산'], ['bulk', '대량 계산'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록']]);
-    grp('data', '업체·자료', [can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['rates', '업체단가'], q && ['docs', '서류함']]);
+    grp('data', '업체·자료', [can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['manual', '업무 매뉴얼'], q && ['owners', '업무 담당표'], q && ['inq', '문의 기록'], q && ['rates', '업체단가'], q && ['docs', '서류함']]);
     if (any) grp('info', '일정·정보', [['cal', '일정'], ['info', '물류정보']]);
-    if (can('analysis')) out.push(['analysis', '분석']);
+    if (can('analysis')) grp('an', '분석', [['analysis', '매출매입 분석'], ['report', '팀 월간 보고서']]);
     if (state.user.role === 'admin') out.push(['admin', '관리자']);
     return out;
   }
@@ -446,6 +449,10 @@
     else if (state.view === 'cal') renderCal();
     else if (state.view === 'custs') renderCusts();
     else if (state.view === 'search') renderSearch();
+    else if (state.view === 'manual') renderManual();
+    else if (state.view === 'inq') renderInq();
+    else if (state.view === 'owners') renderOwners();
+    else if (state.view === 'report') renderReport();
     else renderCalc();
     syncRoute();
   }
@@ -3449,17 +3456,18 @@
     body.innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div><div class="eyebrow">Staff · 직원 목록</div><h2>직원 목록</h2></div>' +
       '<div class="actions"><button class="btn btn-sm" id="stAdd">＋ 직원 추가</button><button class="btn btn-sm btn-primary" id="stSave"' + (a.staffDirty ? '' : ' disabled') + '>저장</button></div></div>' +
       '<p class="muted small" style="margin:6px 0 12px">사업자·부서는 <b>시간외근무일지</b>에, 메일은 <b>주간 업무 요약</b>에 쓰여요. 사이트 계정이 있는 직원은 "계정"을 골라 연결하세요. 계정이 없어도 휴가·근무를 기록할 수 있어요.</p>' +
-      '<div class="table-wrap"><table class="data staff-table"><thead><tr><th class="left">이름</th><th class="left">사업자</th><th class="left">부서</th><th class="left">이메일</th><th class="left">사이트 계정</th><th>재직</th><th>주간 요약 받기</th><th></th></tr></thead><tbody>' +
+      '<div class="table-wrap"><table class="data staff-table"><thead><tr><th class="left">이름</th><th class="left">사업자</th><th class="left">부서</th><th class="left">팀</th><th class="left">이메일</th><th class="left">사이트 계정</th><th>재직</th><th>주간 요약 받기</th><th></th></tr></thead><tbody>' +
       a.staff.map(function (s, i) {
         return '<tr class="' + (s.active === false ? 'muted-row' : '') + '"><td><input class="input input-sm" data-i="' + i + '" data-f="name" value="' + esc(s.name) + '" maxlength="30" placeholder="이름"></td>' +
           '<td><select class="input input-sm" data-i="' + i + '" data-f="biz">' + opt(BIZ_NAMES.map(function (b) { return [b, b]; }), s.biz, '–') + '</select></td>' +
           '<td><input class="input input-sm" data-i="' + i + '" data-f="dept" value="' + esc(s.dept) + '" maxlength="30" placeholder="예) 운영부" style="width:110px"></td>' +
+          '<td><input class="input input-sm" data-i="' + i + '" data-f="team" value="' + esc(s.team || '') + '" maxlength="30" placeholder="예) 일반팀" style="width:96px"></td>' +
           '<td><input class="input input-sm" data-i="' + i + '" data-f="email" value="' + esc(s.email) + '" maxlength="100" placeholder="name@jo-il.com" style="min-width:200px"></td>' +
           '<td><select class="input input-sm" data-i="' + i + '" data-f="account">' + opt(acc.map(function (u) { return [u.id, u.name + ' (' + u.id + ')' + (u.active ? '' : ' · 중지')]; }), s.account, '없음') + '</select></td>' +
           '<td><input type="checkbox" data-i="' + i + '" data-f="active"' + (s.active !== false ? ' checked' : '') + '></td>' +
           '<td><input type="checkbox" data-i="' + i + '" data-f="weekly"' + (s.weekly ? ' checked' : '') + (s.email ? '' : ' disabled title="메일을 먼저 넣으세요"') + '></td>' +
           '<td><button class="btn btn-sm btn-ghost" data-del="' + i + '">삭제</button></td></tr>';
-      }).join('') + (a.staff.length ? '' : '<tr><td colspan="8" class="muted left" style="padding:16px">아직 없어요. "＋ 직원 추가"로 넣으세요.</td></tr>') + '</tbody></table></div>' +
+      }).join('') + (a.staff.length ? '' : '<tr><td colspan="9" class="muted left" style="padding:16px">아직 없어요. "＋ 직원 추가"로 넣으세요.</td></tr>') + '</tbody></table></div>' +
       '<p class="hint" style="margin:10px 0 0">퇴사한 직원은 지우지 말고 "재직"을 끄면 지난 기록은 그대로 남아요 · 주간 요약 메일은 매주 월요일 오전 8시 (서버 메뉴 "주간 요약 메일 켜기"를 한 번 실행해야 해요)</p></div>';
     var dirty = function () { a.staffDirty = true; $('#stSave').disabled = false; };
     $$('[data-f]', body).forEach(function (el) {
@@ -3472,7 +3480,7 @@
       };
     });
     $$('[data-del]', body).forEach(function (b) { b.onclick = function () { var s = a.staff[+b.dataset.del]; if (!confirm('"' + (s.name || '이름 없음') + '"을(를) 목록에서 지울까요? (퇴사자는 "재직"만 끄는 걸 추천해요)')) return; a.staff.splice(+b.dataset.del, 1); dirty(); adminStaff(); }; });
-    $('#stAdd').onclick = function () { a.staff.push({ id: '', name: '', biz: '', dept: '', email: '', account: '', active: true, weekly: false }); dirty(); adminStaff(); var ins = $$('[data-f="name"]', body); if (ins.length) ins[ins.length - 1].focus(); };
+    $('#stAdd').onclick = function () { a.staff.push({ id: '', name: '', biz: '', dept: '', team: '', email: '', account: '', active: true, weekly: false }); dirty(); adminStaff(); var ins = $$('[data-f="name"]', body); if (ins.length) ins[ins.length - 1].focus(); };
     $('#stSave').onclick = function () {
       var btn = this; busy(btn, true, '저장 중…');
       api('staff.save', { staff: a.staff }).then(function (r) { a.staff = r.staff; a.staffDirty = false; state.cal.data = null; toast('직원 목록을 저장했어요.'); adminStaff(); })
@@ -5823,13 +5831,14 @@
     var list = allOccurrences(dAdd(today, -90), today, true).filter(function (o) { return !o.done; });
     var off = d.leaves.filter(function (l) { return today >= l.start && today <= l.end && !isWork(l.kind); });
     var wk = mondayOf(today), duty = {}; leavesIn(wk, dAdd(wk, 6)).forEach(function (l) { if (l.kind !== '당직') return; var k = l.label || '당직'; duty[k] = duty[k] || []; if (duty[k].indexOf(l.name) === -1) duty[k].push(l.name); });
-    var hol = (holi[today] || []).filter(function (h) { return h.off; });
+    var hol = (holi[today] || []).filter(function (h) { return h.off; }), cover = can('quote') ? coverToday() : [];
     el.innerHTML = '<div class="row-between"><div class="eyebrow">Today · 오늘 할 일</div><button class="btn btn-sm btn-ghost" data-go="cal">일정</button></div>' +
       (hol.length ? '<p class="small" style="margin:6px 0 0">🔴 ' + esc(hol.map(function (h) { return h.name; }).join(', ')) + '</p>' : '') +
       (list.length ? '<ul class="task-list mini">' + list.slice(0, 6).map(function (o) { return taskRowHtml(o, today); }).join('') + '</ul>' + (list.length > 6 ? '<p class="hint" style="margin:4px 0 0">외 ' + (list.length - 6) + '개</p>' : '')
         : '<p class="muted small" style="margin:8px 0 0">오늘까지 할 일이 없어요. 👍</p>') +
       (Object.keys(duty).length ? '<p class="small" style="margin:10px 0 0">🛡 이번 주 ' + Object.keys(duty).map(function (k) { return esc(k) + ' <b>' + esc(duty[k].join(', ')) + '</b>'; }).join(' · ') + '</p>' : '') +
-      (off.length ? '<p class="small" style="margin:10px 0 0">🌴 ' + off.map(function (l) { return esc(l.name + ' ' + l.kind); }).join(' · ') + '</p>' : '');
+      (off.length ? '<p class="small" style="margin:10px 0 0">🌴 ' + off.map(function (l) { return esc(l.name + ' ' + l.kind); }).join(' · ') + '</p>' : '') +
+      (cover.length ? '<p class="small" style="margin:6px 0 0">🔁 ' + cover.map(function (x) { return '[' + esc(x.o.task) + '] ' + esc(x.o.main) + ' ' + esc(x.l.kind) + ' → ' + (x.o.sub ? '부담당 <b>' + esc(x.o.sub) + '</b>' : '<b style="color:var(--red)">부담당 없음</b>'); }).join(' · ') + ' <button class="btn btn-sm btn-ghost" data-go="owners">담당표</button></p>' : '');
     bindTaskChecks(el); bindHomeGo(el);
   }
 
@@ -5855,6 +5864,7 @@
         '<div class="wk-grid">' +
         (x.notices.length ? card('📢 공지', x.notices.map(function (n) { return '<div class="wk-notice"><b>' + (n.pinned ? '📌 ' : '') + esc(n.title) + '</b> <span class="muted small">' + esc(n.owner + ' · ' + n.at) + '</span>' + (n.body ? '<div class="small">' + esc(n.body) + '</div>' : '') + '</div>'; }).join(''), true) : '') +
         card('🛡 이번 주 당직', tbl(['구분', '담당', '기간'], x.duty.map(function (v) { return [esc(v.label), '<b>' + esc(v.name) + '</b>', v.from === v.to ? md(v.from) : md(v.from) + ' ~ ' + md(v.to)]; }))) +
+        ((x.cover || []).length ? card('🔁 휴가로 대신 맡는 업무', tbl(['업무', '주담당', '대신 맡는 사람', '기간'], x.cover.map(function (v) { return [esc(v.task) + (v.cust ? ' <span class="muted small">' + esc(v.cust) + '</span>' : ''), esc(v.main) + ' <span class="muted small">' + esc(v.kind) + '</span>', v.sub ? '<b>' + esc(v.sub) + '</b>' : '<b style="color:var(--red)">없음</b>', v.start === v.end ? md(v.start) : md(v.start) + ' ~ ' + md(v.end)]; }))) : '') +
         card('🌴 휴가·근무', tbl(['이름', '종류', '날짜'], x.leaves.map(function (l) { return [esc(l.name), esc(l.kind) + (l.hours ? ' ' + l.hours + 'h' : ''), l.start === l.end ? md(l.start) : md(l.start) + ' ~ ' + md(l.end)]; }))) +
         card('✅ 이번 주 할 일' + (x.overdue ? ' <span class="small" style="color:var(--red)">밀린 할 일 ' + x.overdue + '건</span>' : ''), tbl(['기한', '할 일', '담당'], x.tasks.map(function (t) { return [md(t.date), (t.cust ? '[' + esc(t.cust) + '] ' : '') + esc(t.title), esc(t.who)]; })), true) +
         (x.reqs ? card('📨 견적', '<div class="wk-kpis">' + [['지난주 접수', x.reqs.received], ['제출', x.reqs.submitted], ['수주', x.reqs.won], ['미수주', x.reqs.lost], ['진행 중', x.reqs.open]].map(function (k) { return '<div><b>' + k[1] + '</b><small>' + k[0] + '</small></div>'; }).join('') + '</div>' +
@@ -6002,6 +6012,7 @@
       state.reqs.list ? Promise.resolve() : api('reqs.list').then(function (r) { state.reqs.list = r.reqs; }),
       state.rateCusts ? Promise.resolve() : api('rates.list').then(function (r) { state.rateCusts = r.custs; }),
       loadCal().catch(function () { }),
+      loadManuals(true).catch(function () { }), loadOwners(true).catch(function () { }),
       can('analysis') ? loadAnalysis().catch(function () { }) : Promise.resolve()
     ];
     Promise.all(jobs).then(function () {
@@ -6012,7 +6023,11 @@
       var tk = state.cal.data ? state.cal.data.tasks.filter(function (t) { return custMatch(c, t.cust); }) : [];
       var ns = can('analysis') ? (state.an.notes || []).filter(function (n) { return custMatch(c, n.cust); }) : [];
       var sec = function (t, n, inner, go) { return '<div class="card"><div class="row-between"><h3>' + t + ' <span class="muted small">' + n + '</span></h3>' + (go ? '<button class="btn btn-sm btn-ghost" data-go="' + go + '">열기</button>' : '') + '</div>' + (n ? inner : '<p class="muted small" style="margin:6px 0 0">없어요.</p>') + '</div>'; };
+      var mans = (state.manuals || []).filter(function (m) { return m.cust && custMatch(c, m.cust); }), ows = (state.owners || []).filter(function (o) { return o.cust && custMatch(c, o.cust); });
       $('#cdLinks').innerHTML =
+        '<div class="card"><div class="row-between"><h3>📘 업무 매뉴얼 <span class="muted small">' + mans.length + '</span></h3><button class="btn btn-sm" id="cdMan">＋ 매뉴얼 쓰기</button></div>' +
+          (mans.length ? '<ul class="home-list">' + mans.map(function (m) { return '<li><button data-man="' + esc(m.id) + '"><span>' + esc(m.title) + '</span><span class="small muted">' + esc((m.cat ? m.cat + ' · ' : '') + String(m.updAt).slice(0, 10)) + '</span></button></li>'; }).join('') + '</ul>' : '<p class="muted small" style="margin:6px 0 0">없어요. 처리 순서·연락처를 적어 두면 누가 맡아도 할 수 있어요.</p>') +
+          (ows.length ? '<p class="small" style="margin:10px 0 0">👥 ' + ows.map(function (o) { return esc(o.task) + ' — 주 <b>' + esc(o.main || '없음') + '</b> · 부 ' + esc(o.sub || '없음'); }).join('<br>👥 ') + '</p>' : '') + '</div>' +
         sec('📨 견적 접수', rq.length, '<ul class="home-list">' + rq.slice(0, 8).map(function (r) { return '<li><button data-rq="' + esc(r.id) + '"><span>' + esc(r.title) + '</span><span>' + reqPill(r.status) + ' <span class="small muted">' + esc(r.received || '') + '</span></span></button></li>'; }).join('') + '</ul>', 'reqs') +
         sec('📁 견적모음', qs.length, '<ul class="home-list">' + qs.slice(0, 8).map(function (q) { return '<li><button data-q="' + esc(q.id) + '"><span>' + esc(q.name) + '</span><span>' + statusPill(q.status) + ' <span class="small muted">' + esc(String(q.savedAt).slice(0, 10)) + '</span></span></button></li>'; }).join('') + '</ul>', 'quotes') +
         sec('💲 업체 단가표', rt.length, '<ul class="home-list">' + rt.map(function (r) { return '<li><button data-rt="' + esc(r.cust) + '"><span>' + esc(r.cust) + '</span><span class="small muted">' + won(r.count) + '구간' + (r.hasSpecial ? ' · 특수운임' : '') + '</span></button></li>'; }).join('') + '</ul>', 'rates') +
@@ -6021,6 +6036,8 @@
       $$('[data-rq]').forEach(function (b) { b.onclick = function () { state.reqs.detail = b.dataset.rq; state.reqs.data = null; state.view = 'reqs'; render(); }; });
       $$('[data-q]').forEach(function (b) { b.onclick = function () { state.quotes.detail = b.dataset.q; state.quotes.detailData = null; state.view = 'quotes'; render(); }; });
       $$('[data-rt]').forEach(function (b) { b.onclick = function () { state.rates.sel = b.dataset.rt; state.rates.data = null; state.view = 'rates'; render(); }; });
+      $$('[data-man]').forEach(function (b) { b.onclick = function () { state.manView = state.manView || { q: '' }; state.manView.sel = b.dataset.man; state.manView.q = ''; state.view = 'manual'; render(); }; });
+      $('#cdMan').onclick = function () { editManual({ cust: c.name }); };
       bindHomeGo($('#cdLinks'));
     }).catch(function (err) { $('#cdLinks').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
   }
@@ -6107,6 +6124,271 @@
         rows: [['날짜', '매출처', '상차지', '하차지', '중량', '매입가', '청구가', '수익', '차량번호', '기사명', '전화', '비고']].concat(rows.map(function (r) { return [r[C.date], r[C.disp] || r[C.cust], r[C.from], r[C.to], r[C.weight], r[C.buys] || 0, r[C.sales] || 0, (r[C.sales] || 0) - (r[C.buys] || 0), r[C.car], r[C.driver], r[C.phone], r[C.etc]]; })) },
         { name: '조건', rows: [['항목', '값']].concat(SR_FIELDS.filter(function (f) { return st.f[f[0]]; }).map(function (f) { return [f[1], st.f[f[0]]]; })).concat([['중량', st.exactW ? '정확히 일치' : '포함'], ['기간', st.period === 'all' ? '전체' : '최근 ' + st.period + '개월']]) }])
         .catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
+    };
+  }
+
+  /* ───────── 업무 매뉴얼 · 문의 기록 · 업무 담당표 ───────── */
+  var MAN_SECS = [['steps', '처리 순서', '예) 1. 오전 9시 접수 확인\n2. 배차 시스템 입력\n3. 기사 배정'], ['contacts', '연락처', '예) 이천터미널 사무실 031-000-0000 (오전만)'], ['issues', '문제와 대처', '예) 미배송 → 터미널 확인 → 기사 연락 → 고객 안내'], ['cautions', '주의사항', '예) 금요일은 마감이 2시로 빠름'], ['memo', '기타 메모', '']];
+  function loadManuals(force) { if (state.manuals && !force) return Promise.resolve(state.manuals); return api('manual.list').then(function (r) { state.manuals = r.manuals; return r.manuals; }); }
+  function loadInqs(force) { if (state.inqs && !force) return Promise.resolve(state.inqs); return api('inq.list').then(function (r) { state.inqs = r.inqs; return r.inqs; }); }
+  function loadOwners(force) { if (state.owners && !force) return Promise.resolve(state.owners); return api('owners.list').then(function (r) { state.owners = r.owners; state.ownerLog = r.log; return r.owners; }); }
+  function custNameList() { var o = {}; (state.custs || []).forEach(function (c) { o[c.name] = 1; }); (state.manuals || []).forEach(function (m) { if (m.cust) o[m.cust] = 1; }); (state.owners || []).forEach(function (m) { if (m.cust) o[m.cust] = 1; }); return Object.keys(o).sort(); }
+  function custDatalist(id) { return '<datalist id="' + id + '">' + custNameList().map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist>'; }
+  function sameCust(a, b) { if (!a || !b) return false; var c = (state.custs || []).filter(function (x) { return custMatch(x, a); })[0]; return c ? custMatch(c, b) : custNorm(a) === custNorm(b); }
+  function multiline(t) { return esc(t || '').replace(/\n/g, '<br>'); }
+
+  /* 업무 매뉴얼 */
+  function renderManual() {
+    var mv = state.manView = state.manView || { sel: '', q: '' };
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Manual · 업무 매뉴얼</div><h2>업무 매뉴얼</h2><p class="muted small" style="margin:4px 0 0">업체별 처리 순서·연락처·문제와 대처를 모아 두는 곳이에요. 처음 맡는 사람도 이것만 보고 할 수 있게 적어 주세요.</p></div>' +
+      '<div class="actions"><input class="input input-sm" id="mnQ" placeholder="제목·업체·내용 검색" value="' + esc(mv.q) + '" style="width:200px"><button class="btn btn-sm btn-primary" id="mnAdd">＋ 매뉴얼 쓰기</button></div></div>' +
+      '<div class="man-grid" style="margin-top:16px"><div class="card man-list" id="mnList"><p class="muted"><span class="spinner dark"></span></p></div><div id="mnBody"></div></div>';
+    $('#mnAdd').onclick = function () { editManual({}); };
+    var t; $('#mnQ').oninput = function () { var v = this.value; clearTimeout(t); t = setTimeout(function () { mv.q = v; drawManualList(); }, 200); };
+    Promise.all([loadManuals(), loadInqs().catch(function () { return []; }), loadCusts().catch(function () { return []; })]).then(function () { if (state.view === 'manual') { drawManualList(); drawManualBody(); } })
+      .catch(function (err) { $('#mnList').innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+  }
+  function drawManualList() {
+    var mv = state.manView, q = custNorm(mv.q), el = $('#mnList'); if (!el) return;
+    var list = (state.manuals || []).filter(function (m) { return !q || custNorm(m.title + m.cust + m.cat + m.steps + m.issues + m.cautions + m.contacts + m.memo).indexOf(q) !== -1; });
+    var groups = {}; list.forEach(function (m) { (groups[m.cust || '공통'] = groups[m.cust || '공통'] || []).push(m); });
+    el.innerHTML = list.length ? Object.keys(groups).sort(function (a, b) { return (a === '공통') - (b === '공통') || a.localeCompare(b); }).map(function (g) {
+      return '<div class="man-g"><div class="man-gh">' + esc(g) + '</div>' + groups[g].map(function (m) { return '<button class="man-it' + (mv.sel === m.id ? ' on' : '') + '" data-m="' + esc(m.id) + '"><b>' + esc(m.title) + '</b><small>' + esc((m.cat ? m.cat + ' · ' : '') + m.updBy + ' ' + String(m.updAt).slice(0, 10)) + (m.files.length ? ' · 📎' + m.files.length : '') + '</small></button>'; }).join('') + '</div>';
+    }).join('') : '<p class="muted small" style="margin:0">' + ((state.manuals || []).length ? '검색 결과가 없어요.' : '아직 매뉴얼이 없어요. "＋ 매뉴얼 쓰기"로 시작해 보세요. 예) 로젠 일일 업무, 네오4 문제 대응, 월말 마감 순서') + '</p>';
+    $$('[data-m]', el).forEach(function (b) { b.onclick = function () { mv.sel = b.dataset.m; drawManualList(); drawManualBody(); syncRoute(); if (window.innerWidth < 900) $('#mnBody').scrollIntoView({ behavior: 'smooth' }); }; });
+  }
+  function drawManualBody() {
+    var mv = state.manView, box = $('#mnBody'); if (!box) return;
+    var m = (state.manuals || []).filter(function (x) { return x.id === mv.sel; })[0];
+    if (!m) { box.innerHTML = '<div class="card empty"><div><h3>왼쪽에서 매뉴얼을 고르세요</h3><p class="muted" style="margin:0">거래처 카드에서도 그 업체 매뉴얼을 바로 볼 수 있어요.</p></div></div>'; return; }
+    var faq = (state.inqs || []).filter(function (x) { return x.faq && m.cust && sameCust(x.cust, m.cust); });
+    box.innerHTML = '<div class="card man-doc"><div class="row-between" style="flex-wrap:wrap;gap:8px"><div><div class="eyebrow">' + esc(m.cust || '공통') + (m.cat ? ' · ' + esc(m.cat) : '') + '</div><h2 style="margin:2px 0 0">' + esc(m.title) + '</h2>' +
+      '<p class="hint" style="margin:4px 0 0">작성 ' + esc(m.by) + ' · 마지막 수정 ' + esc(m.updBy) + ' ' + esc(m.updAt) + '</p></div><div class="actions"><button class="btn btn-sm" id="mnPrint">인쇄</button><button class="btn btn-sm btn-primary" id="mnEdit">수정</button></div></div>' +
+      MAN_SECS.filter(function (s) { return m[s[0]]; }).map(function (s) { return '<section class="man-sec"><h3>' + s[1] + '</h3><div class="man-txt">' + multiline(m[s[0]]) + '</div></section>'; }).join('') +
+      (MAN_SECS.some(function (s) { return m[s[0]]; }) ? '' : '<p class="muted">아직 내용이 없어요. "수정"을 눌러 채워 주세요.</p>') +
+      (faq.length ? '<section class="man-sec"><h3>자주 묻는 질문 <span class="muted small">문의 기록에서</span></h3>' + faq.map(function (x) { return '<div class="faq"><b>Q. ' + esc(x.body) + '</b><div>A. ' + multiline(x.answer || '(답변 없음)') + '</div><small class="muted">' + esc(x.by + ' · ' + x.at.slice(0, 10)) + '</small></div>'; }).join('') + '</section>' : '') +
+      '<section class="man-sec no-print"><h3>첨부 <span class="muted small">' + m.files.length + '</span></h3><ul class="man-files">' + m.files.map(function (f) { return '<li><button data-f="' + esc(f.id) + '">' + DOC_ICON[docKind({ mime: f.mime, fileName: f.name })] + ' ' + esc(f.name) + ' <small class="muted">' + fileSize(f.size) + '</small></button><button class="btn btn-sm btn-ghost" data-fd="' + esc(f.id) + '">삭제</button></li>'; }).join('') + '</ul>' +
+      '<label class="btn btn-sm">＋ 파일·사진 올리기<input type="file" id="mnFile" multiple hidden></label></section>' +
+      (m.log.length ? '<details class="man-sec no-print"><summary class="small">수정 이력 ' + m.log.length + '</summary><ul class="man-log">' + m.log.slice().reverse().map(function (l) { return '<li><small>' + esc(l.at) + '</small> ' + esc(l.by) + ' · ' + esc(l.what) + '</li>'; }).join('') + '</ul></details>' : '') + '</div>';
+    $('#mnEdit').onclick = function () { editManual(m); };
+    $('#mnPrint').onclick = function () { document.body.classList.add('print-manual'); window.print(); setTimeout(function () { document.body.classList.remove('print-manual'); }, 500); };
+    $('#mnFile').onchange = function () {
+      var files = Array.prototype.slice.call(this.files || []).filter(function (f) { if (f.size > DOC_MAX) { toast(f.name + ': 20MB를 넘어 건너뜀', 'err'); return false; } return true; }), i = 0;
+      var step = function () {
+        if (i >= files.length) { toast('올렸어요.'); drawManualList(); drawManualBody(); return; }
+        var f = files[i++]; toast(f.name + ' 올리는 중… (' + i + '/' + files.length + ')');
+        readFileB64(f).then(function (b64) { return api('manual.upload', { id: m.id, fileName: f.name, mime: f.type || 'application/octet-stream', data: b64 }); }).then(function (r) { state.manuals = r.manuals; step(); }).catch(function (err) { toast(err.message, 'err'); });
+      };
+      step();
+    };
+    $$('[data-f]', box).forEach(function (b) { b.onclick = function () { var f = m.files.filter(function (x) { return x.id === b.dataset.f; })[0]; previewManualFile(f); }; });
+    $$('[data-fd]', box).forEach(function (b) { b.onclick = function () { if (!confirm('이 파일을 지울까요?')) return; api('manual.fileDelete', { fileId: b.dataset.fd }).then(function (r) { state.manuals = r.manuals; drawManualBody(); }).catch(function (err) { toast(err.message, 'err'); }); }; });
+  }
+  function previewManualFile(f) {
+    var k = docKind({ mime: f.mime, fileName: f.name }), url = null, blobP = null;
+    var getBlob = function () { return blobP || (blobP = api('manual.file', { fileId: f.id }).then(function (r) { return new Blob([bytesFromB64(r.data)], { type: f.mime }); })); };
+    modal({ wide: true, eyebrow: '매뉴얼 첨부', title: f.name, body: '<div class="doc-view" id="mfView"><p class="muted"><span class="spinner dark"></span> 불러오는 중…</p></div>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="mfDl">다운로드</button>',
+      onMount: function (m) {
+        getBlob().then(function (bl) { var v = $('#mfView', m); if (!v) return; url = URL.createObjectURL(bl);
+          if (k === 'img') v.innerHTML = '<img src="' + url + '" alt="">'; else if (k === 'pdf') v.innerHTML = '<iframe src="' + url + '"></iframe>'; else if (k === 'xls') xlsPreview(v, bl);
+          else v.innerHTML = '<p class="muted">미리보기를 지원하지 않는 형식이에요. 다운로드해서 여세요.</p>'; }).catch(function (err) { var v = $('#mfView', m); if (v) v.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+        $('#mfDl', m).onclick = function () { getBlob().then(function (bl) { saveBlob(bl, f.name); }); };
+      } });
+  }
+  function editManual(m) {
+    modal({ wide: true, eyebrow: '업무 매뉴얼', title: m.id ? '매뉴얼 수정' : '매뉴얼 쓰기',
+      body: '<div class="qd-two"><div class="field"><label>제목 *</label><input class="input" id="meT" maxlength="100" value="' + esc(m.title || '') + '" placeholder="예) 로젠 일일 업무"></div>' +
+        '<div class="field"><label>업체 <span class="muted">(비우면 공통)</span></label><input class="input" id="meC" list="meCs" value="' + esc(m.cust || '') + '" placeholder="예) 로젠택배">' + custDatalist('meCs') + '</div></div>' +
+        '<div class="field"><label>분류 <span class="muted">(선택)</span></label><input class="input" id="meK" maxlength="30" value="' + esc(m.cat || '') + '" placeholder="예) 일일 업무, 문제 대응, 월말 마감"></div>' +
+        MAN_SECS.map(function (s) { return '<div class="field"><label>' + s[1] + '</label><textarea class="input memo man-ta" data-s="' + s[0] + '" placeholder="' + esc(s[2]) + '">' + esc(m[s[0]] || '') + '</textarea></div>'; }).join('') +
+        '<p class="hint" style="margin:0">사진·파일은 저장한 뒤 매뉴얼 화면 아래 "＋ 파일·사진 올리기"로 붙여요.</p>',
+      foot: (m.id ? '<button class="btn btn-danger btn-sm" id="meDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="meSave">저장</button>',
+      onMount: function (mo, close) {
+        $('#meSave', mo).onclick = function () {
+          var v = { title: $('#meT', mo).value, cust: $('#meC', mo).value, cat: $('#meK', mo).value }; $$('[data-s]', mo).forEach(function (t) { v[t.dataset.s] = t.value; });
+          var btn = this; busy(btn, true, '저장 중…');
+          api('manual.save', { id: m.id || '', manual: v }).then(function (r) { state.manuals = r.manuals; close(); toast('저장했어요.'); state.manView = state.manView || { q: '' }; state.manView.sel = r.id; if (state.view !== 'manual') { state.view = 'manual'; render(); } else { drawManualList(); drawManualBody(); syncRoute(); } })
+            .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+        var d = $('#meDel', mo); if (d) d.onclick = function () { if (!confirm('"' + m.title + '" 매뉴얼을 지울까요? 첨부 파일도 같이 지워져요.')) return; api('manual.delete', { id: m.id }).then(function (r) { state.manuals = r.manuals; state.manView.sel = ''; close(); drawManualList(); drawManualBody(); }).catch(function (err) { toast(err.message, 'err'); }); };
+      } });
+  }
+
+  /* 문의 기록 */
+  function renderInq() {
+    var iv = state.inqView = state.inqView || { st: '', q: '', mine: false, limit: 100 };
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Inquiries · 문의 기록</div><h2>문의 기록</h2><p class="muted small" style="margin:4px 0 0">업체 문의를 10초 안에 남겨요. 좋은 답변은 ⭐ 자주 묻는 질문으로 표시하면 그 업체 매뉴얼에 모여요.</p></div></div>' +
+      '<form class="card inq-quick" id="iqForm" autocomplete="off"><div class="inq-row"><input class="input" id="iqC" list="iqCs" placeholder="업체" style="max-width:180px">' + custDatalist('iqCs') + '<input class="input" id="iqW" placeholder="문의자 (선택)" style="max-width:150px">' +
+      '<input class="input grow" id="iqB" placeholder="문의 내용 *"></div><div class="inq-row"><input class="input grow" id="iqA" placeholder="처리 / 답변 (선택)">' +
+      '<label class="toggle small"><input type="checkbox" id="iqDone"><span class="track"></span>완료</label><label class="toggle small"><input type="checkbox" id="iqF"><span class="track"></span>⭐ 자주 묻는</label><button class="btn btn-primary" type="submit">남기기</button></div></form>' +
+      '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div class="segmented" id="iqSt">' + [['', '전체'], ['처리 중', '처리 중'], ['완료', '완료'], ['faq', '⭐ 자주 묻는']].map(function (x) { return '<button type="button" data-v="' + x[0] + '" class="' + (iv.st === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+      '<div class="actions"><label class="toggle small"><input type="checkbox" id="iqMine"' + (iv.mine ? ' checked' : '') + '><span class="track"></span>내가 응대한 것</label><input class="input input-sm" id="iqQ" placeholder="업체·내용 검색" value="' + esc(iv.q) + '" style="width:180px"></div></div><div id="iqList"><p class="muted"><span class="spinner dark"></span></p></div></div>';
+    $('#iqForm').onsubmit = function (e) {
+      e.preventDefault(); var btn = $('#iqForm button[type=submit]');
+      var v = { cust: $('#iqC').value, who: $('#iqW').value, body: $('#iqB').value, answer: $('#iqA').value, status: $('#iqDone').checked ? '완료' : '처리 중', faq: $('#iqF').checked };
+      if (!v.body.trim()) return toast('문의 내용을 넣으세요.', 'err');
+      busy(btn, true, '…');
+      api('inq.save', { inq: v }).then(function (r) { state.inqs = r.inqs; busy(btn, false); ['#iqW', '#iqB', '#iqA'].forEach(function (s) { $(s).value = ''; }); $('#iqDone').checked = false; $('#iqF').checked = false; $('#iqB').focus(); drawInqs(); toast('남겼어요.'); })
+        .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+    };
+    $$('#iqSt button').forEach(function (b) { b.onclick = function () { iv.st = b.dataset.v; $$('#iqSt button').forEach(function (x) { x.classList.toggle('on', x === b); }); drawInqs(); }; });
+    $('#iqMine').onchange = function () { iv.mine = this.checked; drawInqs(); };
+    var t; $('#iqQ').oninput = function () { var v = this.value; clearTimeout(t); t = setTimeout(function () { iv.q = v; drawInqs(); }, 200); };
+    Promise.all([loadInqs(true), loadCusts().catch(function () { })]).then(function () { if (state.view === 'inq') drawInqs(); }).catch(function (err) { $('#iqList').innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+  }
+  function drawInqs() {
+    syncRoute();
+    var iv = state.inqView, el = $('#iqList'); if (!el) return;
+    var q = custNorm(iv.q), ym = todayYmd().slice(0, 7);
+    var all = state.inqs || [], list = all.filter(function (x) {
+      if (iv.st === 'faq' ? !x.faq : iv.st && x.status !== iv.st) return false;
+      if (iv.mine && x.byId !== state.user.id) return false;
+      return !q || custNorm(x.cust + x.who + x.body + x.answer).indexOf(q) !== -1;
+    });
+    var open = all.filter(function (x) { return x.status !== '완료'; }).length, month = all.filter(function (x) { return x.at.slice(0, 7) === ym; }).length;
+    el.innerHTML = '<p class="small muted" style="margin:0 0 8px">이번 달 ' + month + '건 · 처리 중 ' + open + '건 · 보이는 것 ' + list.length + '건</p>' +
+      (list.length ? '<ul class="inq-list">' + list.slice(0, iv.limit).map(function (x) {
+        return '<li class="' + (x.status === '완료' ? 'done' : 'open') + '"><button data-i="' + esc(x.id) + '"><span class="inq-meta"><span class="inq-st">' + esc(x.status) + '</span>' + (x.faq ? '⭐ ' : '') + '<b>' + esc(x.cust || '(업체 없음)') + '</b>' + (x.who ? ' · ' + esc(x.who) : '') + '<small>' + esc(x.at.slice(5, 16).replace('-', '/')) + ' · ' + esc(x.by) + '</small></span>' +
+          '<span class="inq-q">' + esc(x.body) + '</span>' + (x.answer ? '<span class="inq-a">↳ ' + esc(x.answer) + '</span>' : '') + '</button></li>';
+      }).join('') + '</ul>' + (list.length > iv.limit ? '<div style="text-align:center;margin-top:10px"><button class="btn btn-sm" id="iqMore">더 보기</button></div>' : '') : '<p class="muted small">없어요.</p>');
+    var mr = $('#iqMore'); if (mr) mr.onclick = function () { iv.limit += 200; drawInqs(); };
+    $$('[data-i]', el).forEach(function (b) { b.onclick = function () { editInq(all.filter(function (x) { return x.id === b.dataset.i; })[0]); }; });
+  }
+  function editInq(x) {
+    var mine = x.byId === state.user.id || state.user.role === 'admin';
+    modal({ eyebrow: '문의 기록', title: (x.cust || '문의') + ' · ' + x.at.slice(0, 16),
+      body: '<div class="qd-two"><div class="field"><label>업체</label><input class="input" id="ieC" list="ieCs" value="' + esc(x.cust) + '">' + custDatalist('ieCs') + '</div><div class="field"><label>문의자</label><input class="input" id="ieW" value="' + esc(x.who) + '"></div></div>' +
+        '<div class="field"><label>문의 내용</label><textarea class="input memo" id="ieB">' + esc(x.body) + '</textarea></div><div class="field"><label>처리 / 답변</label><textarea class="input memo" id="ieA">' + esc(x.answer) + '</textarea></div>' +
+        '<div class="actions"><label class="toggle"><input type="checkbox" id="ieD"' + (x.status === '완료' ? ' checked' : '') + '><span class="track"></span>완료</label><label class="toggle"><input type="checkbox" id="ieF"' + (x.faq ? ' checked' : '') + '><span class="track"></span>⭐ 자주 묻는 질문 (업체 매뉴얼에 모임)</label></div><p class="hint" style="margin:10px 0 0">응대 ' + esc(x.by) + '</p>',
+      foot: (mine ? '<button class="btn btn-danger btn-sm" id="ieDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="ieSave">저장</button>',
+      onMount: function (m, close) {
+        $('#ieSave', m).onclick = function () { var btn = this; busy(btn, true, '…'); api('inq.save', { id: x.id, inq: { cust: $('#ieC', m).value, who: $('#ieW', m).value, body: $('#ieB', m).value, answer: $('#ieA', m).value, status: $('#ieD', m).checked ? '완료' : '처리 중', faq: $('#ieF', m).checked } }).then(function (r) { state.inqs = r.inqs; close(); drawInqs(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); }); };
+        var d = $('#ieDel', m); if (d) d.onclick = function () { if (!confirm('이 문의 기록을 지울까요?')) return; api('inq.delete', { id: x.id }).then(function (r) { state.inqs = r.inqs; close(); drawInqs(); }).catch(function (err) { toast(err.message, 'err'); }); };
+      } });
+  }
+
+  /* 업무 담당표 */
+  function offToday(name, from, to) { var d = state.cal.data; if (!d || !name) return null; return d.leaves.filter(function (l) { return l.name === name && !isWork(l.kind) && l.start <= to && l.end >= from; })[0] || null; }
+  function renderOwners() {
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Owners · 업무 담당표</div><h2>업무 담당표</h2><p class="muted small" style="margin:4px 0 0">업무마다 주담당과 부담당(대신 맡을 사람)을 정해요. 주담당이 휴가면 홈·주간 요약에 "부담당 OO"로 알려줘요.</p></div>' +
+      '<div class="actions"><button class="btn btn-sm btn-primary" id="owAdd">＋ 업무 추가</button></div></div><div id="owBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span></div></div>';
+    $('#owAdd').onclick = function () { editOwner({}); };
+    Promise.all([loadOwners(true), loadCal().catch(function () { }), loadCusts().catch(function () { })]).then(function () { if (state.view === 'owners') drawOwners(); }).catch(function (err) { $('#owBody').innerHTML = '<div class="card"><p class="err-text">' + esc(err.message) + '</p></div>'; });
+  }
+  function drawOwners() {
+    var list = state.owners || [], box = $('#owBody'); if (!box) return;
+    var today = todayYmd(), we = dAdd(mondayOf(today), 6), cnt = {};
+    list.forEach(function (o) { if (o.main) (cnt[o.main] = cnt[o.main] || { m: 0, s: 0 }).m++; if (o.sub) (cnt[o.sub] = cnt[o.sub] || { m: 0, s: 0 }).s++; });
+    var ppl = Object.keys(cnt).sort(function (a, b) { return cnt[b].m - cnt[a].m || cnt[b].s - cnt[a].s; }), mx = Math.max.apply(null, ppl.map(function (p) { return cnt[p].m + cnt[p].s; }).concat([1]));
+    var nobody = list.filter(function (o) { return !o.sub; }).length;
+    var who = function (n, isMain) { if (!n) return '<span class="muted">' + (isMain ? '없음' : '⚠ 없음') + '</span>'; var l = offToday(n, today, we); return '<b>' + esc(n) + '</b>' + (l ? ' <span class="badge exp-soon" title="' + esc(l.start + '~' + l.end) + '">' + esc(l.kind) + (l.start <= today && l.end >= today ? ' 오늘' : ' 이번 주') + '</span>' : ''); };
+    box.innerHTML = '<div class="ow-grid"><div class="card"><div class="table-wrap"><table class="data ow-table"><thead><tr><th class="left">업무</th><th class="left">업체</th><th class="left">주담당</th><th class="left">부담당</th><th class="left">메모</th><th></th></tr></thead><tbody>' +
+      (list.length ? list.slice().sort(function (a, b) { return (a.cust + a.task).localeCompare(b.cust + b.task); }).map(function (o) {
+        return '<tr><td class="left"><b>' + esc(o.task) + '</b></td><td class="left">' + esc(o.cust || '–') + '</td><td class="left">' + who(o.main, true) + '</td><td class="left">' + who(o.sub) + '</td><td class="left small">' + esc(o.memo) + '</td><td><button class="btn btn-sm btn-ghost" data-o="' + esc(o.id) + '">수정</button></td></tr>';
+      }).join('') : '<tr><td colspan="6" class="left muted" style="padding:16px">아직 없어요. 예) 로젠 일일 배차 · 로젠택배 · 주담당 김기중 · 부담당 이인성</td></tr>') + '</tbody></table></div>' +
+      (nobody ? '<p class="small" style="margin:8px 0 0;color:var(--orange)">⚠ 부담당이 없는 업무 ' + nobody + '개 — 담당자가 쉬면 아무도 못 해요</p>' : '') + '</div>' +
+      '<div><div class="card"><h3 style="margin:0 0 8px">사람별 업무 수</h3>' + (ppl.length ? ppl.map(function (p) { var c = cnt[p]; return '<div class="ow-bar"><span>' + esc(p) + '</span><div><i class="m" style="width:' + (c.m / mx * 100) + '%"></i><i class="s" style="width:' + (c.s / mx * 100) + '%"></i></div><small>주 ' + c.m + ' · 부 ' + c.s + '</small></div>'; }).join('') : '<p class="muted small">없어요.</p>') +
+      '<p class="hint" style="margin:8px 0 0"><i class="ow-key m"></i>주담당 <i class="ow-key s"></i>부담당 — 한 사람에게 몰린 게 보이면 나눠 주세요</p></div>' +
+      '<div class="card" style="margin-top:16px"><h3 style="margin:0 0 8px">바뀐 기록</h3>' + ((state.ownerLog || []).length ? '<ul class="man-log">' + state.ownerLog.slice(0, 20).map(function (l) { return '<li><small>' + esc(l.at.slice(0, 16)) + '</small> <b>' + esc(l.task) + '</b> ' + esc(l.text) + ' · ' + esc(l.by) + '</li>'; }).join('') + '</ul>' : '<p class="muted small">없어요.</p>') + '</div></div></div>';
+    $$('[data-o]', box).forEach(function (b) { b.onclick = function () { editOwner(list.filter(function (o) { return o.id === b.dataset.o; })[0]); }; });
+  }
+  function editOwner(o) {
+    var names = state.cal.data ? state.cal.data.users.map(function (u) { return u.name; }) : [];
+    var dl = '<datalist id="owNs">' + names.map(function (n) { return '<option value="' + esc(n) + '">'; }).join('') + '</datalist>';
+    modal({ eyebrow: '업무 담당표', title: o.id ? '업무 수정' : '업무 추가',
+      body: '<div class="qd-two"><div class="field"><label>업무 *</label><input class="input" id="oeT" maxlength="100" value="' + esc(o.task || '') + '" placeholder="예) 로젠 일일 배차"></div><div class="field"><label>업체</label><input class="input" id="oeC" list="oeCs" value="' + esc(o.cust || '') + '">' + custDatalist('oeCs') + '</div></div>' +
+        '<div class="qd-two"><div class="field"><label>주담당</label><input class="input" id="oeM" list="owNs" value="' + esc(o.main || '') + '"></div><div class="field"><label>부담당 (대신 맡을 사람)</label><input class="input" id="oeS" list="owNs" value="' + esc(o.sub || '') + '"></div></div>' + dl +
+        '<div class="field"><label>메모</label><input class="input" id="oeN" maxlength="500" value="' + esc(o.memo || '') + '" placeholder="예) 인수인계 중 (11월까지)"></div>',
+      foot: (o.id ? '<button class="btn btn-danger btn-sm" id="oeDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="oeSave">저장</button>',
+      onMount: function (m, close) {
+        $('#oeSave', m).onclick = function () { var btn = this; busy(btn, true, '…'); api('owners.save', { id: o.id || '', owner: { task: $('#oeT', m).value, cust: $('#oeC', m).value, main: $('#oeM', m).value, sub: $('#oeS', m).value, memo: $('#oeN', m).value } }).then(function (r) { state.owners = r.owners; state.ownerLog = r.log; close(); if (state.view === 'owners') drawOwners(); else render(); toast('저장했어요.'); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); }); };
+        var d = $('#oeDel', m); if (d) d.onclick = function () { if (!confirm('이 업무를 담당표에서 뺄까요?')) return; api('owners.delete', { id: o.id }).then(function (r) { state.owners = r.owners; state.ownerLog = r.log; close(); drawOwners(); }).catch(function (err) { toast(err.message, 'err'); }); };
+      } });
+  }
+  /** 홈 '오늘 할 일' 카드에: 오늘 휴가인 주담당 → 부담당 */
+  function coverToday() {
+    var today = todayYmd();
+    return (state.owners || []).map(function (o) { var l = offToday(o.main, today, today); return l ? { o: o, l: l } : null; }).filter(Boolean);
+  }
+
+  /* 팀 월간 보고서 (분석 권한) */
+  function renderReport() {
+    var rv = state.rptView = state.rptView || { team: '', ym: ymAdd(todayYmd().slice(0, 7), -1) };
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Team report · 팀 월간 보고서</div><h2>팀 월간 보고서</h2><p class="muted small" style="margin:4px 0 0">팀이 한 달 동안 맡은 업체 실적·견적·문의·추가근무·업무 담당을 한 장으로 정리해요. 팀은 관리자 → 직원 목록의 "팀" 칸 기준이에요.</p></div></div>' +
+      '<div class="card" style="margin-top:16px" id="rpBox"><p class="muted"><span class="spinner dark"></span> 자료 모으는 중… <span id="anProg"></span></p></div>';
+    var soft = function (p) { return p.catch(function () { return null; }); };
+    Promise.all([loadCal(), loadAnalysis(), soft(loadOwners(true)), soft(loadInqs(true)), soft(api('reqs.list').then(function (r) { state.reqs.list = r.reqs; })), soft(loadCusts())]).then(function () {
+      if (state.view !== 'report') return;
+      var info = state.cal.data.staffInfo || {}, teams = {}; Object.keys(info).forEach(function (n) { if (info[n].team) teams[info[n].team] = 1; });
+      var tl = Object.keys(teams).sort(); if (!rv.team || !teams[rv.team]) rv.team = tl[0] || '';
+      var months = anMonths(), ms = {}; months.forEach(function (m) { ms[m] = 1; }); ms[todayYmd().slice(0, 7)] = 1; ms[rv.ym] = 1;
+      $('#rpBox').innerHTML = tl.length ? '<div class="actions" style="flex-wrap:wrap"><span class="small muted">팀</span><select class="input input-sm" id="rpT" style="width:auto">' + tl.map(function (t) { return '<option' + (t === rv.team ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('') + '</select>' +
+        '<span class="small muted">월</span><select class="input input-sm" id="rpM" style="width:auto">' + Object.keys(ms).sort().reverse().map(function (m) { return '<option' + (m === rv.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select>' +
+        '<span class="field" style="flex:1;min-width:220px;margin:0"><input class="input input-sm" id="rpNote" placeholder="이번 달 주요 이슈·건의 (보고서에 들어가요)" value="' + esc(local('get', 'joil-rptnote-' + rv.team + rv.ym) || '') + '"></span><button class="btn btn-sm btn-primary" id="rpGo">보고서 만들기</button></div>'
+        : '<p style="margin:0">아직 팀이 정해진 직원이 없어요. <b>관리자 → 직원 목록</b>에서 "팀" 칸을 채워 주세요 (예: 일반팀).</p>';
+      if (!tl.length) return;
+      $('#rpT').onchange = function () { rv.team = this.value; $('#rpNote').value = local('get', 'joil-rptnote-' + rv.team + rv.ym) || ''; };
+      $('#rpM').onchange = function () { rv.ym = this.value; $('#rpNote').value = local('get', 'joil-rptnote-' + rv.team + rv.ym) || ''; };
+      $('#rpNote').onchange = function () { local('set', 'joil-rptnote-' + rv.team + rv.ym, this.value); };
+      $('#rpGo').onclick = function () { local('set', 'joil-rptnote-' + rv.team + rv.ym, $('#rpNote').value); openTeamReport(rv.team, rv.ym, $('#rpNote').value); };
+    }).catch(function (err) { var b = $('#rpBox'); if (b) b.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+  }
+  function teamReportData(team, ym) {
+    var d = state.cal.data, info = d.staffInfo || {}, members = Object.keys(info).filter(function (n) { return info[n].team === team; }).sort();
+    var isM = function (n) { return members.indexOf(n) !== -1; }, inM = function (s) { return String(s || '').slice(0, 7) === ym; }, prev = ymAdd(ym, -1);
+    var reqs = (state.reqs.list || []).filter(function (r) { return isM(r.owner); });
+    var rq = { received: reqs.filter(function (r) { return inM(r.received); }).length, submitted: reqs.filter(function (r) { return inM(r.submitted); }).length, open: reqs.filter(function (r) { return r.status === '접수' || r.status === '검토중'; }).length,
+      won: reqs.filter(function (r) { return r.status === '수주' && inM(r.updated || r.submitted || r.received); }).length };
+    var inqs = (state.inqs || []).filter(function (x) { return isM(x.by) && inM(x.at); });
+    var inqCust = {}; inqs.forEach(function (x) { var k = x.cust || '(업체 없음)'; inqCust[k] = (inqCust[k] || 0) + 1; });
+    var ot = otMonth(ym), holi = calHoli();
+    var per = members.map(function (n) {
+      var o = ot[n] || {}, lv = d.leaves.filter(function (l) { return l.name === n && !isWork(l.kind) && l.start.slice(0, 7) <= ym && l.end.slice(0, 7) >= ym; }).reduce(function (a, l) { return a + leaveDays(l, holi); }, 0);
+      var ow = (state.owners || []), mainN = ow.filter(function (x) { return x.main === n; }).length, subN = ow.filter(function (x) { return x.sub === n; }).length;
+      return { name: n, main: mainN, sub: subN, req: reqs.filter(function (r) { return r.owner === n && inM(r.received); }).length, inq: inqs.filter(function (x) { return x.by === n; }).length,
+        ot: o.total || 0, duty: o['당직'] ? o['당직'].h : 0, leave: lv, done: (d.done || []).filter(function (x) { return x.by === n && inM(x.at); }).length };
+    });
+    var owned = (state.owners || []).filter(function (o) { return isM(o.main); });
+    var custs = {}; owned.forEach(function (o) { if (o.cust) custs[o.cust] = 1; });
+    var sales = Object.keys(custs).map(function (c) {
+      var cc = (state.custs || []).filter(function (x) { return custMatch(x, c); })[0], match = function (r) { var nm = r[C.disp] || r[C.cust]; return cc ? custMatch(cc, nm) || custMatch(cc, r[C.cust]) : custNorm(nm) === custNorm(c); };
+      var agg = function (m) { var t = { n: 0, s: 0, b: 0 }; (state.an.rows || []).forEach(function (r) { if (r[C.hidden] || String(r[C.date]).slice(0, 7) !== m || !match(r)) return; t.n++; t.s += r[C.sales] || 0; t.b += r[C.buys] || 0; }); t.p = t.s - t.b; return t; };
+      return { cust: c, cur: agg(ym), prev: agg(prev) };
+    });
+    return { team: team, ym: ym, members: members, rq: rq, inqN: inqs.length, inqOpen: inqs.filter(function (x) { return x.status !== '완료'; }).length, inqTop: Object.keys(inqCust).map(function (k) { return [k, inqCust[k]]; }).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 5),
+      per: per, owned: owned, sales: sales, otSum: per.reduce(function (a, p) { return a + p.ot; }, 0) };
+  }
+  function openTeamReport(team, ym, note) {
+    var x = teamReportData(team, ym), y = +ym.slice(0, 4), m = +ym.slice(5);
+    var tot = x.sales.reduce(function (a, s) { a.s += s.cur.s; a.b += s.cur.b; a.n += s.cur.n; a.ps += s.prev.s; a.pp += s.prev.p; return a; }, { s: 0, b: 0, n: 0, ps: 0, pp: 0 }); tot.p = tot.s - tot.b;
+    var dlt = function (c, p) { if (!p) return '<span class="muted">–</span>'; var v = (c - p) / Math.abs(p) * 100; return '<span class="' + (v >= 0 ? 'up' : 'down') + '">' + (v >= 0 ? '▲' : '▼') + ' ' + Math.abs(v).toFixed(1) + '%</span>'; };
+    var hrs2 = function (v) { return v ? (Math.round(v * 10) / 10) + 'h' : '–'; };
+    var html = '<div class="rpt-bar no-print"><span class="muted small">보고서 미리보기 · 인쇄 창에서 "PDF로 저장"을 고르면 PDF가 돼요</span><span class="spacer"></span><button class="btn btn-sm" id="trX">엑셀</button><button class="btn btn-sm btn-primary" id="trPrint">인쇄 / PDF 저장</button><button class="btn btn-sm" id="trClose">닫기</button></div>' +
+      '<div class="rpt-page"><header class="rpt-head"><div class="stripe-bar"></div><div class="rpt-title"><div><div class="eyebrow">Team Monthly Report · 팀 월간 업무 보고</div><h1>' + y + '년 ' + m + '월 ' + esc(team) + ' 업무 보고</h1>' +
+      '<p class="muted small">팀원 ' + x.members.map(esc).join(', ') + ' · 작성 ' + esc(today()) + ' · ' + esc(state.user.name) + '</p></div><span class="logo"></span></div></header>' +
+      '<section><h2>1. 한눈에 보기</h2><div class="tr-kpis">' + [['담당 업체 매출', won(tot.s) + '원', dlt(tot.s, tot.ps) + ' 전월 대비'], ['담당 업체 이익', won(tot.p) + '원', dlt(tot.p, tot.pp) + ' 전월 대비'], ['견적 접수 · 제출', x.rq.received + ' · ' + x.rq.submitted + '건', '진행 중 ' + x.rq.open + '건'],
+        ['문의 응대', x.inqN + '건', '처리 중 ' + x.inqOpen + '건'], ['추가근무 합계', hrs2(x.otSum), '야간·휴일·당직'], ['맡은 업무', x.owned.length + '개', '업무 담당표 주담당 기준']].map(function (k) { return '<div><small>' + k[0] + '</small><b>' + k[1] + '</b><span class="small muted">' + k[2] + '</span></div>'; }).join('') + '</div></section>' +
+      '<section><h2>2. 팀원별 업무</h2><table class="data rpt"><thead><tr><th class="left">이름</th><th>맡은 업무 (주·부)</th><th>견적 접수</th><th>문의 응대</th><th>할 일 완료</th><th>추가근무</th><th>당직</th><th>휴가</th></tr></thead><tbody>' +
+        x.per.map(function (p) { return '<tr><td class="left strong">' + esc(p.name) + '</td><td class="num">' + p.main + ' · ' + p.sub + '</td><td class="num">' + p.req + '</td><td class="num">' + p.inq + '</td><td class="num">' + p.done + '</td><td class="num">' + hrs2(p.ot) + '</td><td class="num">' + hrs2(p.duty) + '</td><td class="num">' + (p.leave ? p.leave + '일' : '–') + '</td></tr>'; }).join('') + '</tbody></table></section>' +
+      '<section><h2>3. 담당 업체 실적</h2>' + (x.sales.length ? '<table class="data rpt"><thead><tr><th class="left">업체</th><th>건수</th><th>매출</th><th>매입</th><th>이익</th><th>이익률</th><th>매출 전월 대비</th></tr></thead><tbody>' +
+        x.sales.sort(function (a, b) { return b.cur.s - a.cur.s; }).map(function (s) { var c = s.cur; return '<tr><td class="left">' + esc(s.cust) + '</td><td class="num">' + won(c.n) + '</td><td class="num">' + won(c.s) + '</td><td class="num">' + won(c.b) + '</td><td class="num' + (c.p < 0 ? ' neg' : '') + '">' + won(c.p) + '</td><td class="num">' + (c.s ? (c.p / c.s * 100).toFixed(1) + '%' : '–') + '</td><td class="num">' + dlt(c.s, s.prev.s) + '</td></tr>'; }).join('') +
+        '<tr class="tot"><td class="left strong">합계</td><td class="num">' + won(tot.n) + '</td><td class="num">' + won(tot.s) + '</td><td class="num">' + won(tot.b) + '</td><td class="num strong">' + won(tot.p) + '</td><td class="num">' + (tot.s ? (tot.p / tot.s * 100).toFixed(1) + '%' : '–') + '</td><td class="num">' + dlt(tot.s, tot.ps) + '</td></tr></tbody></table>'
+        : '<p class="muted small">업무 담당표에 이 팀이 주담당인 업체가 없어요.</p>') + '</section>' +
+      '<section class="rpt-two"><div><h2>4. 맡은 업무</h2>' + (x.owned.length ? '<table class="data rpt"><thead><tr><th class="left">업무</th><th class="left">주담당</th><th class="left">부담당</th></tr></thead><tbody>' + x.owned.map(function (o) { return '<tr><td class="left">' + esc(o.task) + (o.cust ? ' <span class="muted small">' + esc(o.cust) + '</span>' : '') + '</td><td class="left">' + esc(o.main) + '</td><td class="left">' + (o.sub ? esc(o.sub) : '<b class="neg">없음</b>') + '</td></tr>'; }).join('') + '</tbody></table>' : '<p class="muted small">없어요.</p>') + '</div>' +
+      '<div><h2>5. 문의 많은 업체</h2>' + (x.inqTop.length ? '<table class="data rpt"><tbody>' + x.inqTop.map(function (t) { return '<tr><td class="left">' + esc(t[0]) + '</td><td class="num">' + t[1] + '건</td></tr>'; }).join('') + '</tbody></table>' : '<p class="muted small">없어요.</p>') + '</div></section>' +
+      (note ? '<section><h2>6. 주요 이슈 · 건의</h2><p style="white-space:pre-wrap;margin:0">' + esc(note) + '</p></section>' : '') +
+      '<footer class="rpt-foot muted small">조일그룹 견적·실적 시스템 · 매출·매입은 분석 데이터(월별 엑셀), 견적은 견적 접수함, 문의는 문의 기록, 근무는 일정 기준</footer></div>';
+    var wrap = document.createElement('div'); wrap.id = 'report'; wrap.innerHTML = html; document.body.appendChild(wrap); document.body.classList.add('report-open'); window.scrollTo(0, 0);
+    var close = function () { wrap.remove(); document.body.classList.remove('report-open'); };
+    $('#trClose').onclick = close; $('#trPrint').onclick = function () { window.print(); };
+    $('#trX').onclick = function () {
+      var btn = this; busy(btn, true, '…');
+      downloadXlsx(team + '_' + ym + '_월간보고.xlsx', [
+        { name: '팀원별', rows: [['이름', '주담당', '부담당', '견적 접수', '문의 응대', '할 일 완료', '추가근무(h)', '당직(h)', '휴가(일)']].concat(x.per.map(function (p) { return [p.name, p.main, p.sub, p.req, p.inq, p.done, p.ot, p.duty, p.leave]; })), widths: [10, 8, 8, 9, 9, 9, 11, 9, 9] },
+        { name: '담당업체', rows: [['업체', '건수', '매출', '매입', '이익', '전월 매출']].concat(x.sales.map(function (s) { return [s.cust, s.cur.n, s.cur.s, s.cur.b, s.cur.p, s.prev.s]; })), widths: [22, 8, 14, 14, 14, 14] },
+        { name: '맡은업무', rows: [['업무', '업체', '주담당', '부담당', '메모']].concat(x.owned.map(function (o) { return [o.task, o.cust, o.main, o.sub, o.memo]; })), widths: [24, 18, 10, 10, 30] }
+      ]).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
   }
 
@@ -6628,7 +6910,7 @@
       api('history.list', { days: 7, type: '', userId: state.user.id, q: '' }).then(function (r) { if (alive()) homeHist(r.logs); }).catch(fail('#hcHist'));
     }
     if (ha) loadAnalysis().then(function () { if (alive()) homeAn(); }).catch(fail('#hcAn'));
-    loadCal().then(function () { if (alive()) homeToday(); }).catch(fail('#hcToday'));
+    Promise.all([loadCal(), can('quote') ? loadOwners(true).catch(function () { }) : null]).then(function () { if (alive()) homeToday(); }).catch(fail('#hcToday'));
     loadNotices(true).then(function () { if (alive()) homeNotice(); }).catch(fail('#hcNotice'));
     homeStocks();
     infoLoad('weather').then(function (r) { if (alive()) homeWeather(r); }).catch(fail('#hcWx'));
@@ -7023,7 +7305,7 @@
         '<b>계정 관리</b>에서 직원 계정을 만들고 메뉴 권한(견적·분석)을 정합니다. 퇴사자는 바로 <b>사용 중지</b>하세요.',
         '<b>분석 데이터</b>에 매월 사업자별 엑셀을 올립니다. 같은 달을 다시 올리면 덮어씁니다.',
         '<b>회사 정보</b>에 사업자 3곳의 정보와 직인을 넣으면 견적서에 들어갑니다.',
-        '<b>직원 목록</b>에 직원마다 사업자·부서·메일을 넣으세요. 시간외근무일지와 주간 요약 메일에 쓰여요. 퇴사자는 지우지 말고 "재직"을 끄세요.',
+        '<b>직원 목록</b>에 직원마다 사업자·부서·팀·메일을 넣으세요. 시간외근무일지, 주간 요약 메일, 팀 월간 보고서에 쓰여요. 퇴사자는 지우지 말고 "재직"을 끄세요.',
         '서버 코드가 바뀌는 업데이트가 있으면 SETUP.md의 "업데이트가 나왔을 때" 순서대로 Apps Script에 붙여넣고 새 버전으로 배포하세요.'
       ]]
     );
@@ -7038,6 +7320,12 @@
       '이름이 조금씩 다르게 적힌 업체는 "같은 업체로 볼 다른 이름"에 쉼표로 넣으세요 (예: 삼다수, 제주개발공사).',
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
+    if (hq) sec.push(['work', '업무 매뉴얼 · 담당표 · 문의 기록', [
+      '<b>업무 매뉴얼</b>: 업체별(또는 공통) 처리 순서·연락처·문제와 대처·주의사항을 적어 두는 곳이에요. 사진·파일도 붙이고, 누가 언제 무엇을 고쳤는지 "수정 이력"에 남아요. <b>인쇄</b>로 한 장씩 뽑을 수 있어요.',
+      '<b>업무 담당표</b>: 업무마다 주담당·부담당을 정해요. 주담당이 휴가로 등록돼 있으면 홈 "오늘 할 일"과 주간 요약에 "부담당 OO"가 대신 맡는다고 나와요. 담당이 바뀐 기록도 남아요.',
+      '<b>문의 기록</b>: 업체 전화·메일 문의를 한 줄로 남겨요. 좋은 답변은 <b>⭐ 자주 묻는</b>을 켜면 그 업체 매뉴얼의 "자주 묻는 질문"에 자동으로 모여요.',
+      '거래처 카드에서도 그 업체 매뉴얼과 담당자를 바로 볼 수 있어요.'
+    ].concat(ha ? ['<b>팀 월간 보고서</b>(분석 메뉴): 관리자 → 직원 목록의 "팀" 칸 기준으로 팀원별 업무·견적·문의·추가근무와 주담당 업체의 매출·이익을 한 장으로 만들어요. 인쇄/PDF·엑셀 가능.'] : [])]);
     sec.unshift(['notice', '팀 공지', ['홈 화면 맨 위 <b>팀 공지</b>에서 누구나 공지를 쓸 수 있어요. 본인 글과 관리자만 고치거나 지울 수 있고, 📌 고정은 관리자만 해요. 최근 공지는 주간 요약 메일에도 들어가요.']]);
     sec.unshift(['info', '물류 정보', [
       '<b>유가</b>: 오피넷 전국 평균 경유가를 주식 화면처럼 기간별(1주~전체) 그래프로 봅니다. 그래프에 마우스를 올리면 그날 가격과 전일 대비가 나와요.',

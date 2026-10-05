@@ -86,7 +86,7 @@
     var c = calStore(), d = new Date();
     return { events: c.events.filter(function (e) { return !e.private || e.ownerId === (curMe || {}).id; }), tasks: c.tasks, done: c.done, leaves: c.leaves,
       grants: c.grants.map(function (g) { var u = calUsers().filter(function (x) { return x.id === g.userId; })[0]; return Object.assign({}, g, { name: u ? u.name : (g.name || g.userId) }); }),
-      users: calUsers(), staffInfo: (function () { var o = {}; c.staff.forEach(function (x) { o[x.name] = { biz: x.biz || '', dept: x.dept || '' }; }); return o; })(), dutyRules: c.dutyRules, dutyOverrides: c.dutyOvr, holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
+      users: calUsers(), staffInfo: (function () { var o = {}; c.staff.forEach(function (x) { o[x.name] = { biz: x.biz || '', dept: x.dept || '', team: x.team || '' }; }); return o; })(), dutyRules: c.dutyRules, dutyOverrides: c.dutyOvr, holidays: demoHolidays(), companyHolidays: c.companyHolidays, today: d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) };
   }
   var curMe = null;
 
@@ -107,7 +107,20 @@
       leaves: cal.leaves.filter(function (l) { return l.kind !== '당직' && l.end >= w && l.start <= we; }).map(function (l) { return { name: l.name, kind: l.kind, start: l.start, end: l.end, hours: l.hours }; }),
       tasks: [], overdue: 0, reqs: rq,
       contracts: demoCusts().filter(function (c) { return c.end && c.end <= lim && c.end >= add(cal.today, -7); }).map(function (c) { return { name: c.name, end: c.end }; }),
-      docs: [], notices: demoNotices().slice(0, 8).map(function (n) { return { title: n.title, body: n.body, pinned: n.pinned, owner: n.owner, at: n.at.slice(0, 10) }; }) };
+      cover: demoCover(w, we), docs: [], notices: demoNotices().slice(0, 8).map(function (n) { return { title: n.title, body: n.body, pinned: n.pinned, owner: n.owner, at: n.at.slice(0, 10) }; }) };
+  }
+
+  /* 업무 매뉴얼 · 문의 기록 · 업무 담당표 (데모: localStorage, 첨부는 메모리) */
+  var manFiles = {};
+  function wk(k) { store[k] = store[k] || []; return store[k]; }
+  function demoManuals() { return wk('manuals').slice().sort(function (a, b) { return (a.cust ? 0 : 1) - (b.cust ? 0 : 1) || a.cust.localeCompare(b.cust) || a.title.localeCompare(b.title); }); }
+  function demoInqs() { return wk('inqs').slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; }); }
+  function demoOwners() { return { owners: wk('owners').slice(), log: wk('ownerLog').slice(-80).reverse() }; }
+  function manFind(id) { var m = wk('manuals').filter(function (x) { return x.id === id; })[0]; if (!m) fail('매뉴얼을 찾을 수 없습니다.'); return m; }
+  function manOfFile(fid) { var m = wk('manuals').filter(function (x) { return x.files.some(function (f) { return f.id === fid; }); })[0]; if (!m) fail('파일을 찾을 수 없습니다.'); return m; }
+  function demoCover(from, to) {
+    var off = {}; calStore().leaves.forEach(function (l) { if (/근무|당직/.test(l.kind) || l.end < from || l.start > to) return; (off[l.name] = off[l.name] || []).push(l); });
+    return wk('owners').filter(function (o) { return o.main && off[o.main]; }).map(function (o) { var l = off[o.main][0]; return { task: o.task, cust: o.cust, main: o.main, sub: o.sub, kind: l.kind, start: l.start, end: l.end }; });
   }
   function notesSorted() { return (store.notes || []).slice().sort(function (a, b) { return a.month < b.month ? 1 : -1; }); }
   function noteClean(n) {
@@ -391,16 +404,62 @@
         if (req.id) Object.assign(calFind('leaves', req.id), lv); else store.cal.leaves.push(Object.assign({ id: calId('L'), by: me.name, at: today() }, lv));
         save(); return calAll();
       case 'cal.leaveDelete': store.cal.leaves = store.cal.leaves.filter(function (x) { return x.id !== req.id; }); save(); return calAll();
-      case 'staff.list': if (me.role !== 'admin') fail('관리자만 할 수 있습니다.'); return { staff: calStore().staff.map(function (x) { return Object.assign({ biz: '', dept: '', email: '', account: '', active: true, weekly: false }, x); }), accounts: store.users.map(function (u) { return { id: u.id, name: u.name, active: u.active }; }) };
+      case 'staff.list': if (me.role !== 'admin') fail('관리자만 할 수 있습니다.'); return { staff: calStore().staff.map(function (x) { return Object.assign({ biz: '', dept: '', team: '', email: '', account: '', active: true, weekly: false }, x); }), accounts: store.users.map(function (u) { return { id: u.id, name: u.name, active: u.active }; }) };
       case 'staff.save':
         if (me.role !== 'admin') fail('관리자만 할 수 있습니다.');
         var seenN = {};
         calStore().staff = (req.staff || []).filter(function (x) { return String(x.name || '').trim(); }).map(function (x) {
           var nm2 = String(x.name).trim(); if (seenN[nm2]) fail('"' + nm2 + '" 이름이 두 번 있어요.'); seenN[nm2] = 1;
           if (x.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(x.email)) fail(nm2 + ' 메일 주소를 확인하세요.');
-          return { id: x.id || calId('S'), name: nm2, biz: x.biz || '', dept: x.dept || '', email: x.email || '', account: x.account || '', active: x.active !== false, weekly: !!x.weekly && !!x.email };
+          return { id: x.id || calId('S'), name: nm2, biz: x.biz || '', dept: x.dept || '', team: String(x.team || '').trim().slice(0, 30), email: x.email || '', account: x.account || '', active: x.active !== false, weekly: !!x.weekly && !!x.email };
         });
         save(); return { staff: calStore().staff };
+      case 'manual.list': return { manuals: demoManuals() };
+      case 'manual.save':
+        var mm = req.manual || {}, mt = String(mm.title || '').trim().slice(0, 100); if (!mt) fail('매뉴얼 제목을 넣으세요.');
+        var MF = [['title', '제목'], ['cust', '업체'], ['cat', '분류'], ['steps', '처리 순서'], ['contacts', '연락처'], ['issues', '문제와 대처'], ['cautions', '주의사항'], ['memo', '메모']];
+        var mv = { title: mt, cust: String(mm.cust || '').trim(), cat: String(mm.cat || '').trim() }; ['steps', 'contacts', 'issues', 'cautions', 'memo'].forEach(function (k) { mv[k] = String(mm[k] || ''); });
+        var mid = req.id;
+        if (mid) { var om = manFind(mid), ch = MF.filter(function (x) { return om[x[0]] !== mv[x[0]]; }).map(function (x) { return x[1]; }); Object.assign(om, mv, { updBy: me.name, updAt: today() }); if (ch.length) om.log.push({ at: today(), by: me.name, what: ch.join(', ') + ' 수정' }); }
+        else { mid = calId('M'); wk('manuals').push(Object.assign({ id: mid, files: [], by: me.name, at: today(), updBy: me.name, updAt: today(), log: [{ at: today(), by: me.name, what: '작성' }] }, mv)); }
+        save(); return { manuals: demoManuals(), id: mid };
+      case 'manual.delete': store.manuals = wk('manuals').filter(function (x) { return x.id !== req.id; }); save(); return { manuals: demoManuals() };
+      case 'manual.upload':
+        var um = manFind(req.id); if (!req.data) fail('파일이 비어 있습니다.');
+        var ufid = calId('F'); manFiles[ufid] = req.data;
+        um.files.push({ id: ufid, name: String(req.fileName || '파일'), mime: req.mime || 'application/octet-stream', size: Math.round(req.data.length * 3 / 4), by: me.name, at: today() });
+        um.log.push({ at: today(), by: me.name, what: '첨부 추가: ' + req.fileName }); save(); return { manuals: demoManuals() };
+      case 'manual.file':
+        var gm = manOfFile(req.fileId), gf = gm.files.filter(function (f) { return f.id === req.fileId; })[0];
+        if (!manFiles[req.fileId]) fail('데모 모드에서는 새로고침하면 첨부 파일이 사라져요.');
+        return { data: manFiles[req.fileId], fileName: gf.name, mime: gf.mime };
+      case 'manual.fileDelete':
+        var dm2 = manOfFile(req.fileId), df = dm2.files.filter(function (f) { return f.id === req.fileId; })[0];
+        dm2.files = dm2.files.filter(function (f) { return f.id !== req.fileId; }); delete manFiles[req.fileId]; dm2.log.push({ at: today(), by: me.name, what: '첨부 삭제: ' + df.name }); save(); return { manuals: demoManuals() };
+      case 'inq.list': return { inqs: demoInqs() };
+      case 'inq.save':
+        var iq = req.inq || {}, ib = String(iq.body || '').trim(); if (!ib) fail('문의 내용을 넣으세요.');
+        var iv = { cust: String(iq.cust || '').trim(), who: String(iq.who || '').trim(), body: ib, answer: String(iq.answer || ''), status: iq.status === '완료' ? '완료' : '처리 중', faq: !!iq.faq, upd: today() };
+        if (req.id) { var oi = wk('inqs').filter(function (x) { return x.id === req.id; })[0]; if (!oi) fail('문의 기록을 찾을 수 없습니다.'); Object.assign(oi, iv); }
+        else wk('inqs').push(Object.assign({ id: calId('Q'), at: iq.at || today(), byId: me.id, by: me.name }, iv));
+        save(); return { inqs: demoInqs() };
+      case 'inq.delete':
+        var di = wk('inqs').filter(function (x) { return x.id === req.id; })[0]; if (!di) fail('문의 기록을 찾을 수 없습니다.');
+        if (di.byId !== me.id && me.role !== 'admin') fail('응대한 사람이나 관리자만 지울 수 있습니다.');
+        store.inqs = wk('inqs').filter(function (x) { return x.id !== req.id; }); save(); return { inqs: demoInqs() };
+      case 'owners.list': return demoOwners();
+      case 'owners.save':
+        var ow = req.owner || {}, ot = String(ow.task || '').trim(); if (!ot) fail('업무 이름을 넣으세요.');
+        var ov = { task: ot, cust: String(ow.cust || '').trim(), main: String(ow.main || '').trim(), sub: String(ow.sub || '').trim(), memo: String(ow.memo || ''), by: me.name, at: today() };
+        if (req.id) {
+          var oo = wk('owners').filter(function (x) { return x.id === req.id; })[0]; if (!oo) fail('업무를 찾을 수 없습니다.'); var och = [];
+          if (oo.main !== ov.main) och.push('주담당 ' + (oo.main || '없음') + ' → ' + (ov.main || '없음')); if (oo.sub !== ov.sub) och.push('부담당 ' + (oo.sub || '없음') + ' → ' + (ov.sub || '없음'));
+          if (och.length) wk('ownerLog').push({ at: today(), task: ot, text: och.join(' · '), by: me.name }); Object.assign(oo, ov);
+        } else { wk('owners').push(Object.assign({ id: calId('W') }, ov)); wk('ownerLog').push({ at: today(), task: ot, text: '추가 (주담당 ' + (ov.main || '없음') + ', 부담당 ' + (ov.sub || '없음') + ')', by: me.name }); }
+        save(); return demoOwners();
+      case 'owners.delete':
+        var xo = wk('owners').filter(function (x) { return x.id === req.id; })[0]; if (!xo) fail('업무를 찾을 수 없습니다.');
+        wk('ownerLog').push({ at: today(), task: xo.task, text: '삭제', by: me.name }); store.owners = wk('owners').filter(function (x) { return x.id !== req.id; }); save(); return demoOwners();
       case 'notice.list': return { notices: demoNotices() };
       case 'notice.save':
         var nn2 = req.notice || {}; if (!String(nn2.title || '').trim()) fail('공지 제목을 넣으세요.');

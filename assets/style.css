@@ -1079,3 +1079,64 @@ label.chk input { width: 18px; height: 18px; accent-color: var(--green); cursor:
 .stk-head > b { font-family: var(--font-display); font-size: 28px; }
 .stk-chart { background: var(--panel-2); border-radius: 12px; padding: 8px; min-height: 120px; }
 .stk-svg { width: 100%; height: auto; display: block; }
+
+/* 업무 매뉴얼 */
+.man-grid { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+.man-list { position: sticky; top: 84px; max-height: calc(100vh - 110px); overflow: auto; padding: 12px; }
+.man-g + .man-g { margin-top: 12px; }
+.man-gh { font-size: 12px; font-weight: 800; color: var(--muted); padding: 2px 8px 6px; }
+.man-it { display: flex; flex-direction: column; gap: 2px; width: 100%; text-align: left; border: 0; background: transparent; border-radius: 10px; padding: 8px 10px; cursor: pointer; font: inherit; color: inherit; }
+.man-it:hover { background: var(--panel-2); }
+.man-it.on { background: var(--panel-2); box-shadow: inset 3px 0 0 var(--orange); }
+.man-it b { font-size: 14px; } .man-it small { font-size: 11.5px; color: var(--muted); }
+.man-sec { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.man-sec h3 { font-size: 15px; margin: 0 0 8px; }
+.man-txt { line-height: 1.7; font-size: 14.5px; }
+.faq { padding: 10px 12px; background: var(--panel-2); border-radius: 10px; margin-bottom: 8px; display: flex; flex-direction: column; gap: 4px; }
+.man-files { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.man-files li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.man-files li > button:first-child { border: 0; background: transparent; cursor: pointer; font: inherit; color: inherit; text-align: left; padding: 4px 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.man-files li > button:first-child:hover { color: var(--orange); }
+.man-log { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.man-log small { color: var(--muted); margin-right: 4px; }
+textarea.input.man-ta { min-height: 76px; }
+@media (max-width: 900px) { .man-grid { grid-template-columns: minmax(0, 1fr); } .man-list { position: static; max-height: 320px; } }
+
+/* 문의 기록 */
+.inq-quick { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.inq-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inq-row .grow { flex: 1; min-width: 200px; }
+.inq-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.inq-list li > button { width: 100%; display: flex; flex-direction: column; gap: 3px; text-align: left; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 12px; cursor: pointer; font: inherit; color: inherit; }
+.inq-list li > button:hover { border-color: var(--line-strong); background: var(--panel-2); }
+.inq-list li.open > button { border-left: 3px solid var(--orange); }
+.inq-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13.5px; }
+.inq-meta small { margin-left: auto; color: var(--muted); font-size: 12px; }
+.inq-st { font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 999px; background: var(--bg-2); color: var(--muted); }
+li.open .inq-st { background: #FFF3E8; color: var(--orange); }
+.inq-q { font-size: 14px; }
+.inq-a { font-size: 13px; color: var(--ink-2); }
+
+/* 업무 담당표 */
+.ow-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(260px, 1fr); gap: 16px; align-items: start; }
+.ow-table td { white-space: normal; vertical-align: middle; }
+.ow-bar { display: grid; grid-template-columns: 64px 1fr auto; gap: 8px; align-items: center; font-size: 13px; margin-bottom: 6px; }
+.ow-bar > div { display: flex; height: 10px; background: var(--bg-2); border-radius: 999px; overflow: hidden; }
+.ow-bar i.m, .ow-key.m { background: var(--orange); } .ow-bar i.s, .ow-key.s { background: var(--cyan); }
+.ow-bar small { color: var(--muted); white-space: nowrap; }
+.ow-key { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin: 0 4px 0 6px; vertical-align: -1px; }
+@media (max-width: 980px) { .ow-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* 팀 월간 보고서 */
+.tr-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.tr-kpis > div { background: #fff; padding: 10px 14px; display: flex; flex-direction: column; gap: 2px; }
+.tr-kpis small { font-size: 11.5px; font-weight: 700; color: var(--muted); }
+.tr-kpis b { font-family: var(--font-display); font-size: 19px; }
+table.data.rpt tr.tot td { border-top: 1.5px solid var(--ink); font-weight: 700; }
+
+/* 매뉴얼 인쇄: 매뉴얼 본문만 */
+@media print {
+  body.print-manual .topbar, body.print-manual .info-head, body.print-manual .man-list, body.print-manual .toasts, body.print-manual .man-doc .actions { display: none !important; }
+  body.print-manual .man-grid { display: block; margin: 0 !important; }
+  body.print-manual .man-doc { border: 0; box-shadow: none; padding: 0; }
+}
