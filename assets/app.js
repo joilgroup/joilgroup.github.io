@@ -6486,50 +6486,58 @@
   /* ───────── 관심 종목 (홈 카드 · 네이버 금융 시세) ───────── */
   var stockTimer = null;
   function myStocks() { var v = local('get', 'joil-stocks'); return Array.isArray(v) ? v.slice(0, 5) : []; }
-  function marketOpen() { // 한국 시간 평일 09:00~15:40
-    var k = new Date(Date.now() + (new Date().getTimezoneOffset() + 540) * 60000), m = k.getHours() * 60 + k.getMinutes(), d = k.getDay();
-    return d > 0 && d < 6 && m >= 540 && m <= 940;
+  function tzNow(tz) { try { var p = new Date().toLocaleString('en-US', { timeZone: tz, hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit' }).split(/[\s,:]+/); return { d: p[0], m: (+p[1] % 24) * 60 + +p[2] }; } catch (e) { return null; } }
+  /** 국내: 한국 시간 평일 09:00~15:40 · 미국(.O .N .K .A): 뉴욕 시간 평일 09:30~16:10 (서머타임 자동) · 그 밖의 해외는 늘 갱신 */
+  function marketOpen(code) {
+    var us = /\.(O|N|K|A)$/i.test(code || ''), kr = /^\d{6}$/.test(code || '');
+    if (!kr && !us && code) return true;
+    var t = tzNow(us ? 'America/New_York' : 'Asia/Seoul'); if (!t) return true;
+    return t.d !== 'Sat' && t.d !== 'Sun' && (us ? t.m >= 570 && t.m <= 970 : t.m >= 540 && t.m <= 940);
   }
   function stkCls(v) { return v > 0 ? 'up' : v < 0 ? 'down' : ''; }
   function stkSign(v) { return v > 0 ? '▲' : v < 0 ? '▼' : ''; }
   function stkNum(v, dec) { return v == null ? '–' : Number(v).toLocaleString('ko-KR', { minimumFractionDigits: dec || 0, maximumFractionDigits: dec || 0 }); }
+  function stkMoney(x, v) { return (x.foreign ? (x.sym || '$') : '') + stkNum(v, x.foreign ? 2 : 0); }
   function homeStocks() {
     var el = $('#hcStock'); if (!el) return;
     clearTimeout(stockTimer);
     var list = myStocks();
+    var head = function (extra) { return '<div class="row-between"><div class="eyebrow">Stocks · 관심 종목</div><span class="actions">' + (extra || '') + '<button class="btn btn-sm btn-ghost" id="stkEdit">종목 설정</button></span></div>'; };
+    if (!list.length) {
+      el.innerHTML = head() + '<p class="muted small" style="margin:10px 0 0">"종목 설정"에서 보고 싶은 국내·해외 종목을 5개까지 넣어 보세요.<br>예) 삼성전자, CJ대한통운, 애플, 테슬라</p>';
+      $('#stkEdit').onclick = openStockEdit; return;
+    }
     api('stock.quotes', { codes: list.map(function (x) { return x.code; }) }).then(function (r) {
       if (!$('#hcStock') || state.view !== 'home') return;
-      var q = r.quotes, idx = q.filter(function (x) { return x.index; }), st = q.filter(function (x) { return !x.index; });
-      var open = marketOpen();
+      var q = r.quotes, open = list.some(function (x) { return marketOpen(x.code); });
       var row = function (x) {
-        if (x.error) return '<li class="stk-row"><span class="stk-n">' + esc(x.name) + '</span><span class="small muted" title="' + esc(x.error) + '">시세를 못 받았어요</span></li>';
-        var dec = x.index ? 2 : 0;
-        return '<li class="stk-row"><button data-stk="' + esc(x.code) + '" data-nm="' + esc(x.name) + '"><span class="stk-n">' + esc(x.name) + (x.index ? '' : ' <small class="muted">' + esc(x.code) + '</small>') + '</span>' +
-          '<span class="stk-p ' + stkCls(x.diff) + '"><b>' + stkNum(x.price, dec) + '</b><small>' + stkSign(x.diff) + ' ' + stkNum(Math.abs(x.diff || 0), dec) + ' (' + (x.rate > 0 ? '+' : '') + (x.rate == null ? '–' : x.rate.toFixed(2)) + '%)</small></span></button></li>';
+        var mine = list.filter(function (y) { return y.code === x.code; })[0] || {}, nm = x.error ? (mine.name || x.code) : x.name, tk = mine.ticker || x.code;
+        if (x.error) return '<li class="stk-row"><span class="stk-n">' + esc(nm) + '</span><span class="small muted" title="' + esc(x.error) + '">시세를 못 받았어요</span></li>';
+        return '<li class="stk-row"><button data-stk="' + esc(x.code) + '" data-nm="' + esc(nm) + '"><span class="stk-n">' + esc(nm) + ' <small class="muted">' + esc(tk) + (x.foreign ? ' · 해외' : '') + '</small></span>' +
+          '<span class="stk-p ' + stkCls(x.diff) + '"><b>' + stkMoney(x, x.price) + '</b><small>' + stkSign(x.diff) + ' ' + stkMoney(x, Math.abs(x.diff || 0)) + ' (' + (x.rate > 0 ? '+' : '') + (x.rate == null ? '–' : x.rate.toFixed(2)) + '%)</small></span></button></li>';
       };
-      el.innerHTML = '<div class="row-between"><div class="eyebrow">Stocks · 관심 종목</div><span class="actions"><span class="small muted">' + (open ? '<span class="stk-live"></span>장중 · 1분마다' : '장 마감 · 종가') + '</span><button class="btn btn-sm btn-ghost" id="stkEdit">종목 설정</button></span></div>' +
-        '<ul class="stk-list idx">' + idx.map(row).join('') + '</ul>' +
-        (st.length ? '<ul class="stk-list">' + st.map(row).join('') + '</ul>' : '<p class="muted small" style="margin:8px 0 0">"종목 설정"에서 보고 싶은 종목을 5개까지 넣어 보세요.</p>') +
+      el.innerHTML = head('<span class="small muted">' + (open ? '<span class="stk-live"></span>장중 · 1분마다' : '장 마감 · 종가') + '</span>') +
+        '<ul class="stk-list">' + q.map(row).join('') + '</ul>' +
         '<p class="hint" style="margin:6px 0 0">네이버 금융 기준 · ' + esc(String(r.at).slice(11, 16)) + ' 받음 · 누르면 3개월 그래프</p>';
       $('#stkEdit').onclick = openStockEdit;
       $$('[data-stk]', el).forEach(function (b) { b.onclick = function () { openStockChart(b.dataset.stk, b.dataset.nm, q.filter(function (x) { return x.code === b.dataset.stk; })[0]); }; });
       if (open) stockTimer = setTimeout(function tick() { if (state.view !== 'home' || !$('#hcStock')) return; if (document.hidden) stockTimer = setTimeout(tick, 60000); else homeStocks(); }, 60000);
     }).catch(function (err) {
       if (!$('#hcStock')) return;
-      el.innerHTML = '<div class="row-between"><div class="eyebrow">Stocks · 관심 종목</div><button class="btn btn-sm btn-ghost" id="stkEdit">종목 설정</button></div><p class="small" style="color:var(--red);margin:8px 0 0">' + esc(err.message) + '</p>';
+      el.innerHTML = head() + '<p class="small" style="color:var(--red);margin:8px 0 0">' + esc(err.message) + '</p>';
       $('#stkEdit').onclick = openStockEdit;
     });
   }
   function openStockEdit() {
     var list = myStocks();
     modal({ eyebrow: '관심 종목', title: '종목 설정 (최대 5개)',
-      body: '<div class="field"><label>종목 찾기</label><input class="input" id="skQ" placeholder="종목 이름 또는 6자리 코드 (예: 삼성전자, 005930)" autocomplete="off"></div><ul class="stk-found" id="skFound"></ul>' +
-        '<h4 style="margin:12px 0 6px">내 종목 <span class="muted small" id="skN"></span></h4><ul class="stk-mine" id="skMine"></ul><p class="hint" style="margin:8px 0 0">내 브라우저에만 저장돼요 (사람마다 따로). 코스피·코스닥 지수는 항상 같이 보여요.</p>',
+      body: '<div class="field"><label>종목 찾기</label><input class="input" id="skQ" placeholder="종목 이름·티커·6자리 코드 (예: 삼성전자, 애플, TSLA, 005930)" autocomplete="off"></div><ul class="stk-found" id="skFound"></ul>' +
+        '<h4 style="margin:12px 0 6px">내 종목 <span class="muted small" id="skN"></span></h4><ul class="stk-mine" id="skMine"></ul><p class="hint" style="margin:8px 0 0">국내·해외 섞어서 고를 수 있어요. 내 브라우저에만 저장돼요 (사람마다 따로).</p>',
       foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="skSave">저장</button>',
       onMount: function (m, close) {
         var drawMine = function () {
           $('#skN', m).textContent = list.length + ' / 5';
-          $('#skMine', m).innerHTML = list.length ? list.map(function (x, i) { return '<li><span><b>' + esc(x.name) + '</b> <small class="muted">' + esc(x.code) + '</small></span><span class="actions"><button class="btn btn-sm btn-ghost" data-up="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button class="btn btn-sm btn-ghost" data-rm="' + i + '">빼기</button></span></li>'; }).join('') : '<li class="muted small">아직 없어요.</li>';
+          $('#skMine', m).innerHTML = list.length ? list.map(function (x, i) { return '<li><span><b>' + esc(x.name) + '</b> <small class="muted">' + esc(x.ticker || x.code) + (x.foreign ? ' · 해외' : '') + '</small></span><span class="actions"><button class="btn btn-sm btn-ghost" data-up="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button class="btn btn-sm btn-ghost" data-rm="' + i + '">빼기</button></span></li>'; }).join('') : '<li class="muted small">아직 없어요.</li>';
           $$('[data-rm]', m).forEach(function (b) { b.onclick = function () { list.splice(+b.dataset.rm, 1); drawMine(); }; });
           $$('[data-up]', m).forEach(function (b) { b.onclick = function () { var i = +b.dataset.up; var t = list[i - 1]; list[i - 1] = list[i]; list[i] = t; drawMine(); }; });
         };
@@ -6542,8 +6550,8 @@
             $('#skFound', m).innerHTML = '<li class="muted small"><span class="spinner dark"></span> 찾는 중…</li>';
             api('stock.search', { q: v }).then(function (r) {
               if (my !== seq) return;
-              $('#skFound', m).innerHTML = r.items.length ? r.items.map(function (x, i) { var have = list.some(function (y) { return y.code === x.code; }); return '<li><button data-add="' + i + '"' + (have ? ' disabled' : '') + '><b>' + esc(x.name) + '</b> <small class="muted">' + esc(x.code) + (x.market ? ' · ' + esc(x.market) : '') + '</small><span>' + (have ? '추가됨' : '＋ 추가') + '</span></button></li>'; }).join('') : '<li class="muted small">찾는 종목이 없어요.</li>';
-              $$('[data-add]', m).forEach(function (b) { b.onclick = function () { if (list.length >= 5) return toast('5개까지 넣을 수 있어요.', 'err'); var x = r.items[+b.dataset.add]; list.push({ code: x.code, name: x.name }); b.disabled = true; b.lastChild.textContent = '추가됨'; drawMine(); }; });
+              $('#skFound', m).innerHTML = r.items.length ? r.items.map(function (x, i) { var have = list.some(function (y) { return y.code === x.code; }); return '<li><button data-add="' + i + '"' + (have ? ' disabled' : '') + '><b>' + esc(x.name) + '</b> <small class="muted">' + esc(x.ticker || x.code) + (x.market ? ' · ' + esc(x.market) : '') + '</small><span>' + (have ? '추가됨' : '＋ 추가') + '</span></button></li>'; }).join('') : '<li class="muted small">찾는 종목이 없어요.</li>';
+              $$('[data-add]', m).forEach(function (b) { b.onclick = function () { if (list.length >= 5) return toast('5개까지 넣을 수 있어요.', 'err'); var x = r.items[+b.dataset.add]; list.push({ code: x.code, name: x.name, ticker: x.ticker || x.code, foreign: !!x.foreign }); b.disabled = true; b.lastChild.textContent = '추가됨'; drawMine(); }; });
             }).catch(function (err) { if (my === seq) $('#skFound', m).innerHTML = '<li class="small" style="color:var(--red)">' + esc(err.message) + '</li>'; });
           }, 300);
         };
@@ -6552,11 +6560,12 @@
       } });
   }
   function openStockChart(code, name, q) {
-    modal({ wide: true, eyebrow: '관심 종목', title: name + (q && !q.index ? ' (' + code + ')' : ''),
-      body: (q && !q.error ? '<div class="stk-head"><b class="' + stkCls(q.diff) + '">' + stkNum(q.price, q.index ? 2 : 0) + '</b><span class="' + stkCls(q.diff) + '">' + stkSign(q.diff) + ' ' + stkNum(Math.abs(q.diff || 0), q.index ? 2 : 0) + ' (' + (q.rate > 0 ? '+' : '') + (q.rate == null ? '–' : q.rate.toFixed(2)) + '%)</span>' +
-        (q.index ? '' : '<span class="small muted">시가 ' + stkNum(q.open) + ' · 고가 ' + stkNum(q.high) + ' · 저가 ' + stkNum(q.low) + ' · 거래량 ' + stkNum(q.volume) + '</span>') + '</div>' : '') +
+    var fx = q && q.foreign, mine = myStocks().filter(function (y) { return y.code === code; })[0] || {};
+    modal({ wide: true, eyebrow: '관심 종목' + (fx ? ' · 해외' : ''), title: name + ' (' + (mine.ticker || code) + ')',
+      body: (q && !q.error ? '<div class="stk-head"><b class="' + stkCls(q.diff) + '">' + stkMoney(q, q.price) + '</b><span class="' + stkCls(q.diff) + '">' + stkSign(q.diff) + ' ' + stkMoney(q, Math.abs(q.diff || 0)) + ' (' + (q.rate > 0 ? '+' : '') + (q.rate == null ? '–' : q.rate.toFixed(2)) + '%)</span>' +
+        '<span class="small muted">시가 ' + stkMoney(q, q.open) + ' · 고가 ' + stkMoney(q, q.high) + ' · 저가 ' + stkMoney(q, q.low) + (q.volume != null ? ' · 거래량 ' + stkNum(q.volume) : '') + '</span></div>' : '') +
         '<div id="skChart" class="stk-chart"><p class="muted"><span class="spinner dark"></span> 그래프 불러오는 중…</p></div>' +
-        '<p class="hint" style="margin:6px 0 0">최근 3개월 일별 종가 · 네이버 금융 · <a href="https://m.stock.naver.com/domestic/' + (q && q.index ? 'index/' : 'stock/') + esc(code) + '/total" target="_blank" rel="noopener">네이버 증권에서 보기 ↗</a></p>',
+        '<p class="hint" style="margin:6px 0 0">최근 3개월 일별 종가 · 네이버 금융 · <a href="https://m.stock.naver.com/' + (fx ? 'worldstock/stock/' : 'domestic/stock/') + esc(code) + '/total" target="_blank" rel="noopener">네이버 증권에서 보기 ↗</a></p>',
       onMount: function (m) {
         api('stock.chart', { code: code }).then(function (r) {
           var box = $('#skChart', m); if (!box) return;
@@ -6567,7 +6576,7 @@
           var line = pts.map(function (p, i) { return (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(p.c).toFixed(1); }).join('');
           var ticks = [0, Math.floor(pts.length / 2), pts.length - 1];
           box.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" class="stk-svg">' +
-            [hi, (hi + lo) / 2, lo].map(function (v) { return '<line x1="' + P + '" x2="' + (W - 8) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--line)" stroke-dasharray="3 3"/><text x="' + (P - 4) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="11" fill="var(--muted)">' + stkNum(v) + '</text>'; }).join('') +
+            [hi, (hi + lo) / 2, lo].map(function (v) { return '<line x1="' + P + '" x2="' + (W - 8) + '" y1="' + y(v) + '" y2="' + y(v) + '" stroke="var(--line)" stroke-dasharray="3 3"/><text x="' + (P - 4) + '" y="' + (y(v) + 4) + '" text-anchor="end" font-size="11" fill="var(--muted)">' + stkNum(v, fx ? 2 : 0) + '</text>'; }).join('') +
             '<path d="' + line + 'L' + x(pts.length - 1) + ',' + (H - 30) + 'L' + P + ',' + (H - 30) + 'Z" fill="' + col + '" opacity=".08"/><path d="' + line + '" fill="none" stroke="' + col + '" stroke-width="2"/>' +
             ticks.map(function (i) { return '<text x="' + x(i) + '" y="' + (H - 12) + '" text-anchor="middle" font-size="11" fill="var(--muted)">' + pts[i].d.slice(5).replace('-', '/') + '</text>'; }).join('') + '</svg>';
         }).catch(function (err) { var box = $('#skChart', m); if (box) box.innerHTML = '<p class="small" style="color:var(--red)">' + esc(err.message) + '</p>'; });
@@ -7033,7 +7042,7 @@
     sec.unshift(['info', '물류 정보', [
       '<b>유가</b>: 오피넷 전국 평균 경유가를 주식 화면처럼 기간별(1주~전체) 그래프로 봅니다. 그래프에 마우스를 올리면 그날 가격과 전일 대비가 나와요.',
       '<b>뉴스</b>: 화물연대·안전운임·유가 같은 물류 업계 이슈를 구글 뉴스에서 30분마다 모아요. 키워드별로 걸러 보고, 제목을 누르면 원문이 열립니다. ⭐는 관심 업체 기사예요.',
-      '<b>관심 종목</b>: 홈 화면 카드의 <b>종목 설정</b>에서 5개까지 골라요 (사람마다 따로 저장). 코스피·코스닥 지수와 함께 장중에는 1분마다 새로 받고, 누르면 3개월 그래프가 나와요. 네이버 금융 시세라 가끔 안 나올 수 있어요.',
+      '<b>관심 종목</b>: 홈 화면 카드의 <b>종목 설정</b>에서 국내·해외 종목을 5개까지 골라요 (사람마다 따로 저장). 장중(미국 종목은 한국 시간 밤)에는 1분마다 새로 받고, 누르면 3개월 그래프가 나와요. 네이버 금융 시세라 가끔 안 나올 수 있어요.',
       '<b>날씨</b>: 경기·충청·전라·강원·경상 도별 오늘·내일·모레 날씨. 눈·많은 비·강풍처럼 운행에 영향을 줄 날씨는 맨 위 "운행 주의"에 모아 보여요.'
     ].concat(adm ? ['뉴스 키워드(모을 키워드·관심 업체·제외 단어)는 뉴스 탭의 <b>키워드 설정</b>에서 바꿉니다.'] : [])]);
     sec.unshift(['cal', '일정 · 할 일 · 휴가', [

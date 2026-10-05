@@ -2638,61 +2638,76 @@ function news_(force) {
 /* ───────────── 주식 시세 (네이버 금융, 1분 캐시) ─────────────
  * 비공식 주소라 바뀌면 오류 문구가 화면에 그대로 나옴 → 여기만 고치면 됨 */
 var STOCK_UA = { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://m.stock.naver.com/' };
-var STOCK_INDEX = { KOSPI: '코스피', KOSDAQ: '코스닥' };
+var STOCK_CUR = { USD: '$', JPY: '¥', CNY: '¥', HKD: 'HK$', EUR: '€', GBP: '£' };
 function stockNum_(v) { var n = Number(String(v == null ? '' : v).replace(/[,%\s+]/g, '')); return isFinite(n) ? n : null; }
-function stockParse_(code, json, isIndex) {
-  var d = (json && (json.datas || json.result && json.result.areas && json.result.areas[0] && json.result.areas[0].datas) || [])[0];
+/** 국내: 6자리 숫자 · 해외: 네이버 로이터 코드 (예: AAPL.O, TSLA.O, 7203.T) */
+function stockForeign_(code) { return !/^\d{6}$/.test(code); }
+function stockCodeOk_(code) { return /^\d{6}$/.test(code) || /^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$/.test(code); }
+function stockParse_(code, json) {
+  var d = (json && json.datas || [])[0];
   if (!d) throw new Error('시세 형식이 바뀌었어요');
-  var price = stockNum_(d.closePrice != null ? d.closePrice : d.nv), diff = stockNum_(d.compareToPreviousClosePrice != null ? d.compareToPreviousClosePrice : d.cv);
-  var rate = stockNum_(d.fluctuationsRatio != null ? d.fluctuationsRatio : d.cr);
   var dir = d.compareToPreviousPrice && d.compareToPreviousPrice.name || '';
+  var diff = stockNum_(d.compareToPreviousClosePrice), rate = stockNum_(d.fluctuationsRatio);
   if (diff != null && /FALL|LOWER/.test(dir) && diff > 0) diff = -diff;
   if (rate != null && /FALL|LOWER/.test(dir) && rate > 0) rate = -rate;
-  return { code: code, name: isIndex ? STOCK_INDEX[code] || code : String(d.stockName || d.nm || code), price: price, diff: diff, rate: rate, index: !!isIndex,
-    open: stockNum_(d.openPrice), high: stockNum_(d.highPrice), low: stockNum_(d.lowPrice), volume: stockNum_(d.accumulatedTradingVolume),
-    market: String(d.marketStatus || ''), at: String(d.localTradedAt || '') };
+  var foreign = stockForeign_(code), cur = foreign ? String(d.currencyType && d.currencyType.code || 'USD') : 'KRW';
+  return { code: code, name: String(d.stockName || d.stockNameEng || code), foreign: foreign, cur: cur, sym: foreign ? (STOCK_CUR[cur] || cur + ' ') : '',
+    price: stockNum_(d.closePrice), diff: diff, rate: rate, open: stockNum_(d.openPrice), high: stockNum_(d.highPrice), low: stockNum_(d.lowPrice),
+    volume: stockNum_(d.accumulatedTradingVolume), market: String(d.marketStatus || ''), at: String(d.localTradedAt || '') };
 }
-/** codes: 6자리 종목코드 (최대 5) · 지수(코스피·코스닥)는 항상 같이 */
+/** 내가 고른 종목만 (최대 5) */
 function stockQuotes_(codes) {
-  codes = (codes || []).map(function (c) { return String(c).replace(/\D/g, ''); }).filter(function (c) { return /^\d{6}$/.test(c); }).slice(0, 5);
-  var keys = ['KOSPI', 'KOSDAQ'].concat(codes), cache = CacheService.getScriptCache(), hit = cache.getAll(keys.map(function (k) { return 'STK_' + k; })), out = {}, need = [];
+  var keys = (codes || []).map(function (c) { return String(c).trim(); }).filter(stockCodeOk_).slice(0, 5);
+  var cache = CacheService.getScriptCache(), hit = keys.length ? cache.getAll(keys.map(function (k) { return 'STK_' + k; })) : {}, out = {}, need = [];
   keys.forEach(function (k) { var v = hit['STK_' + k]; if (v) out[k] = JSON.parse(v); else need.push(k); });
   if (need.length) {
-    var reqs = need.map(function (k) { return { url: 'https://polling.finance.naver.com/api/realtime/domestic/' + (STOCK_INDEX[k] ? 'index/' : 'stock/') + k, headers: STOCK_UA, muteHttpExceptions: true }; });
-    var res = UrlFetchApp.fetchAll(reqs), put = {};
+    var res = UrlFetchApp.fetchAll(need.map(function (k) { return { url: 'https://polling.finance.naver.com/api/realtime/' + (stockForeign_(k) ? 'worldstock/stock/' : 'domestic/stock/') + encodeURIComponent(k), headers: STOCK_UA, muteHttpExceptions: true }; })), put = {};
     res.forEach(function (r, i) {
       var k = need[i];
       try {
         if (r.getResponseCode() !== 200) throw new Error('응답 ' + r.getResponseCode());
-        out[k] = stockParse_(k, JSON.parse(r.getContentText()), !!STOCK_INDEX[k]);
-        put['STK_' + k] = JSON.stringify(out[k]);
-      } catch (e) { out[k] = { code: k, name: STOCK_INDEX[k] || k, error: e.message, index: !!STOCK_INDEX[k] }; }
+        out[k] = stockParse_(k, JSON.parse(r.getContentText())); put['STK_' + k] = JSON.stringify(out[k]);
+      } catch (e) { out[k] = { code: k, name: k, foreign: stockForeign_(k), error: e.message }; }
     });
     if (Object.keys(put).length) cache.putAll(put, 60);
   }
   return { quotes: keys.map(function (k) { return out[k]; }), at: now_() };
 }
+/** 국내·해외 종목 찾기 */
 function stockSearch_(q) {
   q = String(q || '').trim(); if (!q) return { items: [] };
-  if (/^\d{6}$/.test(q)) { var one = stockQuotes_([q]).quotes[2]; return { items: one && !one.error ? [{ code: q, name: one.name, market: '' }] : [] }; }
-  var key = 'STKQ_' + encodeURIComponent(q).slice(0, 200), cache = CacheService.getScriptCache(), hit = cache.get(key);
+  if (/^\d{6}$/.test(q)) { var one = stockQuotes_([q]).quotes[0]; return { items: one && !one.error ? [{ code: q, name: one.name, market: '', ticker: q }] : [] }; }
+  var key = 'STKQ2_' + encodeURIComponent(q).slice(0, 200), cache = CacheService.getScriptCache(), hit = cache.get(key);
   if (hit) return JSON.parse(hit);
   var r = UrlFetchApp.fetch('https://ac.stock.naver.com/ac?q=' + encodeURIComponent(q) + '&target=stock', { headers: STOCK_UA, muteHttpExceptions: true });
   if (r.getResponseCode() !== 200) throw new Error('종목 검색 응답 ' + r.getResponseCode());
-  var j = JSON.parse(r.getContentText()), items = (j.items || []).filter(function (x) { return (x.nationCode || 'KOR') === 'KOR' && /^\d{6}$/.test(String(x.code || '')); })
-    .slice(0, 10).map(function (x) { return { code: String(x.code), name: String(x.name), market: String(x.typeName || x.typeCode || '') }; });
+  var j = JSON.parse(r.getContentText()), items = (j.items || []).map(function (x) {
+    var kor = (x.nationCode || 'KOR') === 'KOR', code = kor ? String(x.code || '') : String(x.reutersCode || x.code || '');
+    if (kor && !/^\d{6}$/.test(code)) return null;
+    if (!kor && !stockCodeOk_(code)) return null;
+    return { code: code, name: String(x.name || code), ticker: String(x.code || code), market: String(x.typeName || x.typeCode || '') + (kor ? '' : ' · ' + String(x.nationName || x.nationCode || '해외')), foreign: !kor };
+  }).filter(Boolean).slice(0, 12);
   var out = { items: items }; cache.put(key, JSON.stringify(out), 86400); return out;
 }
-/** 최근 3개월 일봉 (종가) */
+/** 최근 3개월 일별 종가 */
 function stockChart_(code) {
-  code = String(code || ''); var isIdx = !!STOCK_INDEX[code];
-  if (!isIdx && !/^\d{6}$/.test(code)) throw new Error('종목 코드를 확인하세요.');
+  code = String(code || '').trim(); if (!stockCodeOk_(code)) throw new Error('종목 코드를 확인하세요.');
   var key = 'STKC_' + code, cache = CacheService.getScriptCache(), hit = cache.get(key);
   if (hit) return JSON.parse(hit);
-  var r = UrlFetchApp.fetch('https://fchart.stock.naver.com/sise.nhn?symbol=' + code + '&timeframe=day&count=70&requestType=0', { headers: STOCK_UA, muteHttpExceptions: true });
-  if (r.getResponseCode() !== 200) throw new Error('차트 응답 ' + r.getResponseCode());
-  var re = /data="([^"]+)"/g, m, pts = [];
-  while ((m = re.exec(r.getContentText()))) { var f = m[1].split('|'); if (f.length >= 5) pts.push({ d: f[0].slice(0, 4) + '-' + f[0].slice(4, 6) + '-' + f[0].slice(6, 8), c: Number(f[4]) }); }
+  var pts = [];
+  if (!stockForeign_(code)) {
+    var r = UrlFetchApp.fetch('https://fchart.stock.naver.com/sise.nhn?symbol=' + code + '&timeframe=day&count=70&requestType=0', { headers: STOCK_UA, muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error('차트 응답 ' + r.getResponseCode());
+    var re = /data="([^"]+)"/g, m;
+    while ((m = re.exec(r.getContentText()))) { var f = m[1].split('|'); if (f.length >= 5) pts.push({ d: f[0].slice(0, 4) + '-' + f[0].slice(4, 6) + '-' + f[0].slice(6, 8), c: Number(f[4]) }); }
+  } else {
+    var end = new Date(), start = new Date(end.getTime() - 100 * 86400000), fmt = function (d) { return Utilities.formatDate(d, 'UTC', 'yyyyMMdd') + '0000'; };
+    var r2 = UrlFetchApp.fetch('https://api.stock.naver.com/chart/foreign/item/' + encodeURIComponent(code) + '/day?startDateTime=' + fmt(start) + '&endDateTime=' + fmt(end), { headers: STOCK_UA, muteHttpExceptions: true });
+    if (r2.getResponseCode() !== 200) throw new Error('차트 응답 ' + r2.getResponseCode());
+    var j = JSON.parse(r2.getContentText()), arr = Array.isArray(j) ? j : (j.priceInfos || []);
+    arr.forEach(function (x) { var d = String(x.localDate || x.localTradedAt || '').replace(/\D/g, '').slice(0, 8), c = stockNum_(x.closePrice); if (d.length === 8 && c != null) pts.push({ d: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8), c: c }); });
+    pts = pts.slice(-70);
+  }
   var out = { code: code, points: pts }; cache.put(key, JSON.stringify(out), 1800); return out;
 }
 
