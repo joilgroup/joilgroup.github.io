@@ -387,7 +387,14 @@ function updateUser_(session, id, patch) {
   if (id === session.id && (patch.active === false || patch.role === 'user')) throw new Error('본인 계정은 중지하거나 권한을 낮출 수 없습니다.');
   if (patch.hasOwnProperty('active')) setUserCell_(u.row, '사용여부', patch.active ? '사용' : '중지');
   if (patch.role) setUserCell_(u.row, '권한', patch.role === 'admin' ? 'admin' : 'user');
-  if (patch.name) setUserCell_(u.row, '이름', String(patch.name));
+  if (patch.name != null) {
+    var nm = String(patch.name).trim().slice(0, 30); if (!nm) throw new Error('이름을 넣으세요.');
+    var oldName = String(u.data['이름']);
+    setUserCell_(u.row, '이름', nm);
+    var st = calStaff_(), ch = false; // 직원 목록에서 이 계정과 연결된 직원 이름도 같이
+    st.forEach(function (s) { if (s.account === String(id) && s.name !== nm) { s.name = nm; ch = true; } });
+    if (ch) { if (st.filter(function (s) { return s.name === nm; }).length > 1) { setUserCell_(u.row, '이름', oldName); throw new Error('직원 목록에 "' + nm + '" 이름이 이미 있어요.'); } staffWrite_(st); CAL_LINK_ = null; }
+  }
   if (Array.isArray(patch.perms)) setUserCell_(u.row, '메뉴권한', permsToCell_(patch.perms));
   dropUserCache_(id);
   return {};

@@ -1689,7 +1689,7 @@
       index: null, mapping: {}, businesses: [], rows: null, loading: false, loaded: 0, total: 0, error: null,
       f: { from: '', to: '', biz: [], sel: {}, q: '' }, dim: 'cust', sort: { key: 'sales', dir: -1 }, groupLimit: 50, groupQ: '',
       detailPage: 0, detailSort: -1, view: 'month',
-      cmp: 'prev', trendMode: 'profit', routeWeight: true, minN: 1, alert: { drop: 3, minSales: 1000000 },
+      cmp: 'prev', trendMode: 'profit', routeWeight: true, minN: 90, alert: { drop: 3, minSales: 1000000 },
       anom: { kind: 'buy', th: 20, minN: 3, limit: 30 }
     };
   }
@@ -3235,7 +3235,7 @@
       '<div class="tabs-line" id="anDims">' + AN_DIMS.filter(function (d) { return d[0] !== 'cat' || (an.hasCats && f.withCats); }).map(function (d) { return '<button type="button" data-d="' + d[0] + '" class="' + (d[0] === dim ? 'on' : '') + '">' + d[1] + ((f.sel[d[0]] || []).length ? ' <span class="cnt">' + f.sel[d[0]].length + '</span>' : '') + '</button>'; }).join('') + '</div>' +
       '<div class="toolbar">' +
       '<div class="chips" id="anPresets">' + SORT_PRESETS.filter(function (p) { return p[0] !== 'drate' || hasCmp; }).map(function (p, i) { return '<button type="button" class="chip' + (presetOn(p) ? ' on' : '') + '" data-pi="' + SORT_PRESETS.indexOf(p) + '">' + p[2] + '</button>'; }).join('') + '</div>' +
-      '<span class="small muted" style="margin-left:auto">최소 건수</span><select class="input input-sm" id="anMinN" style="width:auto">' + [1, 2, 3, 5, 10, 20].map(function (n) { return '<option' + (an.minN === n ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select>' +
+      '<span class="small muted" style="margin-left:auto">최소 건수</span><select class="input input-sm" id="anMinN" style="width:auto">' + [1, 30, 60, 90].map(function (n) { return '<option' + (an.minN === n ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select>' +
       (isRoute ? '<label class="toggle small"><input type="checkbox" id="anRouteW"' + (an.routeWeight ? ' checked' : '') + '><span class="track"></span>중량까지 나누기</label>' : '') +
       '</div>' +
       '<div class="table-wrap"><table class="data grp"><thead><tr>' + th('name', esc(def[1]), true) + th('n', '건수') + th('sales', '매출') + th('buys', '매입') + th('profit', '이익') + th('rate', '이익률') +
@@ -3309,18 +3309,18 @@
     var pages = Math.max(1, Math.ceil(sorted.length / PAGE_N));
     if (an.detailPage >= pages) an.detailPage = 0;
     var page = sorted.slice(an.detailPage * PAGE_N, (an.detailPage + 1) * PAGE_N);
-    var heads = ['날짜', '사업자', '매출처', '발지', '착지', '중량', '매출', '매입', '이익', '차량번호', '기사명', '차량전화', '기타1', '비고'];
+    var heads = ['날짜', '매출처', '발지', '착지', '중량', '매출', '매입', '이익', '차량번호', '기사명', '차량전화', '기타1', '비고'];
     $('#anDetail').innerHTML =
       '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px"><div><div class="eyebrow">Rows · 상세 내역</div><h3>' + won(rows.length) + '건</h3></div>' +
       '<div class="actions"><button class="btn btn-sm" id="anDSort">날짜 ' + (an.detailSort < 0 ? '최신순 ▼' : '오래된순 ▲') + '</button><button class="btn btn-sm btn-primary" id="anDX"' + (rows.length ? '' : ' disabled') + '>엑셀 다운로드 (' + won(rows.length) + '건)</button></div></div>' +
-      '<div class="bulk-table" style="max-height:64vh"><table class="data bulk detailt"><thead><tr>' + heads.map(function (h, i) { return '<th class="' + (i < 6 || i > 8 ? 'left' : '') + '">' + h + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      '<div class="bulk-table" style="max-height:64vh"><table class="data bulk detailt"><thead><tr>' + heads.map(function (h, i) { return '<th class="' + (i < 5 || i > 7 ? 'left' : '') + '">' + h + '</th>'; }).join('') + '</tr></thead><tbody>' +
       (page.map(function (r) {
         var p = r[C.sales] - r[C.buys];
-        return '<tr><td class="left small">' + esc(r[C.date]) + '</td><td class="left small">' + esc(r[C.biz]) + '</td><td class="left wrap">' + esc(r[C.disp]) + '</td>' +
+        return '<tr><td class="left small">' + esc(r[C.date]) + '</td><td class="left wrap">' + esc(r[C.disp]) + '</td>' +
           '<td class="left wrap">' + esc(r[C.from]) + '</td><td class="left wrap">' + esc(r[C.to]) + '</td><td class="left">' + esc(r[C.weight]) + '</td>' +
           '<td class="num">' + won(r[C.sales]) + '</td><td class="num">' + won(r[C.buys]) + '</td><td class="num' + (p < 0 ? ' neg' : '') + '">' + won(p) + '</td>' +
           '<td class="left">' + esc(r[C.car]) + '</td><td class="left">' + esc(r[C.driver]) + '</td><td class="left small">' + esc(r[C.phone]) + '</td><td class="left small wrap">' + esc(r[C.etc]) + '</td><td class="left small wrap">' + esc(r[C.note]) + '</td></tr>';
-      }).join('') || '<tr><td colspan="14" class="left muted" style="padding:20px">조건에 맞는 내역이 없습니다.</td></tr>') +
+      }).join('') || '<tr><td colspan="13" class="left muted" style="padding:20px">조건에 맞는 내역이 없습니다.</td></tr>') +
       '</tbody></table></div>' +
       (pages > 1 ? '<div class="pager" style="margin-top:12px">' + pagerButtons(an.detailPage, pages) + '</div>' : '');
     $('#anDSort').onclick = function () { an.detailSort *= -1; an.detailPage = 0; drawDetail(rows); };
@@ -3829,6 +3829,7 @@
           '<td style="text-align:left"><span class="status-pill ' + (u.active ? 'ok' : 'no') + '">' + (u.active ? '사용' : '중지') + '</span>' + (u.mustChange ? ' <span class="badge off">비번 변경 대기</span>' : '') + '</td>' +
           '<td class="small muted">' + esc(u.lastLogin || '–') + '</td>' +
           '<td><div class="actions" style="justify-content:flex-end">' +
+          '<button class="btn btn-sm" data-rename="' + esc(u.id) + '">이름 바꾸기</button>' +
           (self ? '<span class="small muted">본인</span>' :
             '<button class="btn btn-sm" data-reset="' + esc(u.id) + '">비번 초기화</button>' +
             '<button class="btn btn-sm ' + (u.active ? 'btn-danger' : '') + '" data-toggle="' + esc(u.id) + '" data-active="' + (u.active ? 1 : 0) + '">' + (u.active ? '사용 중지' : '다시 사용') + '</button>') +
@@ -3865,6 +3866,20 @@
         busy(b, true, '…');
         api('admin.resetPassword', { id: id }).then(function (r) {
           refreshUsers(); showTemp('비밀번호를 초기화했습니다', id, r.tempPassword);
+        }).catch(function (err) { busy(b, false); toast(err.message, 'err'); });
+      };
+    });
+    $$('[data-rename]', body).forEach(function (b) {
+      b.onclick = function () {
+        var u = a.users.filter(function (x) { return x.id === b.dataset.rename; })[0];
+        var nm = prompt(u.id + ' 계정의 새 이름 (홈 화면에 "이름님, 안녕하세요"로 나와요)', u.name);
+        if (nm == null) return; nm = nm.trim();
+        if (!nm || nm === u.name) return;
+        busy(b, true, '…');
+        api('admin.updateUser', { id: u.id, patch: { name: nm } }).then(function () {
+          toast('이름을 "' + nm + '"(으)로 바꿨어요. 그 사람이 다시 로그인하면 보여요.');
+          if (u.id === state.user.id) { state.user.name = nm; }
+          state.cal.data = null; refreshUsers();
         }).catch(function (err) { busy(b, false); toast(err.message, 'err'); });
       };
     });

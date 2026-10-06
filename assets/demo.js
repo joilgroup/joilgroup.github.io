@@ -646,7 +646,8 @@
         if (uu.id === me.id && (p.active === false || p.role === 'user')) fail('본인 계정은 중지하거나 권한을 낮출 수 없습니다.');
         if (p.hasOwnProperty('active')) uu.active = !!p.active;
         if (p.role) uu.role = p.role === 'admin' ? 'admin' : 'user';
-        if (Array.isArray(p.perms)) uu.perms = p.perms.filter(function (x) { return x === 'quote' || x === 'analysis'; });
+        if (Array.isArray(p.perms)) uu.perms = p.perms.filter(function (x) { return x === 'quote' || x === 'analysis' || x === 'search'; });
+        if (p.name != null) { var nn = String(p.name).trim().slice(0, 30); if (!nn) fail('이름을 넣으세요.'); uu.name = nn; calStore().staff.forEach(function (x) { if (x.account === uu.id) x.name = nn; }); }
         save(); return {};
       case 'admin.resetPassword':
         var ru = user(req.id), tp = temp(); ru.pw = tp; ru.mustChange = true; save(); return { tempPassword: tp };
