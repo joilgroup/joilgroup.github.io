@@ -131,10 +131,29 @@
     return { cust: String(n.cust).trim(), month: n.month, kind: n.kind || '기타', target: n.target || '매출', change: n.change || '', basis: n.basis || '', memo: n.memo || '', from: n.from || '', to: n.to || '', weight: n.weight || '' };
   }
   var reqFiles = {};
-  function reqOut(r) {
-    var o = JSON.parse(JSON.stringify(r)); o.files = (r.files || []).map(function (f) { var c = JSON.parse(JSON.stringify(f)); return c; });
+  function canCost(me) { return me.role === 'admin' || (me.perms || []).indexOf('analysis') !== -1; }
+  function reqOut(r, me) {
+    var o = JSON.parse(JSON.stringify(r)); o.files = (r.files || []).map(function (f) { var c = JSON.parse(JSON.stringify(f)); c.stepId = c.stepId || ''; return c; });
     if (o.quoteId) { var q = store.quotes.filter(function (x) { return x.id === o.quoteId; })[0]; o.quote = q ? { id: q.id, name: q.name, status: q.status } : null; }
+    var see = !me || canCost(me);
+    o.steps = (r.steps || []).map(function (x) { var c = JSON.parse(JSON.stringify(x)); if (!see) { delete c.cost; c.costHidden = true; } return c; }).sort(function (a, b) { return (a.date || '9999') < (b.date || '9999') ? -1 : (a.date || '9999') > (b.date || '9999') ? 1 : a.at < b.at ? -1 : 1; });
+    o.canCost = see; o.prevId = o.prevId || ''; o.linkType = o.linkType || ''; o.contact = o.contact || '';
+    if (o.prevId) { var pv = (store.reqs || []).filter(function (x) { return x.id === o.prevId; })[0]; o.prev = pv ? { id: pv.id, title: pv.title, cust: pv.cust, received: pv.received, status: pv.status } : null; }
+    o.next = (store.reqs || []).filter(function (x) { return x.prevId === r.id; }).map(function (x) { return { id: x.id, title: x.title, linkType: x.linkType, received: x.received, status: x.status }; });
     return { req: o };
+  }
+  var STEP_KINDS_D = ['요청 받음', '수정 요청', '할인 요청', '협력사 견적', '회신', '제출', '수주', '미수주', '메모'];
+  function stepClean(x) {
+    x = x || {}; var d = String(x.date || '').trim(); if (d && !/^\d{4}-\d{2}-\d{2}$/.test(d)) fail('날짜 형식은 YYYY-MM-DD 입니다: ' + d);
+    var num = function (v) { if (v === '' || v == null) return null; var n = Number(String(v).replace(/[,\s원]/g, '')); if (!isFinite(n) || n < 0) fail('금액을 확인하세요.'); return n; };
+    return { date: d, kind: STEP_KINDS_D.indexOf(x.kind) !== -1 ? x.kind : '메모', text: String(x.text || ''), amount: num(x.amount), partner: String(x.partner || '').trim(), cost: num(x.cost) };
+  }
+  function stepApply(r, v, me) {
+    var st = r.status || '접수', ns = st;
+    if (v.kind === '제출') { if (['접수', '검토중', '보류'].indexOf(st) !== -1) ns = '제출'; if (v.date && v.date > (r.submitted || '')) r.submitted = v.date; }
+    else if (v.kind === '수주' || v.kind === '미수주') ns = v.kind;
+    else if ((v.kind === '수정 요청' || v.kind === '할인 요청') && st === '제출') ns = '검토중';
+    if (ns !== st) { r.status = ns; r.log.push({ at: today(), by: me.name, text: '상태 ' + st + ' → ' + ns + ' (' + v.kind + ' 단계)' }); }
   }
   function docMeta(m) {
     var name = String(m.name || '').trim(); if (!name) fail('서류명을 입력하세요.');
@@ -526,14 +545,37 @@
         save(); return { count: (req.rows || []).length, notes: notesSorted() };
       case 'notes.delete': store.notes = (store.notes || []).filter(function (x) { return x.id !== req.id; }); save(); return { notes: notesSorted() };
       case 'reqs.list':
-        return { reqs: (store.reqs || []).slice().reverse().map(function (r) { var o = JSON.parse(JSON.stringify(r)); o.snippet = String(r.body || '').replace(/\s+/g, ' ').slice(0, 120); o.files = { in: (r.files || []).filter(function (f) { return f.kind !== '제출'; }).length, out: (r.files || []).filter(function (f) { return f.kind === '제출'; }).length }; delete o.body; delete o.log; return o; }) };
+        return { reqs: (store.reqs || []).slice().reverse().map(function (r) { var o = JSON.parse(JSON.stringify(r)); o.snippet = String(r.body || '').replace(/\s+/g, ' ').slice(0, 120); o.files = { in: (r.files || []).filter(function (f) { return f.kind !== '제출'; }).length, out: (r.files || []).filter(function (f) { return f.kind === '제출'; }).length }; var ss = r.steps || []; o.steps = { n: ss.length, submit: ss.filter(function (x) { return x.kind === '제출'; }).length, discount: ss.filter(function (x) { return x.kind === '할인 요청'; }).length, revise: ss.filter(function (x) { return x.kind === '수정 요청'; }).length, partner: ss.filter(function (x) { return x.kind === '협력사 견적'; }).length }; o.prevId = r.prevId || ''; o.linkType = r.linkType || ''; o.contact = r.contact || ''; delete o.body; delete o.log; return o; }) };
       case 'reqs.get':
         var gr = (store.reqs || []).filter(function (x) { return x.id === req.id; })[0]; if (!gr) fail('접수 건을 찾을 수 없습니다.');
-        return reqOut(gr);
+        return reqOut(gr, me);
+      case 'reqs.stepSave':
+        var sr = (store.reqs || []).filter(function (x) { return x.id === req.reqId; })[0]; if (!sr) fail('접수 건을 찾을 수 없습니다.');
+        var sv = stepClean(req.step); sr.steps = sr.steps || [];
+        if (req.id) { var so = sr.steps.filter(function (x) { return x.id === req.id; })[0]; if (!so) fail('단계를 찾을 수 없습니다.'); var keep = so.cost; Object.assign(so, sv); if (!canCost(me)) so.cost = keep; sr.log.push({ at: today(), by: me.name, text: '진행 기록 수정: ' + sv.kind }); }
+        else { if (!canCost(me)) sv.cost = null; sr.steps.push(Object.assign({ id: 'P' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5), reqId: sr.id, by: me.name, at: today() }, sv)); sr.log.push({ at: today(), by: me.name, text: '진행 기록 추가: ' + sv.kind }); }
+        stepApply(sr, sv, me); save(); return reqOut(sr, me);
+      case 'reqs.stepDelete':
+        var dr2 = (store.reqs || []).filter(function (x) { return (x.steps || []).some(function (y) { return y.id === req.id; }); })[0]; if (!dr2) fail('단계를 찾을 수 없습니다.');
+        dr2.steps = dr2.steps.filter(function (y) { return y.id !== req.id; }); dr2.files.forEach(function (f) { if (f.stepId === req.id) f.stepId = ''; }); save(); return reqOut(dr2, me);
+      case 'reqs.import':
+        store.reqs = store.reqs || []; var have = {}, byKey = {}, ri = { added: 0, skipped: 0, steps: 0 };
+        store.reqs.forEach(function (x) { have[String(x.title).trim() + '|' + (x.received || '')] = x.id; });
+        (req.items || []).forEach(function (it, i) {
+          var t = String(it.title || '').trim(); if (!t) fail((i + 1) + '번째 견적: 제목을 입력하세요.');
+          var k = t + '|' + (it.received || ''); if (have[k]) { ri.skipped++; if (it.key) byKey[it.key] = have[k]; return; }
+          var nr = { id: 'Q' + Date.now().toString(36) + i, by: me.name + ' (' + me.id + ')', at: today(), files: [], log: [{ at: today(), by: me.name, text: '가져오기로 등록' }], biz: '', cust: String(it.cust || '(거래처 미정)'), title: t, body: String(it.body || ''), received: it.received || '', due: it.due || '',
+            status: ['접수', '검토중', '제출', '수주', '미수주', '보류'].indexOf(it.status) !== -1 ? it.status : '접수', submitted: '', summary: '', quoteId: '', owner: '', contact: String(it.contact || ''), prevId: it.prev ? byKey[it.prev] || '' : '', linkType: '', steps: [] };
+          if (nr.prevId) nr.linkType = ['수정 요청', '재계약', '관련 건'].indexOf(it.prevType) !== -1 ? it.prevType : '관련 건';
+          (it.steps || []).forEach(function (x, j) { var v = stepClean(x); if (!canCost(me)) v.cost = null; nr.steps.push(Object.assign({ id: 'P' + Date.now().toString(36) + i + '_' + j, reqId: nr.id, by: me.name, at: today() }, v)); if (v.kind === '제출' && v.date > nr.submitted) nr.submitted = v.date; ri.steps++; });
+          store.reqs.push(nr); have[k] = nr.id; if (it.key) byKey[it.key] = nr.id; ri.added++;
+        });
+        save(); return ri;
       case 'reqs.save':
         store.reqs = store.reqs || [];
         var rr = req.req || {}; if (!String(rr.cust || '').trim()) fail('거래처를 입력하세요.'); if (!String(rr.title || '').trim()) fail('제목을 입력하세요.');
-        var fields = ['biz', 'cust', 'title', 'body', 'received', 'due', 'status', 'submitted', 'summary', 'quoteId', 'owner'];
+        var fields = ['biz', 'cust', 'title', 'body', 'received', 'due', 'status', 'submitted', 'summary', 'quoteId', 'owner', 'contact', 'prevId', 'linkType'];
+        if (rr.prevId && (rr.prevId === req.id || !(store.reqs || []).some(function (x) { return x.id === rr.prevId; }))) fail('연결할 이전 견적을 찾을 수 없습니다.');
         var tgt;
         if (req.id) {
           tgt = store.reqs.filter(function (x) { return x.id === req.id; })[0]; if (!tgt) fail('접수 건을 찾을 수 없습니다.');
@@ -544,20 +586,21 @@
           store.reqs.push(tgt);
         }
         fields.forEach(function (k) { tgt[k] = String(rr[k] == null ? '' : rr[k]); });
-        tgt.status = tgt.status || '접수'; tgt.updated = today();
-        if (tgt.quoteId) { var lq = store.quotes.filter(function (x) { return x.id === tgt.quoteId; })[0]; if (!lq) fail('연결할 견적모음 건을 찾을 수 없습니다.'); lq.status = { '접수': '작성', '검토중': '작성', '제출': '제출', '수주': '수주', '미수주': '미수주' }[tgt.status]; }
-        save(); return reqOut(tgt);
+        tgt.status = tgt.status || '접수'; tgt.updated = today(); if (!tgt.prevId) tgt.linkType = ''; else if (!tgt.linkType) tgt.linkType = '관련 건';
+        if (tgt.quoteId) { var lq = store.quotes.filter(function (x) { return x.id === tgt.quoteId; })[0]; if (!lq) fail('연결할 견적모음 건을 찾을 수 없습니다.'); lq.status = { '접수': '작성', '검토중': '작성', '보류': '작성', '제출': '제출', '수주': '수주', '미수주': '미수주' }[tgt.status]; }
+        save(); return reqOut(tgt, me);
       case 'reqs.upload':
         var ur = (store.reqs || []).filter(function (x) { return x.id === req.id; })[0]; if (!ur) fail('접수 건을 찾을 수 없습니다.');
         var fid = 'RF' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
         reqFiles[fid] = req.data;
-        ur.files.push({ id: fid, kind: req.kind === '제출' ? '제출' : '받은', fileName: req.fileName, mime: req.mime, size: Math.round(String(req.data).length * 3 / 4), by: me.name, at: today() });
+        var ust = req.stepId ? (ur.steps || []).filter(function (x) { return x.id === req.stepId; })[0] : null; if (req.stepId && !ust) fail('단계를 찾을 수 없습니다.');
+        ur.files.push({ id: fid, kind: ust ? (ust.kind === '제출' ? '제출' : '받은') : (req.kind === '제출' ? '제출' : '받은'), stepId: req.stepId || '', fileName: req.fileName, mime: req.mime, size: Math.round(String(req.data).length * 3 / 4), by: me.name, at: today() });
         ur.log.push({ at: today(), by: me.name, text: (req.kind === '제출' ? '제출 파일' : '받은 파일') + ' 추가: ' + req.fileName });
-        save(); return reqOut(ur);
+        save(); return reqOut(ur, me);
       case 'reqs.file': if (!reqFiles[req.fileId]) fail('데모 모드에서는 새로고침하면 파일 내용이 사라져요.'); return { data: reqFiles[req.fileId] };
       case 'reqs.fileDelete':
         var dr = (store.reqs || []).filter(function (x) { return (x.files || []).some(function (f) { return f.id === req.fileId; }); })[0]; if (!dr) fail('파일을 찾을 수 없습니다.');
-        dr.files = dr.files.filter(function (f) { return f.id !== req.fileId; }); delete reqFiles[req.fileId]; save(); return reqOut(dr);
+        dr.files = dr.files.filter(function (f) { return f.id !== req.fileId; }); delete reqFiles[req.fileId]; save(); return reqOut(dr, me);
       case 'reqs.zip': fail('데모 모드에서는 ZIP 묶음을 만들 수 없어요. (실제 서버에서는 됩니다)');
       case 'reqs.delete': store.reqs = (store.reqs || []).filter(function (x) { return x.id !== req.id; }); save(); return {};
       case 'docs.list': return { docs: docs.slice() };

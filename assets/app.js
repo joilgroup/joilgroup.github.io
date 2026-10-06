@@ -4800,7 +4800,10 @@
 
   /* ───────── 견적 접수함 ───────── */
 
-  var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주'];
+  var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주', '보류'];
+  var STEP_KINDS = [['요청 받음', '📥'], ['수정 요청', '✏️'], ['할인 요청', '💬'], ['협력사 견적', '🤝'], ['회신', '↩️'], ['제출', '📤'], ['수주', '✅'], ['미수주', '❌'], ['메모', '📝']];
+  var LINK_TYPES = ['수정 요청', '재계약', '관련 건'];
+  function stepIcon(k) { var x = STEP_KINDS.filter(function (s) { return s[0] === k; })[0]; return x ? x[1] : '📝'; }
   function reqPill(st) { return '<span class="rstatus r-' + Math.max(0, REQ_STATUS.indexOf(st)) + '">' + esc(st || '접수') + '</span>'; }
   function dueInfo(r) {
     if (!r.due || ['제출', '수주', '미수주'].indexOf(r.status) !== -1) return null;
@@ -4822,7 +4825,7 @@
     $('#main').innerHTML =
       '<div class="card"><div class="row-between" style="flex-wrap:wrap;margin-bottom:14px"><div><div class="eyebrow">Requests · 견적 접수함</div><h2>견적 접수함</h2>' +
       '<p class="muted small" style="margin:6px 0 0">받은 견적 요청(메일 제목·본문·원본 첨부)과 우리가 제출한 견적을 한 건으로 남겨요. 언제 무엇을 받아 어떤 단가로 냈는지 바로 찾을 수 있어요.</p></div>' +
-      '<div class="actions"><button class="btn btn-sm" id="rqReload">새로고침</button><button class="btn btn-sm btn-primary" id="rqNew">＋ 견적 요청 등록</button></div></div>' +
+      '<div class="actions"><button class="btn btn-sm" id="rqReload">새로고침</button><button class="btn btn-sm" id="rqImp">가져오기</button><button class="btn btn-sm btn-primary" id="rqNew">＋ 견적 요청 등록</button></div></div>' +
       '<div id="rqAlert"></div>' +
       '<div class="toolbar"><div class="segmented" id="rqSt">' + [''].concat(REQ_STATUS).map(function (s) { return '<button type="button" data-s="' + s + '" class="' + (rs.status === s ? 'on' : '') + '">' + (s || '전체') + '</button>'; }).join('') + '</div>' +
       '<select class="input input-sm" id="rqBiz" style="width:auto"><option value="">모든 사업자</option>' + BIZ_LIST.map(function (b) { return '<option' + (rs.biz === b ? ' selected' : '') + '>' + b + '</option>'; }).join('') + '</select>' +
@@ -4831,7 +4834,8 @@
     $('#rqBiz').onchange = function () { rs.biz = this.value; drawReqs(); };
     var st; $('#rqQ').oninput = function () { var v = this.value; clearTimeout(st); st = setTimeout(function () { rs.q = v.trim(); drawReqs(); }, 200); };
     $('#rqReload').onclick = function () { rs.list = null; loadReqs(); };
-    $('#rqNew').onclick = openNewReq;
+    $('#rqNew').onclick = function () { openNewReq(); };
+    $('#rqImp').onclick = openReqImport;
     if (rs.list) drawReqs(); else loadReqs();
   }
   function loadReqs() {
@@ -4857,7 +4861,7 @@
       list.map(function (r) {
         return '<tr data-id="' + esc(r.id) + '"><td class="left small">' + esc(r.received || String(r.at).slice(0, 10)) + '</td>' +
           '<td class="left"><b>' + esc(r.cust) + '</b>' + (r.biz ? '<br><span class="small muted">' + esc(r.biz) + '</span>' : '') + '</td>' +
-          '<td class="left req-title"><button class="doc-name" data-open><span><b>' + esc(r.title) + '</b><small>' + esc(r.snippet) + '</small></span></button></td>' +
+          '<td class="left req-title"><button class="doc-name" data-open><span><b>' + esc(r.title) + '</b>' + reqStepBadges(r) + '<small>' + esc(r.snippet) + '</small></span></button></td>' +
           '<td class="left">' + reqPill(r.status) + '</td><td class="left">' + dueBadge(r) + '</td>' +
           '<td class="left small"><span title="받은 파일">📥 ' + r.files.in + '</span> <span title="제출 파일">📤 ' + r.files.out + '</span></td>' +
           '<td class="left small">' + (r.submitted ? esc(r.submitted) + (r.summary ? '<br><span class="muted">' + esc(r.summary.split('\n')[0].slice(0, 30)) + '</span>' : '') : '<span class="muted">–</span>') + '</td>' +
@@ -4873,12 +4877,25 @@
       '<div class="qd-three"><div class="field"><label>받은 날</label><input class="input" type="date" data-r="received" value="' + esc(r.received || today()) + '"></div>' +
       '<div class="field"><label>회신 기한</label><input class="input" type="date" data-r="due" value="' + esc(r.due || '') + '"></div>' +
       '<div class="field"><label>담당</label><input class="input" data-r="owner" value="' + esc(r.owner || state.user.name) + '" maxlength="50"></div></div>' +
+      '<div class="qd-two"><div class="field"><label>상대 담당자 <span class="muted">(이름·연락처)</span></label><input class="input" data-r="contact" value="' + esc(r.contact || '') + '" maxlength="100" placeholder="예) 홍도원 실장 010-…"></div>' +
+      '<div class="field"><label>이전 견적과 연결 <span class="muted">(수정·재계약일 때)</span></label><div class="req-link-in"><select class="input" data-r="prevId" data-cur="' + esc(r.prevId || '') + '" data-self="' + esc(r.id || '') + '"><option value="">연결 안 함</option>' + (r.prev ? '<option value="' + esc(r.prev.id) + '" selected>' + esc(r.prev.title) + '</option>' : '') + '</select>' +
+        '<select class="input" data-r="linkType" style="max-width:120px">' + LINK_TYPES.map(function (t) { return '<option' + ((r.linkType || '수정 요청') === t ? ' selected' : '') + '>' + t + '</option>'; }).join('') + '</select></div></div></div>' +
       '<div class="field"><label>메일 본문</label><textarea class="input req-body" data-r="body" placeholder="받은 메일 본문을 그대로 붙여넣으세요" rows="' + (compact ? 8 : 12) + '">' + esc(r.body || '') + '</textarea></div>';
   }
   function readReqFields(root) {
     var o = {}; $$('[data-r]', root).forEach(function (el) { o[el.dataset.r] = el.value; }); return o;
   }
-  function uploadReqFiles(id, kind, files, onEach) {
+  /** "이전 견적과 연결" 목록 채우기 (최근 순) */
+  function fillPrevSelect(root) {
+    var sel = $('[data-r="prevId"]', root); if (!sel) return;
+    (state.reqs.list ? Promise.resolve({ reqs: state.reqs.list }) : api('reqs.list')).then(function (x) {
+      state.reqs.list = x.reqs; var cur = sel.dataset.cur || sel.value, self = sel.dataset.self;
+      var custIn = $('[data-r="cust"]', root), cust = custIn ? custNorm(custIn.value) : '';
+      var list = x.reqs.filter(function (q) { return q.id !== self; }).sort(function (a, b) { var am = cust && custNorm(a.cust) === cust ? 0 : 1, bm = cust && custNorm(b.cust) === cust ? 0 : 1; return am - bm || ((b.received || '') < (a.received || '') ? -1 : 1); });
+      sel.innerHTML = '<option value="">연결 안 함</option>' + list.map(function (q) { return '<option value="' + esc(q.id) + '"' + (q.id === cur ? ' selected' : '') + '>' + esc((q.received || '날짜 없음') + ' · ' + q.cust + ' · ' + q.title.slice(0, 40)) + '</option>'; }).join('');
+    }).catch(function () { });
+  }
+  function uploadReqFiles(id, kind, files, onEach, stepId) {
     var list = Array.prototype.slice.call(files || []), i = 0, last = null;
     var big = list.filter(function (f) { return f.size > DOC_MAX; });
     if (big.length) toast(big.map(function (f) { return f.name; }).join(', ') + ': 20MB를 넘어 건너뜀', 'err');
@@ -4887,20 +4904,71 @@
       if (i >= list.length) return Promise.resolve(last);
       var f = list[i++];
       if (onEach) onEach(i, list.length, f);
-      return readFileB64(f).then(function (b64) { return api('reqs.upload', { id: id, kind: kind, fileName: f.name, mime: f.type || 'application/octet-stream', data: b64 }); })
+      return readFileB64(f).then(function (b64) { return api('reqs.upload', { id: id, kind: kind, stepId: stepId || '', fileName: f.name, mime: f.type || 'application/octet-stream', data: b64 }); })
         .then(function (r) { last = r; return step(); });
     };
     return step();
   }
 
-  function openNewReq() {
+  function reqStepBadges(r) {
+    var s = r.steps || {}, b = [];
+    if (r.prevId) b.push('🔗 ' + (r.linkType || '연결'));
+    if (s.submit > 1) b.push(s.submit + '차 제출');
+    if (s.revise) b.push('수정 ' + s.revise);
+    if (s.discount) b.push('할인 ' + s.discount);
+    if (s.partner) b.push('🤝 협력사');
+    return b.length ? '<span class="req-badges">' + b.map(function (x) { return '<i>' + esc(x) + '</i>'; }).join('') + '</span>' : '';
+  }
+  /** 노션 등에서 정리한 견적 한 번에 가져오기 (엑셀: "견적"·"진행" 시트) */
+  var REQ_IMP_HEAD = ['키', '제목', '거래처', '상대담당', '받은날', '회신기한', '상태', '본문', '이전키', '연결구분'];
+  var REQ_IMP_STEP = ['키', '날짜', '종류', '내용', '제출금액', '협력사', '매입금액'];
+  function openReqImport() {
+    var items = null;
+    modal({ wide: true, eyebrow: '견적 접수함', title: '견적 가져오기',
+      body: '<p class="muted small" style="margin:0 0 10px">"견적"·"진행" 두 시트가 있는 엑셀을 올리세요. 같은 제목·받은 날은 이미 있으면 건너뛰어요. 첨부파일은 가져온 뒤 각 단계에서 올려 주세요.</p>' +
+        '<div class="actions" style="margin-bottom:10px"><button class="btn btn-sm" id="riTpl">빈 양식 받기</button></div>' +
+        '<label class="drop" id="riDrop"><input type="file" id="riFile" accept=".xlsx,.xls,.json" hidden><span id="riTxt"><b>엑셀 파일 고르기</b><br><span class="small muted">.xlsx</span></span></label><div id="riPrev" style="margin-top:12px"></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="riGo" disabled>가져오기</button>',
+      onMount: function (m, close) {
+        $('#riTpl', m).onclick = function () { downloadXlsx('견적_가져오기_양식.xlsx', [{ name: '견적', rows: [REQ_IMP_HEAD, ['N01', '평택→제주 정기 견적', '삼다수', '김과장 010-0000-0000', '2026-09-02', '2026-09-05', '검토중', '받은 메일 본문', '', '']], widths: [6, 40, 16, 22, 11, 11, 8, 50, 6, 10] },
+          { name: '진행', rows: [REQ_IMP_STEP, ['N01', '2026-09-02', '요청 받음', '메일로 요청', '', '', ''], ['N01', '2026-09-04', '제출', '1차 견적', 650000, '', '']], widths: [6, 11, 10, 60, 11, 12, 11] }]); };
+        var read = function (f) {
+          $('#riTxt', m).innerHTML = '<span class="spinner dark"></span> 읽는 중…';
+          Promise.all([loadXlsx(), f.arrayBuffer()]).then(function (r) {
+            var X = r[0], wb = X.read(r[1], { type: 'array', cellDates: false }), ymd = function (v) { v = String(v == null ? '' : v).trim(); var mm = v.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/); return mm ? mm[1] + '-' + pad2(mm[2]) + '-' + pad2(mm[3]) : (/^\d{5}$/.test(v) ? new Date(Date.UTC(1899, 11, 30) + v * 864e5).toISOString().slice(0, 10) : v); };
+            var rowsOf = function (nm) { var ws = wb.Sheets[nm]; if (!ws) return []; var a = X.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' }), h = (a[0] || []).map(function (x) { return String(x).trim(); }); return a.slice(1).filter(function (x) { return x.some(function (v) { return String(v).trim(); }); }).map(function (x) { var o = {}; h.forEach(function (k, i) { o[k] = x[i]; }); return o; }); };
+            var qs = rowsOf('견적'), ps = rowsOf('진행'); if (!qs.length) throw new Error('"견적" 시트를 찾지 못했어요. 양식을 확인하세요.');
+            var byKey = {}; items = qs.map(function (q) { var it = { key: String(q['키'] || ''), title: String(q['제목'] || '').trim(), cust: String(q['거래처'] || '').trim(), contact: String(q['상대담당'] || ''), received: ymd(q['받은날']), due: ymd(q['회신기한']), status: String(q['상태'] || '접수').trim(), body: String(q['본문'] || ''), prev: String(q['이전키'] || ''), prevType: String(q['연결구분'] || ''), steps: [] }; if (it.key) byKey[it.key] = it; return it; });
+            var orphan = 0; ps.forEach(function (x) { var it = byKey[String(x['키'] || '')]; if (!it) { orphan++; return; } it.steps.push({ date: ymd(x['날짜']), kind: String(x['종류'] || '메모').trim(), text: String(x['내용'] || ''), amount: x['제출금액'], partner: String(x['협력사'] || ''), cost: x['매입금액'] }); });
+            var have = {}; (state.reqs.list || []).forEach(function (r) { have[r.title.trim() + '|' + (r.received || '')] = 1; });
+            var dup = items.filter(function (it) { return have[it.title + '|' + it.received]; }).length, nst = items.reduce(function (a, it) { return a + it.steps.length; }, 0);
+            $('#riTxt', m).innerHTML = '<b>' + esc(f.name) + '</b>';
+            $('#riPrev', m).innerHTML = '<p style="margin:0 0 8px"><b>견적 ' + items.length + '건</b> · 진행 기록 ' + nst + '단계' + (dup ? ' · <span class="muted">이미 있는 ' + dup + '건은 건너뜀</span>' : '') + (orphan ? ' · <span class="err-text">키가 없는 단계 ' + orphan + '개 빠짐</span>' : '') + '</p>' +
+              '<div class="table-wrap" style="max-height:300px"><table class="data mini"><thead><tr><th class="left">받은 날</th><th class="left">거래처</th><th class="left">제목</th><th class="left">상태</th><th>단계</th></tr></thead><tbody>' + items.map(function (it) { return '<tr' + (have[it.title + '|' + it.received] ? ' class="muted"' : '') + '><td class="left small">' + esc(it.received || '–') + '</td><td class="left">' + esc(it.cust) + '</td><td class="left wrap">' + esc(it.title) + (it.prev ? ' <span class="small muted">🔗 ' + esc(it.prevType || '연결') + '</span>' : '') + '</td><td class="left">' + reqPill(it.status) + '</td><td class="num">' + it.steps.length + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            $('#riGo', m).disabled = !items.length;
+          }).catch(function (err) { items = null; $('#riTxt', m).innerHTML = '<b>엑셀 파일 고르기</b>'; $('#riPrev', m).innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; $('#riGo', m).disabled = true; });
+        };
+        $('#riFile', m).onchange = function () { if (this.files[0]) read(this.files[0]); this.value = ''; };
+        var dz = $('#riDrop', m); dz.ondragover = function (e) { e.preventDefault(); dz.classList.add('over'); }; dz.ondragleave = function () { dz.classList.remove('over'); };
+        dz.ondrop = function (e) { e.preventDefault(); dz.classList.remove('over'); if (e.dataTransfer.files[0]) read(e.dataTransfer.files[0]); };
+        $('#riGo', m).onclick = function () {
+          var btn = this; busy(btn, true, '가져오는 중…');
+          api('reqs.import', { items: items, source: '엑셀 가져오기' }).then(function (r) { close(); toast('견적 ' + r.added + '건 · 진행 기록 ' + r.steps + '단계를 가져왔어요.' + (r.skipped ? ' (이미 있는 ' + r.skipped + '건 건너뜀)' : '')); state.reqs.list = null; loadReqs(); })
+            .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      } });
+  }
+
+  function openNewReq(preset) {
+    preset = preset && preset.cust != null ? preset : {};
     var files = [];
     modal({
       wide: true, eyebrow: '견적 접수함', title: '견적 요청 등록',
-      body: reqFieldsHtml({}, true) +
+      body: reqFieldsHtml(preset, true) +
         '<label class="drop" id="nrDrop"><input type="file" id="nrFile" multiple hidden><span id="nrTxt"><b>받은 첨부파일</b> 고르기 또는 끌어다 놓기 (여러 개 가능)<br><span class="small muted">원본 그대로 보관돼요 · 파일당 20MB까지</span></span></label>',
       foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="nrSave">등록</button>',
       onMount: function (m, close) {
+        fillPrevSelect(m);
         var show = function () { $('#nrTxt', m).innerHTML = files.length ? '<b>' + files.length + '개 파일</b><br><span class="small muted">' + files.map(function (f) { return esc(f.name); }).join(', ') + '</span>' : '<b>받은 첨부파일</b> 고르기 또는 끌어다 놓기'; };
         $('#nrFile', m).onchange = function () { files = files.concat(Array.prototype.slice.call(this.files)); this.value = ''; show(); };
         var dz = $('#nrDrop', m);
@@ -4913,7 +4981,11 @@
           if (!f.title.trim()) return toast('메일 제목을 입력하세요.', 'err');
           var btn = this; busy(btn, true, '등록 중…');
           api('reqs.save', { req: f }).then(function (r) {
-            return uploadReqFiles(r.req.id, '받은', files, function (i, n) { btn.innerHTML = '<span class="spinner"></span>파일 올리는 중 ' + i + '/' + n; }).then(function () { return r.req.id; });
+            // 첫 단계 "요청 받음"을 만들고 받은 파일을 거기에 붙임
+            return api('reqs.stepSave', { reqId: r.req.id, step: { date: f.received || today(), kind: '요청 받음', text: '' } }).then(function (x) {
+              var st = x.req.steps[x.req.steps.length - 1];
+              return uploadReqFiles(r.req.id, '받은', files, function (i, n) { btn.innerHTML = '<span class="spinner"></span>파일 올리는 중 ' + i + '/' + n; }, st && st.id);
+            }).then(function () { return r.req.id; });
           }).then(function (id) {
             close(); toast('견적 요청을 등록했어요.');
             state.reqs.list = null; state.reqs.detail = id; state.reqs.data = null; state.view = 'reqs'; render(); window.scrollTo(0, 0);
@@ -4958,7 +5030,7 @@
       if (state.view !== 'reqs' || rs.detail !== id) return;
       var isAdmin = state.user.role === 'admin', mine = String(r.by).indexOf('(' + state.user.id + ')') !== -1;
       var fileList = function (kind) {
-        var fs = r.files.filter(function (f) { return f.kind === kind; });
+        var fs = r.files.filter(function (f) { return f.kind === kind && !f.stepId; });
         return (fs.length ? '<ul class="rf-list">' + fs.map(function (f) {
           var k = docKind(f);
           return '<li><button class="doc-name" data-pv="' + esc(f.id) + '"><span class="ficon f-' + k + '">' + DOC_ICON[k] + '</span><span><b>' + esc(f.fileName) + '</b><small>' + fileSize(f.size) + ' · ' + esc(f.by) + ' ' + esc(String(f.at).slice(0, 16)) + '</small></span></button>' +
@@ -4970,7 +5042,8 @@
       $('#rdBody').innerHTML = '<div class="req-grid"><div>' +
         '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:12px"><div><div class="eyebrow">Request · ' + esc(r.biz || '견적 요청') + '</div><h2>' + esc(r.title) + '</h2><p class="muted small" style="margin:4px 0 0">' + esc(r.cust) + ' · 받은 날 ' + esc(r.received || '–') + ' · 등록 ' + esc(String(r.by).replace(/ \(.*\)$/, '')) + '</p></div>' + reqPill(r.status) + '</div>' +
         '<div class="field"><label>진행 상태</label><div class="segmented" id="rdSt">' + REQ_STATUS.map(function (s) { return '<button type="button" data-v="' + s + '" class="' + (r.status === s ? 'on' : '') + '">' + s + '</button>'; }).join('') + '</div></div>' +
-        reqFieldsHtml(r, false) + '</div>' +
+        reqFieldsHtml(r, false) + '<div class="actions" style="justify-content:flex-end"><button class="btn btn-primary" id="rdSave0">저장</button></div></div>' +
+        reqTimelineHtml(r) +
         '<div class="card" style="margin-top:16px"><div class="eyebrow">Submit · 제출</div><h3 style="margin-bottom:10px">제출한 견적</h3>' +
         '<div class="qd-two"><div class="field"><label>제출일</label><input class="input" type="date" data-r="submitted" value="' + esc(r.submitted || '') + '"></div>' +
         '<div class="field"><label>견적모음 연결 <span class="muted">(사이트에서 계산해 저장한 견적)</span></label><select class="input" data-r="quoteId"><option value="">연결 안 함</option>' + (r.quote ? '<option value="' + esc(r.quote.id) + '" selected>' + esc(r.quote.name) + '</option>' : (r.quoteId ? '<option value="' + esc(r.quoteId) + '" selected>(연결된 견적)</option>' : '')) + '</select></div></div>' +
@@ -4978,12 +5051,18 @@
         (r.quote ? '<p class="small" style="margin:0 0 10px">연결된 견적: <a href="#" id="rdGoQuote"><b>' + esc(r.quote.name) + '</b></a> ' + statusPill(r.quote.status) + ' <span class="muted">상태는 접수함과 자동으로 맞춰져요</span></p>' : '') +
         '<div class="actions" style="justify-content:flex-end"><button class="btn btn-primary" id="rdSave">저장</button></div></div>' +
         '</div><div>' +
-        '<div class="card"><div class="eyebrow">Received · 받은 파일 (원본)</div>' + fileList('받은') + '</div>' +
-        '<div class="card" style="margin-top:16px"><div class="eyebrow">Submitted · 제출 파일</div>' + fileList('제출') + '</div>' +
+        reqLinksHtml(r) +
+        (r.files.some(function (f) { return !f.stepId; }) || !r.steps.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">Received · 받은 파일 (단계에 안 붙은 것)</div>' + fileList('받은') + '</div>' +
+        '<div class="card" style="margin-top:16px"><div class="eyebrow">Submitted · 제출 파일 (단계에 안 붙은 것)</div>' + fileList('제출') + '</div>' : '') +
         '<div class="card" style="margin-top:16px"><div class="eyebrow">History · 기록</div><ul class="note-tl req-tl">' + (r.log || []).slice().reverse().map(function (l) {
           return '<li><span class="small muted">' + esc(String(l.at).slice(0, 16)) + ' · ' + esc(l.by) + '</span><br>' + esc(l.text) + '</li>';
         }).join('') + '</ul></div></div></div>';
       var body = $('#rdBody');
+      fillPrevSelect(body);
+      bindReqTimeline(r, body, function (x) { rs.data = x; rs.list = null; show(x); });
+      $('#rdSave0', body).onclick = function () { $('#rdSave', body).click(); };
+      $$('[data-goreq]', body).forEach(function (b) { b.onclick = function () { rs.detail = b.dataset.goreq; rs.data = null; renderReqs(); window.scrollTo(0, 0); }; });
+      var nx = $('#rdNext', body); if (nx) nx.onclick = function () { openNewReq({ cust: r.cust, biz: r.biz, contact: r.contact, prevId: r.id, prev: { id: r.id, title: r.title }, linkType: '수정 요청', title: r.title }); };
       $$('#rdSt button', body).forEach(function (b) { b.onclick = function () { $$('#rdSt button', body).forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
       // 견적모음 목록 (연결용)
       var qsel = $('[data-r="quoteId"]', body);
@@ -5039,6 +5118,76 @@
     };
     if (rs.data && rs.data.id === id) return show(rs.data);
     api('reqs.get', { id: id }).then(function (x) { rs.data = x.req; show(x.req); }).catch(function (err) { if (rs.detail === id) $('#rdBody').innerHTML = '<div class="card"><p class="err-text" style="margin:0">' + esc(err.message) + '</p></div>'; });
+  }
+
+  /** 진행 기록(타임라인) */
+  function reqTimelineHtml(r) {
+    var steps = r.steps || [], nSub = 0, lastCost = null, fmt = function (n) { return n == null || n === '' ? '' : won(n) + '원'; };
+    var items = steps.map(function (st) {
+      var label = st.kind, extra = '';
+      if (st.kind === '협력사 견적') { if (st.cost != null) lastCost = st.cost; extra = (st.partner ? ' · <b>' + esc(st.partner) + '</b>' : '') + (st.costHidden ? ' · <span class="muted small">매입 금액은 분석 권한자만 보여요</span>' : st.cost != null ? ' · 매입 <b>' + fmt(st.cost) + '</b>' : ''); }
+      if (st.kind === '제출') { nSub++; label = nSub + '차 제출'; if (st.amount != null) { extra = ' · <b>' + fmt(st.amount) + '</b>'; if (r.canCost && lastCost != null && st.amount) { var mg = st.amount - lastCost; extra += ' <span class="tl-mg' + (mg < 0 ? ' neg' : '') + '">수수료 ' + won(mg) + '원 (' + (mg / st.amount * 100).toFixed(1) + '%)</span>'; } } }
+      if (st.kind !== '제출' && st.kind !== '협력사 견적' && st.amount != null) extra = ' · ' + fmt(st.amount);
+      var files = r.files.filter(function (f) { return f.stepId === st.id; });
+      return '<li class="tl-it k-' + esc(st.kind.replace(/\s/g, '')) + '"><span class="tl-dot">' + stepIcon(st.kind) + '</span><div class="tl-body">' +
+        '<div class="tl-head"><b>' + esc(label) + '</b>' + extra + '<span class="tl-date">' + esc(st.date || '날짜 없음') + '</span><button class="btn btn-sm btn-ghost" data-se="' + esc(st.id) + '">수정</button></div>' +
+        (st.text ? '<div class="tl-txt">' + multiline(st.text) + '</div>' : '') +
+        (files.length ? '<ul class="tl-files">' + files.map(function (f) { var k = docKind(f); return '<li><button class="doc-name" data-pv="' + esc(f.id) + '"><span class="ficon f-' + k + '">' + DOC_ICON[k] + '</span><span>' + esc(f.fileName) + ' <small>' + fileSize(f.size) + '</small></span></button><button class="btn btn-sm btn-ghost" data-dl="' + esc(f.id) + '">받기</button><button class="btn btn-sm btn-ghost" data-rm="' + esc(f.id) + '">삭제</button></li>'; }).join('') + '</ul>' : '') +
+        '<label class="tl-add"><input type="file" multiple hidden data-sf="' + esc(st.id) + '">＋ 파일</label></div></li>';
+    });
+    var sum = [nSub ? nSub + '차까지 제출' : '', steps.filter(function (x) { return x.kind === '할인 요청'; }).length ? '할인 요청 ' + steps.filter(function (x) { return x.kind === '할인 요청'; }).length + '번' : '', steps.filter(function (x) { return x.kind === '수정 요청'; }).length ? '수정 요청 ' + steps.filter(function (x) { return x.kind === '수정 요청'; }).length + '번' : ''].filter(Boolean).join(' · ');
+    return '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px"><div><div class="eyebrow">Timeline · 진행 기록</div><h3 style="margin:0">' + (steps.length ? steps.length + '단계' + (sum ? ' <span class="muted small">' + sum + '</span>' : '') : '아직 기록이 없어요') + '</h3></div><button class="btn btn-sm btn-primary" id="rdStepAdd">＋ 단계 추가</button></div>' +
+      (steps.length ? '<ol class="tl">' + items.join('') + '</ol>' : '<p class="muted small" style="margin:8px 0 0">요청 받음 → 협력사 견적 → 제출 → 할인 요청 → 2차 제출처럼 오간 과정을 하나씩 남겨요. 단계마다 파일을 붙일 수 있어요.</p>') + '</div>';
+  }
+  function reqLinksHtml(r) {
+    var row = function (x, t) { return '<li><button class="doc-name" data-goreq="' + esc(x.id) + '"><span><small>' + esc(t) + '</small><b>' + esc(x.title) + '</b><small>' + esc((x.received || '') + ' · ' + (x.status || '')) + '</small></span></button></li>'; };
+    return '<div class="card"><div class="row-between"><div class="eyebrow" style="margin:0">Linked · 연결된 견적</div><button class="btn btn-sm" id="rdNext">＋ 이어서 새 견적</button></div>' +
+      (r.prev || (r.next || []).length ? '<ul class="req-links">' + (r.prev ? row(r.prev, '⬅ 이전 견적 (' + (r.linkType || '연결') + ')') : '') + (r.next || []).map(function (x) { return row(x, '➡ 이어진 견적 (' + (x.linkType || '연결') + ')'); }).join('') + '</ul>'
+        : '<p class="muted small" style="margin:8px 0 0">예전 견적의 수정·재계약이면 위 "이전 견적과 연결"에서 고르거나, 이 견적에서 "＋ 이어서 새 견적"을 누르세요.</p>') + '</div>';
+  }
+  function bindReqTimeline(r, body, done) {
+    var byId = {}; r.files.forEach(function (f) { byId[f.id] = f; });
+    var add = $('#rdStepAdd', body); if (add) add.onclick = function () { editReqStep(r, {}, done); };
+    $$('[data-se]', body).forEach(function (b) { b.onclick = function () { editReqStep(r, r.steps.filter(function (x) { return x.id === b.dataset.se; })[0], done); }; });
+    $$('[data-sf]', body).forEach(function (inp) {
+      inp.onchange = function () {
+        var files = Array.prototype.slice.call(this.files), lab = inp.parentNode; if (!files.length) return;
+        lab.innerHTML = '<span class="spinner dark"></span> 올리는 중…';
+        uploadReqFiles(r.id, '받은', files, function (i, n) { lab.innerHTML = '<span class="spinner dark"></span> ' + i + '/' + n; }, inp.dataset.sf).then(function (x) { if (x) { toast('파일을 올렸어요.'); done(x.req); } }).catch(function (err) { toast(err.message, 'err'); done(r); });
+      };
+    });
+  }
+  function editReqStep(r, st, done) {
+    st = st || {}; var isNew = !st.id, kind = st.kind || (r.steps.length ? '제출' : '요청 받음');
+    modal({ eyebrow: '진행 기록 · ' + r.cust, title: isNew ? '단계 추가' : '단계 수정',
+      body: '<div class="field"><label>종류</label><div class="chips step-kinds">' + STEP_KINDS.map(function (k) { return '<button type="button" class="chip' + (k[0] === kind ? ' on' : '') + '" data-k="' + k[0] + '">' + k[1] + ' ' + k[0] + '</button>'; }).join('') + '</div></div>' +
+        '<div class="qd-two"><div class="field"><label>날짜</label><input class="input" type="date" id="seD" value="' + esc(isNew ? today() : st.date || '') + '"></div>' +
+        '<div class="field se-amt"><label>제출 금액 <span class="muted">(선택 · 대표 금액)</span></label><input class="input" id="seA" inputmode="numeric" value="' + (st.amount != null ? won(st.amount) : '') + '" placeholder="예) 650,000"></div></div>' +
+        '<div class="qd-two se-partner"><div class="field"><label>협력사</label><input class="input" id="seP" value="' + esc(st.partner || '') + '" maxlength="60" placeholder="예) 바로고"></div>' +
+        (r.canCost ? '<div class="field"><label>매입 금액 <span class="muted">(분석 권한자만 보여요)</span></label><input class="input" id="seC" inputmode="numeric" value="' + (st.cost != null ? won(st.cost) : '') + '" placeholder="예) 600,000"></div>' : '<div class="field"><label>매입 금액</label><p class="muted small" style="margin:8px 0 0">분석 권한자만 넣고 볼 수 있어요.</p></div>') + '</div>' +
+        '<div class="field"><label>내용</label><textarea class="input memo" id="seT" placeholder="예) 5% 할인 요청 받음 / 단가표 v2 제출">' + esc(st.text || '') + '</textarea></div>' +
+        (isNew ? '<div class="field"><label>파일 <span class="muted">(선택)</span></label><input type="file" id="seF" multiple class="input"></div>' : '') +
+        '<p class="hint" style="margin:0">제출 단계를 넣으면 상태가 "제출"로, 수정·할인 요청이면 "검토중"으로, 수주·미수주면 그 상태로 바뀌어요.</p>',
+      foot: (isNew ? '' : '<button class="btn btn-danger btn-sm" id="seDel" style="margin-right:auto">삭제</button>') + '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="seSave">저장</button>',
+      onMount: function (m, close) {
+        var vis = function () { $('.se-partner', m).style.display = kind === '협력사 견적' ? '' : 'none'; $('.se-amt label', m).firstChild.textContent = kind === '협력사 견적' ? '참고 금액 ' : '제출 금액 '; };
+        $$('.step-kinds .chip', m).forEach(function (b) { b.onclick = function () { kind = b.dataset.k; $$('.step-kinds .chip', m).forEach(function (x) { x.classList.toggle('on', x === b); }); vis(); }; });
+        vis();
+        var num = function (sel) { var el = $(sel, m); if (!el) return undefined; var v = el.value.replace(/[,\s원]/g, ''); return v === '' ? '' : Number(v); };
+        $('#seSave', m).onclick = function () {
+          var v = { date: $('#seD', m).value, kind: kind, text: $('#seT', m).value, amount: num('#seA'), partner: kind === '협력사 견적' ? $('#seP', m).value : '' };
+          if (r.canCost) v.cost = kind === '협력사 견적' ? num('#seC') : '';
+          if ([v.amount, v.cost].some(function (x) { return x !== '' && x !== undefined && !(x >= 0); })) return toast('금액은 숫자로 넣으세요.', 'err');
+          var fi = $('#seF', m), files = fi ? Array.prototype.slice.call(fi.files) : [], btn = this; busy(btn, true, '저장 중…');
+          var before = {}; r.steps.forEach(function (x) { before[x.id] = 1; });
+          api('reqs.stepSave', { reqId: r.id, id: st.id || '', step: v }).then(function (x) {
+            if (!files.length) return x;
+            var ns = x.req.steps.filter(function (y) { return !before[y.id]; })[0];
+            return uploadReqFiles(r.id, '받은', files, function (i, n) { btn.innerHTML = '<span class="spinner"></span>파일 ' + i + '/' + n; }, ns && ns.id).then(function (y) { return y || x; });
+          }).then(function (x) { close(); toast('저장했어요.'); done(x.req); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+        var d = $('#seDel', m); if (d) d.onclick = function () { if (!confirm('이 단계를 지울까요? 붙은 파일은 지우지 않고 "단계에 안 붙은 파일"로 옮겨요.')) return; api('reqs.stepDelete', { id: st.id }).then(function (x) { close(); done(x.req); }).catch(function (err) { toast(err.message, 'err'); }); };
+      } });
   }
 
   /* 홈 카드: 회신 기한 다가오는 견적 요청 */
@@ -7288,7 +7437,11 @@
         '견적 요청 메일이 오면 <b>＋ 견적 요청 등록</b>에서 거래처·메일 제목·본문을 붙여넣고, 받은 첨부파일을 끌어다 놓으세요. 원본 그대로 보관돼요.',
         '견적을 보내면 상세 화면에서 <b>제출 파일</b>(우리 견적서·엑셀)을 올리고, 제출일·제출 단가 요약을 적고 상태를 <b>제출</b>로 바꿔요.',
         '사이트에서 계산해 저장한 견적은 <b>견적모음 연결</b>로 이어 두면 상태(제출·수주·미수주)가 자동으로 맞춰져요.',
-        '회신 기한이 2일 안으로 다가오면 접수함과 홈 화면에 표시돼요. 상태 변경·파일 추가는 모두 "기록"에 남아요.'
+        '회신 기한이 2일 안으로 다가오면 접수함과 홈 화면에 표시돼요. 상태 변경·파일 추가는 모두 "기록"에 남아요.',
+        '<b>진행 기록</b>: 상세 화면에서 <b>＋ 단계 추가</b>로 요청 받음 → 협력사 견적 → 제출 → 할인 요청 → 2차 제출처럼 오간 과정을 남겨요. 단계마다 파일을 붙일 수 있고, 제출 단계는 1차·2차로 번호가 붙어요.',
+        '협력사 견적 단계에 협력사 매입 금액을 넣으면 제출 금액과 비교해 <b>수수료(차액·%)</b>를 보여줘요. 매입 금액과 수수료는 분석 권한자에게만 보여요.',
+        '예전 견적의 수정·재계약이면 <b>이전 견적과 연결</b>을 고르거나 상세의 <b>＋ 이어서 새 견적</b>을 누르세요. 두 견적이 서로 링크돼요.',
+        '<b>가져오기</b>: "견적"·"진행" 두 시트 엑셀로 여러 건을 한 번에 넣어요 (빈 양식 받기 가능). 같은 제목·받은 날은 건너뛰어요.'
       ]],
       ['rates', '업체 단가', [
         '<b>양식 내려받기</b>로 받은 엑셀에 상차지 · 하차지 · 톤수 · 단가를 채워 <b>단가표 올리기</b>로 올려요. 업체마다 달랐던 양식을 이 하나로 통일합니다.',

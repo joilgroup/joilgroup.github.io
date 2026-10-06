@@ -151,7 +151,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -190,8 +190,11 @@ function handle_(req) {
     case 'custs.save': return custSave_(session, req);
     case 'custs.delete': return custDelete_(req.id);
     case 'reqs.list': return reqsList_();
-    case 'reqs.get': return reqsGet_(req.id);
+    case 'reqs.get': return reqsGet_(req.id, session);
     case 'reqs.save': return reqsSave_(session, req);
+    case 'reqs.stepSave': return reqStepSave_(session, req);
+    case 'reqs.stepDelete': return reqStepDelete_(session, req.id);
+    case 'reqs.import': return reqsImport_(session, req);
     case 'reqs.upload': return reqsUpload_(session, req);
     case 'reqs.file': return reqsFile_(req.fileId);
     case 'reqs.fileDelete': return reqsFileDelete_(session, req.fileId);
@@ -1078,16 +1081,31 @@ function notesDelete_(id) {
  * 보기·쓰기: 견적 권한자 모두 (팀 공유) · 삭제: 등록자 또는 관리자
  */
 var SHEET_REQS = '견적접수';
-var REQ_HEADER = ['ID', '사업자', '거래처', '제목', '본문', '받은날', '회신기한', '상태', '제출일', '제출요약', '연결견적ID', '담당', '등록자', '등록일시', '수정일시', '기록'];
+var REQ_HEADER = ['ID', '사업자', '거래처', '제목', '본문', '받은날', '회신기한', '상태', '제출일', '제출요약', '연결견적ID', '담당', '등록자', '등록일시', '수정일시', '기록', '이전접수ID', '연결구분', '상대담당'];
 var SHEET_REQ_FILES = '접수파일';
-var REQ_FILE_HEADER = ['파일ID', '접수ID', '종류', '파일명', '형식', '크기', '올린사람', '올린일시'];
-var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주'];
+var REQ_FILE_HEADER = ['파일ID', '접수ID', '종류', '파일명', '형식', '크기', '올린사람', '올린일시', '단계ID'];
+var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주', '보류'];
+/** 진행 기록(타임라인): 견적 1건 안의 단계들. 협력사 매입 금액은 분석 권한자만 */
+var SHEET_REQ_STEPS = '견적진행';
+var REQ_STEP_HEADER = ['ID', '접수ID', '날짜', '종류', '내용', '제출금액', '협력사', '매입금액', '작성자', '작성일시', '수정일시'];
+var REQ_STEP_KINDS = ['요청 받음', '수정 요청', '할인 요청', '협력사 견적', '회신', '제출', '수주', '미수주', '메모'];
+var REQ_LINK_TYPES = ['수정 요청', '재계약', '관련 건'];
 
-function reqsSheet_() { return cacheSheet_(SHEET_REQS, REQ_HEADER); }
-function reqFilesSheet_() { return cacheSheet_(SHEET_REQ_FILES, REQ_FILE_HEADER); }
+function headerSheet_(name, header) { var sh = cacheSheet_(name, header); if (sh.getLastColumn() < header.length) sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold'); return sh; }
+function reqsSheet_() { return headerSheet_(SHEET_REQS, REQ_HEADER); }
+function reqFilesSheet_() { return headerSheet_(SHEET_REQ_FILES, REQ_FILE_HEADER); }
+function reqStepsSheet_() { return cacheSheet_(SHEET_REQ_STEPS, REQ_STEP_HEADER); }
+function canCost_(session) { return !!session && (session.role === 'admin' || (session.perms || []).indexOf('analysis') !== -1); }
+function reqStepRow_(r) { return { id: String(r[0]), reqId: String(r[1]), date: textDate_(r[2]), kind: String(r[3]), text: String(r[4] || ''), amount: r[5] === '' ? null : Number(r[5]), partner: String(r[6] || ''), cost: r[7] === '' ? null : Number(r[7]), by: String(r[8] || ''), at: fmt_(r[9]) }; }
+function reqSteps_(reqId, session) {
+  var see = canCost_(session);
+  return rowsOf_(SHEET_REQ_STEPS, REQ_STEP_HEADER).filter(function (r) { return String(r[1]) === String(reqId); }).map(reqStepRow_).map(function (x) { if (!see) { delete x.cost; x.costHidden = true; } return x; })
+    .sort(function (a, b) { return (a.date || '9999') < (b.date || '9999') ? -1 : (a.date || '9999') > (b.date || '9999') ? 1 : a.at < b.at ? -1 : 1; });
+}
 function reqRowToObj_(r, withBody) {
   var o = { id: String(r[0]), biz: String(r[1]), cust: String(r[2]), title: String(r[3]), received: textDate_(r[5]), due: textDate_(r[6]), status: String(r[7]) || '접수',
-    submitted: textDate_(r[8]), summary: String(r[9] || ''), quoteId: String(r[10] || ''), owner: String(r[11] || ''), by: String(r[12]), at: fmt_(r[13]), updated: fmt_(r[14]) };
+    submitted: textDate_(r[8]), summary: String(r[9] || ''), quoteId: String(r[10] || ''), owner: String(r[11] || ''), by: String(r[12]), at: fmt_(r[13]), updated: fmt_(r[14]),
+    prevId: String(r[16] || ''), linkType: String(r[17] || ''), contact: String(r[18] || '') };
   if (withBody) { o.body = String(r[4] || ''); o.log = parseJson_(r[15], []); }
   else o.snippet = String(r[4] || '').replace(/\s+/g, ' ').slice(0, 120);
   return o;
@@ -1102,23 +1120,28 @@ function reqFiles_(reqId) {
   var sh = reqFilesSheet_();
   if (sh.getLastRow() < 2) return [];
   return sh.getRange(2, 1, sh.getLastRow() - 1, REQ_FILE_HEADER.length).getValues().filter(function (r) { return String(r[1]) === String(reqId); }).map(function (r) {
-    return { id: String(r[0]), kind: String(r[2]), fileName: String(r[3]), mime: String(r[4]), size: Number(r[5]) || 0, by: String(r[6]), at: fmt_(r[7]) };
+    return { id: String(r[0]), kind: String(r[2]), fileName: String(r[3]), mime: String(r[4]), size: Number(r[5]) || 0, by: String(r[6]), at: fmt_(r[7]), stepId: String(r[8] || '') };
   });
 }
 function reqsList_() {
   var sh = reqsSheet_(), counts = {};
   var fs = reqFilesSheet_();
   if (fs.getLastRow() >= 2) fs.getRange(2, 2, fs.getLastRow() - 1, 2).getValues().forEach(function (r) { var k = String(r[0]); var c = counts[k] || (counts[k] = { in: 0, out: 0 }); if (String(r[1]) === '제출') c.out++; else c.in++; });
+  var st = {}; rowsOf_(SHEET_REQ_STEPS, REQ_STEP_HEADER).forEach(function (r) { var k = String(r[1]), c = st[k] || (st[k] = { n: 0, submit: 0, discount: 0, revise: 0, partner: 0, last: '' }); c.n++;
+    var kd = String(r[3]); if (kd === '제출') c.submit++; else if (kd === '할인 요청') c.discount++; else if (kd === '수정 요청') c.revise++; else if (kd === '협력사 견적') c.partner++; var d = textDate_(r[2]); if (d > c.last) c.last = d; });
   var list = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, REQ_HEADER.length).getValues().filter(function (r) { return r[0]; }).map(function (r) {
-    var o = reqRowToObj_(r, false); o.files = counts[o.id] || { in: 0, out: 0 }; return o;
+    var o = reqRowToObj_(r, false); o.files = counts[o.id] || { in: 0, out: 0 }; o.steps = st[o.id] || { n: 0, submit: 0, discount: 0, revise: 0, partner: 0, last: '' }; return o;
   });
   return { reqs: list.reverse() };
 }
-function reqsGet_(id) {
+function reqsGet_(id, session) {
   var f = findReq_(id);
   if (!f) throw new Error('접수 건을 찾을 수 없습니다.');
   var o = reqRowToObj_(f.raw, true);
   o.files = reqFiles_(o.id);
+  o.steps = reqSteps_(o.id, session); o.canCost = canCost_(session);
+  if (o.prevId) { var pv = findReq_(o.prevId); o.prev = pv ? { id: o.prevId, title: String(pv.raw[3]), cust: String(pv.raw[2]), received: textDate_(pv.raw[5]), status: String(pv.raw[7]) } : null; }
+  var sh = reqsSheet_(); o.next = sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, REQ_HEADER.length).getValues().filter(function (r) { return String(r[16]) === o.id; }).map(function (r) { return { id: String(r[0]), title: String(r[3]), linkType: String(r[17] || ''), received: textDate_(r[5]), status: String(r[7]) }; });
   if (o.quoteId) { var q = findQuote_(o.quoteId); o.quote = q ? { id: q.data.id, name: q.data.name, status: q.data.status, userName: q.data.userName } : null; }
   return { req: o };
 }
@@ -1130,13 +1153,16 @@ function checkReq_(r) {
   var title = String(r.title || '').trim();
   if (!title) throw new Error('제목을 입력하세요.');
   return { biz: String(r.biz || '').slice(0, 30), cust: cust.slice(0, 100), title: title.slice(0, 200), body: String(r.body || '').slice(0, 40000), received: d(r.received), due: d(r.due),
-    status: REQ_STATUS.indexOf(r.status) !== -1 ? r.status : '접수', submitted: d(r.submitted), summary: String(r.summary || '').slice(0, 3000), quoteId: String(r.quoteId || '').slice(0, 40), owner: String(r.owner || '').slice(0, 50) };
+    status: REQ_STATUS.indexOf(r.status) !== -1 ? r.status : '접수', submitted: d(r.submitted), summary: String(r.summary || '').slice(0, 3000), quoteId: String(r.quoteId || '').slice(0, 40), owner: String(r.owner || '').slice(0, 50),
+    prevId: String(r.prevId || '').slice(0, 40), linkType: REQ_LINK_TYPES.indexOf(r.linkType) !== -1 ? r.linkType : (r.prevId ? '관련 건' : ''), contact: String(r.contact || '').slice(0, 100) };
 }
-var REQ_TO_QUOTE_STATUS = { '접수': '작성', '검토중': '작성', '제출': '제출', '수주': '수주', '미수주': '미수주' };
+var REQ_TO_QUOTE_STATUS = { '접수': '작성', '검토중': '작성', '보류': '작성', '제출': '제출', '수주': '수주', '미수주': '미수주' };
 function reqsSave_(session, req) {
   var f = checkReq_(req.req), sh = reqsSheet_(), now = now_(), who = session.name;
   if (f.quoteId && !findQuote_(f.quoteId)) throw new Error('연결할 견적모음 건을 찾을 수 없습니다.');
+  if (f.prevId && (f.prevId === req.id || !findReq_(f.prevId))) throw new Error('연결할 이전 견적을 찾을 수 없습니다.');
   var row = [f.biz, f.cust, f.title, f.body, "'" + f.received, "'" + f.due, f.status, "'" + f.submitted, f.summary, f.quoteId, f.owner];
+  var tail = [f.prevId, f.prevId ? f.linkType : '', f.contact];
   var id, log;
   if (req.id) {
     var found = findReq_(req.id);
@@ -1147,17 +1173,18 @@ function reqsSave_(session, req) {
     if (old.quoteId !== f.quoteId) log.push({ at: now, by: who, text: f.quoteId ? '견적모음 연결' : '견적모음 연결 해제' });
     if (old.submitted !== f.submitted && f.submitted) log.push({ at: now, by: who, text: '제출일 ' + f.submitted });
     if (old.summary !== f.summary && f.summary) log.push({ at: now, by: who, text: '제출 단가 요약 수정' });
+    if (old.prevId !== f.prevId) log.push({ at: now, by: who, text: f.prevId ? '이전 견적 연결 (' + f.linkType + ')' : '이전 견적 연결 해제' });
     if (log.length > 200) log = log.slice(-200);
     sh.getRange(found.row, 2, 1, row.length).setValues([row]);
-    sh.getRange(found.row, 15, 1, 2).setValues([[now, JSON.stringify(log)]]);
+    sh.getRange(found.row, 15, 1, 2 + tail.length).setValues([[now, JSON.stringify(log)].concat(tail)]);
   } else {
     id = newId_('Q');
-    log = [{ at: now, by: who, text: '접수 등록' + (f.received ? ' (받은 날 ' + f.received + ')' : '') }];
-    sh.appendRow([id].concat(row).concat([session.name + ' (' + session.id + ')', now, now, JSON.stringify(log)]));
+    log = [{ at: now, by: who, text: '접수 등록' + (f.received ? ' (받은 날 ' + f.received + ')' : '') + (f.prevId ? ' · 이전 견적 연결 (' + f.linkType + ')' : '') }];
+    sh.appendRow([id].concat(row).concat([session.name + ' (' + session.id + ')', now, now, JSON.stringify(log)]).concat(tail));
   }
   // 연결된 견적모음 상태도 맞춤
   if (f.quoteId) { var q = findQuote_(f.quoteId); if (q) quotesSheet_().getRange(q.row, 8).setValue(REQ_TO_QUOTE_STATUS[f.status]); }
-  return reqsGet_(id);
+  return reqsGet_(id, session);
 }
 function reqAddLog_(id, session, text) {
   var found = findReq_(id); if (!found) return;
@@ -1168,15 +1195,16 @@ function reqAddLog_(id, session, text) {
 }
 function reqsUpload_(session, req) {
   if (!findReq_(req.id)) throw new Error('접수 건을 찾을 수 없습니다.');
-  var kind = req.kind === '제출' ? '제출' : '받은';
+  var kind = req.kind === '제출' ? '제출' : '받은', stepId = String(req.stepId || '');
+  if (stepId) { var sf = findRow_(SHEET_REQ_STEPS, REQ_STEP_HEADER, stepId); if (!sf || String(sf.raw[1]) !== String(req.id)) throw new Error('단계를 찾을 수 없습니다.'); kind = String(sf.raw[3]) === '제출' ? '제출' : '받은'; }
   var bytes = Utilities.base64Decode(String(req.data || ''));
   if (!bytes.length) throw new Error('파일이 비어 있습니다.');
   if (bytes.length > DOC_MAX_BYTES) throw new Error('파일은 20MB까지 올릴 수 있습니다.');
   var fileName = String(req.fileName || '파일').replace(/[\\/:*?"<>|]/g, '_').slice(0, 150);
   var file = docsFolder_().createFile(Utilities.newBlob(bytes, String(req.mime || 'application/octet-stream'), fileName));
-  reqFilesSheet_().appendRow([file.getId(), String(req.id), kind, fileName, String(req.mime || 'application/octet-stream'), bytes.length, session.name, now_()]);
+  reqFilesSheet_().appendRow([file.getId(), String(req.id), kind, fileName, String(req.mime || 'application/octet-stream'), bytes.length, session.name, now_(), stepId]);
   reqAddLog_(req.id, session, (kind === '제출' ? '제출 파일' : '받은 파일') + ' 추가: ' + fileName);
-  return reqsGet_(req.id);
+  return reqsGet_(req.id, session);
 }
 function findReqFile_(fileId) {
   var sh = reqFilesSheet_();
@@ -1197,7 +1225,7 @@ function reqsFileDelete_(session, fileId) {
   try { DriveApp.getFileById(f.id).setTrashed(true); } catch (e) { /* 이미 없음 */ }
   reqFilesSheet_().deleteRow(f.row);
   reqAddLog_(f.reqId, session, '파일 삭제: ' + f.fileName);
-  return reqsGet_(f.reqId);
+  return reqsGet_(f.reqId, session);
 }
 function reqsZip_(id) {
   var files = reqFiles_(id);
@@ -1221,8 +1249,82 @@ function reqsDelete_(session, id) {
     var ids = fs.getRange(2, 2, fs.getLastRow() - 1, 1).getValues();
     for (var i = ids.length - 1; i >= 0; i--) if (String(ids[i][0]) === String(id)) fs.deleteRow(i + 2);
   }
+  var ss = reqStepsSheet_();
+  if (ss.getLastRow() >= 2) { var sids = ss.getRange(2, 2, ss.getLastRow() - 1, 1).getValues(); for (var j = sids.length - 1; j >= 0; j--) if (String(sids[j][0]) === String(id)) ss.deleteRow(j + 2); }
   reqsSheet_().deleteRow(found.row);
   return {};
+}
+
+/** 진행 기록 단계 저장. 제출·수주·미수주 단계는 접수 건 상태·제출일도 맞춤 */
+function reqStepClean_(x) {
+  x = x || {};
+  var date = String(x.date || '').trim(); if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + date);
+  var kind = REQ_STEP_KINDS.indexOf(x.kind) !== -1 ? x.kind : '메모';
+  var num = function (v, nm) { if (v === '' || v == null) return ''; var n = Number(String(v).replace(/[,\s원]/g, '')); if (!isFinite(n) || n < 0) throw new Error(nm + ' 금액을 확인하세요.'); return n; };
+  return { date: date, kind: kind, text: String(x.text || '').slice(0, 20000), amount: num(x.amount, '제출'), partner: String(x.partner || '').trim().slice(0, 60), cost: num(x.cost, '매입') };
+}
+function reqApplyStep_(reqId, v, session) {
+  var f = findReq_(reqId); if (!f) return;
+  var st = String(f.raw[7]) || '접수', sub = textDate_(f.raw[8]), ns = st, nsub = sub;
+  if (v.kind === '제출') { if (['접수', '검토중', '보류'].indexOf(st) !== -1) ns = '제출'; if (v.date && v.date > sub) nsub = v.date; }
+  else if (v.kind === '수주' || v.kind === '미수주') ns = v.kind;
+  else if ((v.kind === '수정 요청' || v.kind === '할인 요청') && st === '제출') ns = '검토중';
+  if (ns === st && nsub === sub) return;
+  reqsSheet_().getRange(f.row, 8, 1, 2).setValues([[ns, "'" + nsub]]);
+  if (ns !== st) reqAddLog_(reqId, session, '상태 ' + st + ' → ' + ns + ' (' + v.kind + ' 단계)');
+  var qid = String(f.raw[10] || ''); if (qid && ns !== st) { var q = findQuote_(qid); if (q) quotesSheet_().getRange(q.row, 8).setValue(REQ_TO_QUOTE_STATUS[ns]); }
+}
+function reqStepSave_(session, req) {
+  var reqId = String(req.reqId || ''); if (!findReq_(reqId)) throw new Error('접수 건을 찾을 수 없습니다.');
+  var v = reqStepClean_(req.step), see = canCost_(session), now = now_(), sh = reqStepsSheet_();
+  if (req.id) {
+    var f = findRow_(SHEET_REQ_STEPS, REQ_STEP_HEADER, req.id); if (!f || String(f.raw[1]) !== reqId) throw new Error('단계를 찾을 수 없습니다.');
+    var cost = see ? v.cost : f.raw[7]; // 분석 권한이 없으면 매입 금액은 그대로 둠
+    f.sh.getRange(f.row, 3, 1, 6).setValues([["'" + v.date, v.kind, v.text, v.amount, v.partner, cost]]);
+    f.sh.getRange(f.row, 11).setValue(now);
+    reqAddLog_(reqId, session, '진행 기록 수정: ' + v.kind);
+  } else {
+    sh.appendRow([newId_('P'), reqId, "'" + v.date, v.kind, v.text, v.amount, v.partner, see ? v.cost : '', session.name, now, now]);
+    reqAddLog_(reqId, session, '진행 기록 추가: ' + v.kind + (v.date ? ' (' + v.date + ')' : ''));
+  }
+  reqApplyStep_(reqId, v, session);
+  return reqsGet_(reqId, session);
+}
+function reqStepDelete_(session, id) {
+  var f = findRow_(SHEET_REQ_STEPS, REQ_STEP_HEADER, id); if (!f) throw new Error('단계를 찾을 수 없습니다.');
+  var reqId = String(f.raw[1]);
+  reqFiles_(reqId).filter(function (x) { return x.stepId === id; }).forEach(function (x) { var ff = findReqFile_(x.id); if (ff) reqFilesSheet_().getRange(ff.row, 9).setValue(''); }); // 파일은 남기고 단계 연결만 해제
+  f.sh.deleteRow(f.row);
+  reqAddLog_(reqId, session, '진행 기록 삭제: ' + String(f.raw[3]));
+  return reqsGet_(reqId, session);
+}
+/** 다른 곳(노션 등)에서 정리한 견적을 한 번에: items[{key,title,cust,contact,received,due,status,body,prev,prevType,steps[]}] · 같은 제목+받은 날은 건너뜀 */
+function reqsImport_(session, req) {
+  var items = (req.items || []).slice(0, 500), lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = reqsSheet_(), have = {}, byKey = {}, see = canCost_(session), now = now_(), res = { added: 0, skipped: 0, steps: 0 };
+    if (sh.getLastRow() >= 2) sh.getRange(2, 1, sh.getLastRow() - 1, REQ_HEADER.length).getValues().forEach(function (r) { have[String(r[3]).trim() + '|' + textDate_(r[5])] = String(r[0]); });
+    var rows = [], steps = [];
+    items.forEach(function (it, i) {
+      var f; try { f = checkReq_({ cust: it.cust || '(거래처 미정)', title: it.title, body: it.body, received: it.received, due: it.due, status: it.status, contact: it.contact, owner: it.owner }); } catch (e) { throw new Error((i + 1) + '번째 견적: ' + e.message); }
+      var k = f.title + '|' + f.received;
+      if (have[k]) { res.skipped++; if (it.key) byKey[it.key] = have[k]; return; }
+      var id = newId_('Q') + i; have[k] = id; if (it.key) byKey[it.key] = id;
+      var prev = it.prev ? (byKey[it.prev] || '') : '';
+      var log = [{ at: now, by: session.name, text: '가져오기로 등록' + (req.source ? ' (' + String(req.source).slice(0, 30) + ')' : '') }];
+      rows.push([id, f.biz, f.cust, f.title, f.body, "'" + f.received, "'" + f.due, f.status, "'" + f.submitted, f.summary, '', f.owner, session.name + ' (' + session.id + ')', now, now, JSON.stringify(log), prev, prev ? (REQ_LINK_TYPES.indexOf(it.prevType) !== -1 ? it.prevType : '관련 건') : '', f.contact]);
+      (it.steps || []).slice(0, 100).forEach(function (x, j) {
+        var v; try { v = reqStepClean_(x); } catch (e) { throw new Error((i + 1) + '번째 견적 ' + (j + 1) + '번째 단계: ' + e.message); }
+        steps.push([newId_('P') + i + '_' + j, id, "'" + v.date, v.kind, v.text, v.amount, v.partner, see ? v.cost : '', session.name, now, now]);
+        if (v.kind === '제출' && v.date) { var rr = rows[rows.length - 1]; if (v.date > String(rr[8]).replace(/^'/, '')) rr[8] = "'" + v.date; }
+      });
+      res.added++;
+    });
+    if (rows.length) sh.getRange(sh.getLastRow() + 1, 1, rows.length, REQ_HEADER.length).setValues(rows);
+    if (steps.length) { var ss = reqStepsSheet_(); ss.getRange(ss.getLastRow() + 1, 1, steps.length, REQ_STEP_HEADER.length).setValues(steps); }
+    res.steps = steps.length;
+    return res;
+  } finally { lock.releaseLock(); }
 }
 
 /* ───────────── 일정 (달력 · 할 일 · 휴가 · 공휴일) ─────────────

@@ -832,6 +832,7 @@ table.data.notes-table td.wrap { min-width: 180px; white-space: normal; }
 .rstatus.r-2 { background: rgba(42, 157, 176, .16); color: #176E7C; }
 .rstatus.r-3 { background: rgba(79, 168, 100, .18); color: #2C7040; }
 .rstatus.r-4 { background: var(--bg-2); color: var(--muted); }
+.rstatus.r-5 { background: rgba(224, 71, 46, .12); color: #A8331F; }
 table.data.reqs .left { text-align: left; }
 table.data.reqs tbody tr { cursor: pointer; }
 table.data.reqs tbody tr:hover td { background: var(--panel-2); }
@@ -1140,3 +1141,28 @@ table.data.rpt tr.tot td { border-top: 1.5px solid var(--ink); font-weight: 700;
   body.print-manual .man-grid { display: block; margin: 0 !important; }
   body.print-manual .man-doc { border: 0; box-shadow: none; padding: 0; }
 }
+
+/* 견적 진행 기록 (타임라인) */
+.req-badges { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 2px; }
+.req-badges i { font-style: normal; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: var(--bg-2); color: var(--ink-2); }
+.req-link-in { display: flex; gap: 6px; } .req-link-in select:first-child { flex: 1; min-width: 0; }
+.tl { list-style: none; margin: 14px 0 0; padding: 0; position: relative; }
+.tl::before { content: ''; position: absolute; left: 15px; top: 6px; bottom: 6px; width: 2px; background: var(--line); }
+.tl-it { display: grid; grid-template-columns: 32px minmax(0, 1fr); gap: 10px; padding: 0 0 14px; position: relative; }
+.tl-dot { width: 32px; height: 32px; border-radius: 50%; background: var(--panel); border: 2px solid var(--line-strong); display: grid; place-items: center; font-size: 15px; position: relative; z-index: 1; }
+.tl-it.k-제출 .tl-dot { border-color: var(--cyan); } .tl-it.k-할인요청 .tl-dot, .tl-it.k-수정요청 .tl-dot { border-color: var(--orange); }
+.tl-it.k-협력사견적 .tl-dot { border-color: #8A6FD1; } .tl-it.k-수주 .tl-dot { border-color: var(--green); } .tl-it.k-미수주 .tl-dot { border-color: var(--red); }
+.tl-body { background: var(--panel-2); border-radius: 12px; padding: 9px 12px; min-width: 0; }
+.tl-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 14px; }
+.tl-date { margin-left: auto; font-size: 12px; color: var(--muted); }
+.tl-txt { font-size: 13.5px; line-height: 1.6; margin-top: 4px; color: var(--ink-2); overflow-wrap: anywhere; }
+.tl-mg { font-size: 12px; font-weight: 700; color: #2C7040; background: rgba(79, 168, 100, .14); border-radius: 999px; padding: 1px 8px; }
+.tl-mg.neg { color: #A8331F; background: rgba(224, 71, 46, .12); }
+.tl-files { list-style: none; margin: 6px 0 0; padding: 0; }
+.tl-files li { display: flex; align-items: center; gap: 4px; }
+.tl-files .doc-name { flex: 1; min-width: 0; }
+.tl-add { display: inline-block; margin-top: 6px; font-size: 12px; font-weight: 700; color: var(--muted); cursor: pointer; }
+.tl-add:hover { color: var(--orange); }
+.req-links { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.req-links .doc-name small:first-child { display: block; color: var(--orange); font-weight: 700; }
+.step-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
