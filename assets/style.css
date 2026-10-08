@@ -1170,3 +1170,13 @@ table.data.rpt tr.tot td { border-top: 1.5px solid var(--ink); font-weight: 700;
 /* 분석 주력 경로: 위(많이 나가는 경로) · 아래(손실 경로) */
 .rt-stack .rt-loss { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
 .rt-stack table.data td.wrap { min-width: 180px; }
+
+/* 분석: 매출처 빠른 선택 · 매출처별 실적 표 */
+.cust-quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--line); }
+.cust-quick .chip { padding: 5px 11px; font-size: 13px; }
+.ct-table th.sortable { cursor: pointer; user-select: none; } .ct-table th.sortable.on { color: var(--ink); }
+.ct-table tr.ct-row { cursor: pointer; } .ct-table tr.ct-row.open td { background: var(--panel-2); }
+.ct-tog { display: inline-block; width: 12px; color: var(--muted); }
+.ct-table tr.ct-sub td { padding-top: 6px; padding-bottom: 6px; font-size: 13px; border-bottom-style: dashed; }
+.ct-table tr.ct-sub td:first-child { padding-left: 32px; }
+.ct-table tfoot td { border-top: 2px solid var(--ink); font-weight: 700; }

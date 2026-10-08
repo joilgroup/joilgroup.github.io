@@ -2850,10 +2850,11 @@
         (an.hasCats ? '<button type="button" class="chip ' + (f.withCats ? 'on' : '') + '" id="anWithCats">분류 항목 포함</button>' : '') +
         (state.user.role === 'admin' ? '<button type="button" class="chip ' + (an.showExcluded ? 'on' : '') + '" id="anShowX" title="관리자만 보이는 버튼">제외된 행만 보기</button>' : '') +
         '</div></div>' : '') +
-      '</div><div id="anChips" class="anchips"></div></div>' +
+      '</div><div id="anCustChips" class="cust-quick"></div><div id="anChips" class="anchips"></div></div>' +
       (an.showExcluded ? '<p class="notice" style="margin-top:16px">지금은 <b>제외 규칙에 걸린 행만</b> 보고 있어요. (관리자 확인용) 다시 누르면 원래대로 돌아가요.</p>' : '') +
-      '<div id="anKpi" class="kpis"></div><div id="anAlerts"></div><div id="anCats"></div>' +
+      '<div id="anKpi" class="kpis"></div><div id="anCats"></div>' +
       '<div class="an-charts"><div class="card" id="anTrend"></div><div class="card" id="anRate"></div></div>' +
+      '<div class="card" id="anCustTbl" style="margin-top:16px"></div>' +
       '<div class="card" id="anGroup" style="margin-top:16px"></div>' +
       '<div id="anRoutes" style="margin-top:16px"></div>' +
       '<div class="card" id="anDetail" style="margin-top:16px"></div>';
@@ -2923,11 +2924,11 @@
       '<button type="button" data-c="prev" class="' + (an.cmp === 'prev' ? 'on' : '') + '">직전 기간</button><button type="button" data-c="yoy" class="' + (an.cmp === 'yoy' ? 'on' : '') + '">전년 같은 기간</button></div>' +
       '<span class="small muted">' + esc(cmpText) + (hasCmp ? '' : ' · <b>비교할 데이터가 없어요</b>') + '</span></div>';
     $$('#anCmp button').forEach(function (b) { b.onclick = function () { an.cmp = b.dataset.c; var y = window.scrollY; renderAnalysis(); window.scrollTo(0, y); }; });
-    drawAlerts(cr, hasCmp);
-
+    drawCustChips();
     drawCats();
     if (an.dim === 'cat' && !(an.hasCats && f.withCats)) an.dim = 'cust';
     drawTrend();
+    drawCustTable(rows);
     drawGroup();
     drawTopRoutes(rows);
     drawDetail(rows);
@@ -3020,49 +3021,65 @@
       '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(0) + '" y2="' + y(0) + '" class="base"/>' + bars + '</svg><div class="tip hidden"></div></div>';
   }
 
-  /** 비교 기간보다 이익률이 눈에 띄게 떨어졌거나 적자로 돌아선 매출처 */
-  function drawAlerts(cr, hasCmp) {
-    var an = state.an, box = $('#anAlerts'), al = an.alert;
-    if (!box) return;
-    if (!hasCmp || an.showExcluded) { box.innerHTML = ''; return; }
-    var cur = {}, prev = {};
-    var add = function (map, r) { var k = r[C.disp], x = map[k] || (map[k] = { k: k, n: 0, s: 0, b: 0 }); x.n++; x.s += r[C.sales]; x.b += r[C.buys]; };
-    anFilter('cust').forEach(function (r) { add(cur, r); });
-    anFilter('cust', { from: cr.from, to: cr.to }).forEach(function (r) { add(prev, r); });
-    var sel = an.f.sel.cust || [];
-    var list = Object.keys(cur).map(function (k) {
-      var a = cur[k], b = prev[k];
-      a.p = a.s - a.b; a.r = pct(a.p, a.s);
-      if (!b) return null;
-      b.p = b.s - b.b; b.r = pct(b.p, b.s);
-      a.cr = b.r; a.cp = b.p; a.dr = a.r != null && b.r != null ? a.r - b.r : null; a.dp = a.p - b.p;
-      a.turned = b.p > 0 && a.p < 0;
-      return a;
-    }).filter(function (x) {
-      return x && (!sel.length || sel.indexOf(x.k) !== -1) && x.s >= al.minSales && (x.turned || (x.dr != null && x.dr <= -al.drop));
-    }).sort(function (a, b) { return (a.turned === b.turned ? 0 : a.turned ? -1 : 1) || a.dr - b.dr; });
-    box.innerHTML = '<div class="card alerts-card">' +
-      '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Watch · 확인해 볼 곳</div><h3>' + esc(cr.label) + '보다 이익률이 떨어진 매출처 ' +
-      '<span class="' + (list.length ? 'neg' : 'muted') + '">' + list.length + '곳</span></h3></div>' +
-      '<div class="actions small" style="align-items:center">이익률 <input class="input input-sm num" id="alDrop" type="number" min="0" step="0.5" value="' + al.drop + '" style="width:64px">%p 이상 하락 · 매출 <select class="input input-sm" id="alMin" style="width:auto">' +
-      [[0, '전체'], [500000, '50만↑'], [1000000, '100만↑'], [5000000, '500만↑'], [10000000, '1,000만↑']].map(function (o) { return '<option value="' + o[0] + '"' + (al.minSales === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div></div>' +
-      (list.length ? '<div class="table-wrap"><table class="data grp"><thead><tr><th class="left">매출처</th><th>이익률</th><th>' + esc(cr.label) + '</th><th>변화</th><th>이익</th><th>이익 증감</th><th>매출</th><th>건수</th></tr></thead><tbody>' +
-        list.slice(0, 15).map(function (x) {
-          return '<tr class="pick" data-k="' + esc(x.k) + '"><td class="left wrap">' + (x.turned ? '<span class="badge down">적자 전환</span> ' : '') + esc(x.k) + ' <button class="cc-btn" data-cc="' + esc(x.k) + '">상세</button>' +
-            notesBetween(cr.from, an.f.to, x.k).map(noteBadge).join('') + '</td>' +
-            '<td class="num' + (x.r < 0 ? ' neg' : '') + '">' + pctText(x.r) + '</td><td class="num muted">' + pctText(x.cr) + '</td>' +
-            '<td class="num">' + deltaHtml(x.dr, '%p', true) + '</td><td class="num' + (x.p < 0 ? ' neg' : '') + '">' + won(x.p) + '</td>' +
-            '<td class="num' + (x.dp < 0 ? ' neg' : '') + '">' + (x.dp > 0 ? '+' : '') + won(x.dp) + '</td><td class="num">' + won(x.s) + '</td><td class="num">' + won(x.n) + '</td></tr>';
-        }).join('') + '</tbody></table></div>' + (list.length > 15 ? '<p class="hint" style="margin:6px 0 0">상위 15곳만 표시 · 아래 순위표에서 "이익률 하락 큰 순"으로 전체를 볼 수 있어요.</p>' : '') +
-        '<p class="hint" style="margin:8px 0 0">행을 누르면 그 매출처로 걸러져서, 아래 "경로 조합" 탭에서 어느 경로에서 손실이 났는지 바로 볼 수 있어요.</p>'
-        : '<p class="muted" style="margin:0">조건에 해당하는 매출처가 없어요. 👍</p>') + '</div>';
-    var later = function () { clearTimeout(an.alertTimer); an.alertTimer = setTimeout(function () { drawAlerts(cr, hasCmp); }, 0); };
-    $('#alDrop').onchange = function () { al.drop = Math.max(0, Number(this.value) || 0); later(); };
-    $('#alMin').onchange = function () { al.minSales = Number(this.value); later(); };
-    $$('#anAlerts [data-cc]').forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); openCustCard(b.dataset.cc); }; });
-    $$('#anAlerts tr.pick').forEach(function (tr) {
-      tr.onclick = function () { an.f.sel.cust = [tr.dataset.k]; an.dim = 'route'; an.sort = { key: 'profit', dir: 1 }; an.detailPage = 0; renderAnalysis(); var g = $('#anGroup'); if (g) g.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+  /** 매출처 빨리 고르기: 매출 상위 20곳 칩 (누르면 바로 선택/해제) */
+  function drawCustChips() {
+    var an = state.an, f = an.f, box = $('#anCustChips'); if (!box) return;
+    var saved = f.sel.cust; f.sel.cust = []; var rows = anFilter('cust'); f.sel.cust = saved;
+    var g = {}; rows.forEach(function (r) { var k = r[C.disp]; g[k] = (g[k] || 0) + (r[C.sales] || 0); });
+    var picked = f.sel.cust || [], top = Object.keys(g).sort(function (a, b) { return g[b] - g[a]; }).slice(0, 20);
+    picked.forEach(function (k) { if (top.indexOf(k) === -1) top.push(k); });
+    box.innerHTML = '<span class="flabel">빠른 선택</span><button type="button" class="chip' + (picked.length ? '' : ' on') + '" data-all>전체</button>' +
+      top.map(function (k) { return '<button type="button" class="chip' + (picked.indexOf(k) !== -1 ? ' on' : '') + '" data-ck="' + esc(k) + '" title="매출 ' + esc(won(g[k] || 0)) + '원">' + esc(k) + '</button>'; }).join('') +
+      '<button type="button" class="btn btn-sm btn-ghost" id="anCustMore">🔍 더 찾기</button>';
+    $$('[data-ck]', box).forEach(function (b) { b.onclick = function () { var arr = f.sel.cust = (f.sel.cust || []).slice(), i = arr.indexOf(b.dataset.ck); if (i === -1) arr.push(b.dataset.ck); else arr.splice(i, 1); an.detailPage = 0; var y = window.scrollY; renderAnalysis(); window.scrollTo(0, y); }; });
+    $('[data-all]', box).onclick = function () { f.sel.cust = []; an.detailPage = 0; var y = window.scrollY; renderAnalysis(); window.scrollTo(0, y); };
+    $('#anCustMore', box).onclick = openCustPicker;
+  }
+  /** 매출처별 실적 표 (기간 합계 · 누르면 월별) */
+  function drawCustTable(rows) {
+    var an = state.an, f = an.f, v = an.ctView = an.ctView || { sort: 's', dir: -1, limit: 30, open: {} }, box = $('#anCustTbl'); if (!box) return;
+    var g = {}, tot = { n: 0, s: 0, b: 0 };
+    rows.forEach(function (r) {
+      var k = r[C.disp], m = String(r[C.date]).slice(0, 7), x = g[k] || (g[k] = { k: k, n: 0, s: 0, b: 0, m: {} });
+      var y = x.m[m] || (x.m[m] = { n: 0, s: 0, b: 0 });
+      x.n++; x.s += r[C.sales] || 0; x.b += r[C.buys] || 0; y.n++; y.s += r[C.sales] || 0; y.b += r[C.buys] || 0;
+      tot.n++; tot.s += r[C.sales] || 0; tot.b += r[C.buys] || 0;
     });
+    tot.p = tot.s - tot.b; tot.r = pct(tot.p, tot.s);
+    var list = Object.keys(g).map(function (k) { var x = g[k]; x.p = x.s - x.b; x.r = pct(x.p, x.s); x.share = tot.s ? x.s / tot.s * 100 : 0; return x; });
+    var key = v.sort, dir = v.dir;
+    list.sort(function (a, b) { if (key === 'k') return dir * a.k.localeCompare(b.k); var av = a[key] == null ? -1e15 : a[key], bv = b[key] == null ? -1e15 : b[key]; return dir * (av - bv) || b.s - a.s; });
+    var months = []; for (var mm = f.from; mm <= f.to; mm = addMonths(mm, 1)) months.push(mm);
+    var cols = [['k', '매출처', 'left'], ['n', '건수'], ['s', '매출'], ['b', '매입'], ['p', '이익'], ['r', '이익률'], ['share', '매출 비중']];
+    var cell = function (x) { return '<td class="num">' + won(x.n) + '</td><td class="num">' + won(x.s) + '</td><td class="num">' + won(x.b) + '</td><td class="num' + (x.p < 0 ? ' neg' : '') + '">' + won(x.p) + '</td><td class="num' + (x.r != null && x.r < 0 ? ' neg' : '') + '">' + pctText(x.r) + '</td>'; };
+    var shown = list.slice(0, v.limit);
+    box.innerHTML = '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Customers · 매출처별 실적</div><h3>매출처별 건수 · 매출 · 매입 · 이익 <span class="muted small">' + won(list.length) + '곳 · ' + esc(f.from === f.to ? f.from : f.from + ' ~ ' + f.to) + '</span></h3></div>' +
+      '<div class="actions"><button class="btn btn-sm" id="ctOpenAll">' + (Object.keys(v.open).length ? '월별 모두 접기' : '월별 모두 펼치기') + '</button><button class="btn btn-sm" id="ctX"' + (list.length ? '' : ' disabled') + '>엑셀</button></div></div>' +
+      (list.length ? '<div class="table-wrap"><table class="data ct-table"><thead><tr>' + cols.map(function (c) { return '<th class="' + (c[2] || '') + ' sortable' + (key === c[0] ? ' on' : '') + '" data-sk="' + c[0] + '">' + c[1] + (key === c[0] ? (dir < 0 ? ' ▼' : ' ▲') : '') + '</th>'; }).join('') + '<th></th></tr></thead><tbody>' +
+        shown.map(function (x) {
+          var open = !!v.open[x.k];
+          return '<tr class="ct-row' + (open ? ' open' : '') + '" data-ct="' + esc(x.k) + '"><td class="left"><span class="ct-tog">' + (open ? '▾' : '▸') + '</span> <b>' + esc(x.k) + '</b></td>' + cell(x) + '<td class="num muted">' + x.share.toFixed(1) + '%</td><td><button class="btn btn-sm btn-ghost" data-cc="' + esc(x.k) + '">상세</button></td></tr>' +
+            (open ? months.map(function (m) { var y = x.m[m] || { n: 0, s: 0, b: 0 }; y.p = y.s - y.b; y.r = pct(y.p, y.s); return '<tr class="ct-sub"><td class="left small muted">' + m + '</td>' + (y.n ? cell(y) : '<td class="num muted" colspan="5">–</td>') + '<td></td><td></td></tr>'; }).join('') : '');
+        }).join('') +
+        '</tbody><tfoot><tr class="ct-tot"><td class="left"><b>합계</b></td>' + cell(tot) + '<td class="num">100%</td><td></td></tr></tfoot></table></div>' +
+        (list.length > shown.length ? '<div style="text-align:center;margin-top:10px"><button class="btn btn-sm" id="ctMore">더 보기 (' + won(list.length - shown.length) + '곳 남음)</button></div>' : '')
+        : '<p class="muted" style="margin:0">지금 조건에 맞는 실적이 없어요.</p>') +
+      '<p class="hint" style="margin:8px 0 0">행을 누르면 그 매출처의 월별 숫자가 펼쳐져요. 제목을 누르면 정렬이 바뀌어요.</p>';
+    var redraw = function () { drawCustTable(rows); };
+    $$('[data-sk]', box).forEach(function (th) { th.onclick = function () { if (v.sort === th.dataset.sk) v.dir = -v.dir; else { v.sort = th.dataset.sk; v.dir = th.dataset.sk === 'k' ? 1 : -1; } redraw(); }; });
+    $$('tr[data-ct]', box).forEach(function (tr) { tr.onclick = function () { var k = tr.dataset.ct; if (v.open[k]) delete v.open[k]; else v.open[k] = 1; redraw(); }; });
+    $$('[data-cc]', box).forEach(function (b) { b.onclick = function (e) { e.stopPropagation(); openCustCard(b.dataset.cc); }; });
+    $('#ctOpenAll', box).onclick = function () { if (Object.keys(v.open).length) v.open = {}; else shown.forEach(function (x) { v.open[x.k] = 1; }); redraw(); };
+    var more = $('#ctMore', box); if (more) more.onclick = function () { v.limit += 50; redraw(); };
+    var xb = $('#ctX', box); if (xb) xb.onclick = function () {
+      var btn = this; busy(btn, true, '…');
+      var r1 = function (x) { return [x.n, x.s, x.b, x.p, x.r == null ? '' : +x.r.toFixed(1)]; };
+      var monthly = []; list.forEach(function (x) { months.forEach(function (m) { var y = x.m[m]; if (!y) return; var p2 = y.s - y.b; monthly.push([x.k, m, y.n, y.s, y.b, p2, y.s ? +(p2 / y.s * 100).toFixed(1) : '']); }); });
+      downloadXlsx('JOIL_매출처별실적_' + f.from + '_' + f.to + '.xlsx', [
+        { name: '기간 합계', widths: [30, 8, 14, 14, 14, 9, 9], rows: [['매출처', '건수', '매출', '매입', '이익', '이익률(%)', '매출 비중(%)']].concat(list.map(function (x) { return [x.k].concat(r1(x)).concat([+x.share.toFixed(1)]); })).concat([['합계'].concat(r1(tot)).concat([100])]) },
+        { name: '월별', widths: [30, 9, 8, 14, 14, 14, 9], rows: [['매출처', '월', '건수', '매출', '매입', '이익', '이익률(%)']].concat(monthly) }
+      ]).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
+    };
   }
 
   function niceMax(v) {
@@ -7415,7 +7432,8 @@
         '위쪽에서 <b>기간</b>과 <b>사업자</b>를 고르고, 아래 순위표에서 매출처·발지·착지·기사·차량·중량·경로 조합별로 나눠 볼 수 있습니다.',
         '순위표의 줄을 누르면 그 조건으로 걸러지고, 위쪽 칩의 ✕를 누르면 풀립니다. <b>초기화</b>로 한 번에 풀 수도 있어요.',
         '<b>이익 = 매출 − 매입</b>, <b>이익률 = 이익 ÷ 매출</b>입니다. 비교 기준은 직전 같은 기간 또는 전년 같은 기간 중에서 고릅니다.',
-        '<b>확인해 볼 곳</b>은 비교 기간보다 이익률이 떨어졌거나 적자로 바뀐 매출처입니다. 매출처 이름 옆 <b>상세</b>를 누르면 월별 추이와 주력·손실 경로가 나옵니다.',
+        '<b>매출처별 실적</b> 표에 매출처마다 건수·매출·매입·이익·이익률이 나와요. 행을 누르면 월별 숫자가 펼쳐지고, <b>상세</b>를 누르면 월별 추이와 주력·손실 경로가 나와요.',
+        '위쪽 <b>빠른 선택</b>에는 매출 상위 20곳이 칩으로 떠 있어요. 누르면 바로 그 매출처로 걸러지고, 여러 개 누르면 함께 보여요. 다른 매출처는 <b>🔍 더 찾기</b>로 고르세요.',
         '<b>주력 경로</b>는 지금 조건(기간·사업자·고른 항목)에서 많이 나간 발지·착지·중량 조합이에요. 건수·매출·이익순으로 바꿔 보고, 오른쪽에서 손실 난 경로를 확인하세요.',
         '<b>보고서</b> 버튼으로 지금 조건의 월간 보고서를 인쇄/PDF·엑셀로 만들 수 있습니다.',
         '<b>📌 단가 변경 기록</b>: 재계약·유가연동·구두 합의처럼 엑셀에 없는 단가 변경을 적어 두면, 그래프에 📌로 표시되고 확인해 볼 곳·매출처 상세·월간 보고서에도 같이 나와요. 지난 기록은 엑셀 양식으로 한꺼번에 올릴 수 있어요.'
