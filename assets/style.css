@@ -1166,3 +1166,7 @@ table.data.rpt tr.tot td { border-top: 1.5px solid var(--ink); font-weight: 700;
 .req-links { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .req-links .doc-name small:first-child { display: block; color: var(--orange); font-weight: 700; }
 .step-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* 분석 주력 경로: 위(많이 나가는 경로) · 아래(손실 경로) */
+.rt-stack .rt-loss { margin-top: 22px; padding-top: 16px; border-top: 1px solid var(--line); }
+.rt-stack table.data td.wrap { min-width: 180px; }

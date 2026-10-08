@@ -2400,9 +2400,9 @@
       '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Routes · 주력 경로</div><h3>많이 나가는 경로 <span class="small muted">' + won(all.length) + '개 경로 · 지금 조건 기준</span></h3></div>' +
       '<div class="actions"><div class="segmented" id="rtSort">' + [['n', '건수순'], ['s', '매출순'], ['p', '이익순']].map(function (x) { return '<button type="button" data-k="' + x[0] + '" class="' + (set.sort === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
       '<button class="btn btn-sm" id="rtX"' + (all.length ? '' : ' disabled') + '>엑셀</button></div></div>' +
-      (all.length ? '<div class="cc-routes"><div><div class="table-wrap"><table class="data grp mini">' + head(true) + '<tbody>' + shown.map(row).join('') + '</tbody></table></div>' +
+      (all.length ? '<div class="rt-stack"><div><div class="table-wrap"><table class="data grp mini">' + head(true) + '<tbody>' + shown.map(row).join('') + '</tbody></table></div>' +
         (top.length > shown.length ? '<div style="text-align:center;margin-top:8px"><button class="btn btn-sm" id="rtMore">더 보기 (' + won(top.length - shown.length) + '개 남음)</button></div>' : '') + '</div>' +
-        '<div><h3 style="margin:0 0 8px">손실 경로 <span class="muted small">손실 큰 순</span></h3>' + (loss.length ? '<div class="table-wrap"><table class="data grp mini">' + head(false) + '<tbody>' + loss.map(function (x) { return row(x); }).join('') + '</tbody></table></div>' : '<p class="muted small" style="margin:0">손실 난 경로가 없어요. 👍</p>') + '</div></div>'
+        '<div class="rt-loss"><h3 style="margin:0 0 8px">손실 경로 <span class="muted small">손실 큰 순 10</span></h3>' + (loss.length ? '<div class="table-wrap"><table class="data grp mini">' + head(false) + '<tbody>' + loss.map(function (x) { return row(x); }).join('') + '</tbody></table></div>' : '<p class="muted small" style="margin:0">손실 난 경로가 없어요. 👍</p>') + '</div></div>'
         : '<p class="muted" style="margin:0">지금 조건에 맞는 오더가 없어요.</p>') + '</div>';
     $$('#rtSort button').forEach(function (b) { b.onclick = function () { set.sort = b.dataset.k; set.limit = 15; drawTopRoutes(rows); }; });
     var more = $('#rtMore'); if (more) more.onclick = function () { set.limit += 30; drawTopRoutes(rows); };
