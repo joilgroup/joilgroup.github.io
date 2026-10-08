@@ -1024,7 +1024,7 @@ var NOTE_KINDS = ['유가연동', '재계약', '신규', '인하', '기사 운�
 
 function notesSheet_() { return cacheSheet_(SHEET_NOTES, NOTE_HEADER); }
 function noteRowToObj_(r) {
-  return { id: String(r[0]), cust: String(r[1]), month: String(r[2]).replace(/^'/, '').slice(0, 7), kind: String(r[3]), target: String(r[4]), change: String(r[5]), basis: String(r[6]),
+  return { id: String(r[0]), cust: String(r[1]), month: String(r[2]).replace(/^'/, '').slice(0, 7), kind: String(r[3]), target: String(r[4]), change: noteChange_(r[5]), basis: String(r[6]),
     memo: String(r[7]), from: String(r[8] || ''), to: String(r[9] || ''), weight: String(r[10] || ''), by: String(r[11]), at: fmt_(r[12]), updated: fmt_(r[13]) };
 }
 function notesList_() {
@@ -1045,7 +1045,12 @@ function checkNote_(n) {
   return { cust: cut(cust, 100), month: month, kind: NOTE_KINDS.indexOf(n.kind) !== -1 ? n.kind : '기타', target: ['매출', '매입', '매출·매입'].indexOf(n.target) !== -1 ? n.target : '매출',
     change: cut(change, 100), basis: ['계약서', '메일', '구두', '내부'].indexOf(n.basis) !== -1 ? n.basis : '', memo: cut(memo, 1000), from: cut(n.from, 100), to: cut(n.to, 100), weight: cut(n.weight, 30) };
 }
-function noteRow_(id, n, by, at, upd) { return [id, n.cust, "'" + n.month, n.kind, n.target, n.change, n.basis, n.memo, n.from, n.to, n.weight, by, at, upd]; }
+function noteRow_(id, n, by, at, upd) { return [id, n.cust, "'" + n.month, n.kind, n.target, "'" + n.change, n.basis, n.memo, n.from, n.to, n.weight, by, at, upd]; }
+/** 시트가 "+2.2%"를 숫자 0.022로 바꿔 둔 예전 기록은 다시 퍼센트 글자로 */
+function noteChange_(v) {
+  if (typeof v === 'number') { var p = Math.round(v * 10000) / 100; return (p > 0 ? '+' : '') + p + '%'; }
+  return String(v).replace(/^'/, '');
+}
 
 function notesSave_(session, req) {
   var n = checkNote_(req.note), sh = notesSheet_(), now = now_(), who = session.name + ' (' + session.id + ')';

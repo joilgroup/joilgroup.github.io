@@ -1690,7 +1690,7 @@
       f: { from: '', to: '', biz: [], sel: {}, q: '' }, dim: 'cust', sort: { key: 'sales', dir: -1 }, groupLimit: 50, groupQ: '',
       detailPage: 0, detailSort: -1, view: 'month',
       cmp: 'prev', trendMode: 'profit', routeWeight: true, minN: 90, alert: { drop: 3, minSales: 1000000 },
-      anom: { kind: 'buy', th: 20, minN: 3, limit: 30 }
+      routeView: { sort: 'n', limit: 15 }
     };
   }
 
@@ -1749,7 +1749,7 @@
       an.mapping = {};
       (r.mapping || []).forEach(function (m) { an.mapping[m.raw] = m; });
       an.rules = r.rules || [];
-      an.notes = r.notes || [];
+      an.notes = fixNotes(r.notes || []);
       var keys = an.index.map(function (x) { return x.key; });
       an.total = keys.length; an.loaded = 0;
       var batches = [];
@@ -2368,96 +2368,49 @@
       labels + hits + '</svg><div class="tip hidden"></div></div>';
   }
 
-  /* ───────── 분석: 단가 이상치 (A1 매입이 비싼 오더 · A4 매출이 싼 오더) ───────── */
-  /*
-   * 같은 발지+착지+중량 오더들의 보통 단가(중앙값)와 비교합니다. 기준 데이터는 기간과 무관하게 전체 데이터
-   * (숨긴 매출처·제외/분류 규칙은 반영), 표시는 지금 걸려 있는 필터 안의 오더만.
-   */
-  var anomalyCache = null;
-  function median(arr) {
-    var a = arr.slice().sort(function (x, y) { return x - y; }), m = a.length >> 1;
-    return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
-  }
-  function anomalyBase() {
-    var an = state.an, key = an.rows.length + '|' + JSON.stringify(an.rules || []) + '|' + JSON.stringify(an.mapping);
-    if (anomalyCache && anomalyCache.key === key) return anomalyCache;
+  /* ───────── 분석: 주력 경로 (지금 필터 안의 발지·착지·중량 조합) ───────── */
+  function routeStats(rows) {
     var g = {};
-    an.rows.forEach(function (r) {
-      if (r[C.hidden] || r[C.cat]) return;
-      var k = r[C.from] + '\u0001' + r[C.to] + '\u0001' + r[C.weight];
-      var x = g[k] || (g[k] = { buys: [], sales: [] });
-      if (r[C.buys] > 0) x.buys.push(r[C.buys]);
-      if (r[C.sales] > 0) x.sales.push(r[C.sales]);
-    });
-    var base = {};
-    Object.keys(g).forEach(function (k) {
-      base[k] = { nb: g[k].buys.length, ns: g[k].sales.length, mb: g[k].buys.length ? median(g[k].buys) : 0, ms: g[k].sales.length ? median(g[k].sales) : 0 };
-    });
-    anomalyCache = { key: key, base: base };
-    return anomalyCache;
-  }
-  function findAnomalies(kind, rows) {
-    var an = state.an, set = an.anom, base = anomalyBase().base, th = set.th / 100, out = [];
     rows.forEach(function (r) {
       if (r[C.cat]) return;
-      var b = base[r[C.from] + '\u0001' + r[C.to] + '\u0001' + r[C.weight]];
-      if (!b) return;
-      if (kind === 'buy') {
-        if (!(r[C.buys] > 0) || b.nb - 1 < set.minN) return;
-        if (r[C.buys] > b.mb * (1 + th)) out.push({ r: r, base: b.mb, n: b.nb, diff: r[C.buys] - b.mb, ratio: (r[C.buys] / b.mb - 1) * 100 });
-      } else {
-        if (!(r[C.sales] > 0) || b.ns - 1 < set.minN) return;
-        if (r[C.sales] < b.ms * (1 - th)) out.push({ r: r, base: b.ms, n: b.ns, diff: b.ms - r[C.sales], ratio: (r[C.sales] / b.ms - 1) * 100 });
-      }
+      var key = r[C.from] + '\u0001' + r[C.to] + '\u0001' + r[C.weight];
+      var x = g[key] || (g[key] = { from: r[C.from], to: r[C.to], w: r[C.weight], n: 0, s: 0, b: 0, cu: {} });
+      x.n++; x.s += r[C.sales] || 0; x.b += r[C.buys] || 0; var c = r[C.disp] || r[C.cust]; x.cu[c] = (x.cu[c] || 0) + 1;
     });
-    return out.sort(function (a, b) { return b.diff - a.diff; });
+    return Object.keys(g).map(function (k) {
+      var x = g[k]; x.p = x.s - x.b; x.r = pct(x.p, x.s);
+      var cs = Object.keys(x.cu).sort(function (a, b) { return x.cu[b] - x.cu[a]; }); x.cust = cs[0] || ''; x.custN = cs.length; delete x.cu;
+      return x;
+    });
   }
-
-  function drawAnomalies(rows) {
-    var an = state.an, set = an.anom, box = $('#anAnom');
-    if (!box) return;
-    if (an.showExcluded) { box.innerHTML = ''; return; }
-    var kind = set.kind;
-    var list = findAnomalies(kind, rows);
-    var total = list.reduce(function (s, x) { return s + x.diff; }, 0);
-    var shown = list.slice(0, set.limit);
-    var isBuy = kind === 'buy';
-    box.innerHTML = '<div class="card anom-card">' +
-      '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Outliers · 단가 이상치</div>' +
-      '<h3>' + (isBuy ? '매입이 평소보다 비싼 오더' : '매출이 평소보다 싼 오더') + ' <span class="' + (list.length ? 'neg' : 'muted') + '">' + won(list.length) + '건</span>' +
-      (list.length ? ' <span class="small muted">· ' + (isBuy ? '평소보다 더 나간 매입' : '평소보다 덜 받은 매출') + ' 합계 ' + won(Math.round(total)) + '원</span>' : '') + '</h3></div>' +
-      '<div class="actions" style="align-items:center"><div class="segmented" id="anomKind"><button type="button" data-k="buy" class="' + (isBuy ? 'on' : '') + '">매입 비싼 오더</button><button type="button" data-k="sell" class="' + (!isBuy ? 'on' : '') + '">매출 싼 오더</button></div>' +
-      '<span class="small">기준 ±<input class="input input-sm num" id="anomTh" type="number" min="5" max="200" step="5" value="' + set.th + '" style="width:62px">%</span>' +
-      '<span class="small">비교 오더 <select class="input input-sm" id="anomMin" style="width:auto">' + [2, 3, 5, 10].map(function (n) { return '<option value="' + n + '"' + (set.minN === n ? ' selected' : '') + '>' + n + '건↑</option>'; }).join('') + '</select></span>' +
-      '<button class="btn btn-sm" id="anomX"' + (list.length ? '' : ' disabled') + '>엑셀</button></div></div>' +
-      (list.length ? '<div class="bulk-table" style="max-height:520px"><table class="data bulk"><thead><tr><th class="left">날짜</th><th class="left">매출처</th><th class="left">경로 · 중량</th>' +
-        '<th>' + (isBuy ? '매입' : '매출') + '</th><th>보통 단가</th><th>차이</th><th>벗어난 정도</th><th>' + (isBuy ? '매출' : '매입') + '</th><th class="left">기사 · 차량</th><th class="left">비고</th></tr></thead><tbody>' +
-        shown.map(function (x) {
-          var r = x.r;
-          return '<tr><td class="left small">' + esc(r[C.date]) + '</td><td class="left wrap">' + esc(r[C.disp]) + '</td>' +
-            '<td class="left wrap"><span class="route"><span>' + esc(r[C.from]) + '</span><i>→</i><span>' + esc(r[C.to]) + '</span><em>' + esc(r[C.weight] || '-') + '</em></span><div class="addr-in">비교 ' + (x.n - 1) + '건</div></td>' +
-            '<td class="num strong">' + won(isBuy ? r[C.buys] : r[C.sales]) + '</td><td class="num muted">' + won(Math.round(x.base)) + '</td>' +
-            '<td class="num neg">' + (isBuy ? '+' : '−') + won(Math.round(x.diff)) + '</td><td class="num"><span class="dl bad">' + (x.ratio > 0 ? '+' : '') + x.ratio.toFixed(0) + '%</span></td>' +
-            '<td class="num">' + won(isBuy ? r[C.sales] : r[C.buys]) + '</td><td class="left small">' + esc(r[C.driver]) + ' ' + esc(r[C.car]) + '</td><td class="left small wrap">' + esc([r[C.etc], r[C.note]].filter(Boolean).join(' · ')) + '</td></tr>';
-        }).join('') + '</tbody></table></div>' +
-        (list.length > shown.length ? '<div style="text-align:center;margin-top:10px"><button class="btn btn-sm" id="anomMore">더 보기 (' + won(list.length - shown.length) + '건 남음)</button></div>' : '')
-        : '<p class="muted" style="margin:0">지금 조건에서는 기준을 벗어난 오더가 없어요.</p>') +
-      '<p class="hint" style="margin:8px 0 0">보통 단가 = 같은 발지·착지·중량 오더들의 중앙값 (전체 기간 기준). 대기·경유·수작업 같은 추가 요금이 붙은 오더도 걸릴 수 있으니 비고를 함께 보세요.</p></div>';
-    // 입력칸 포커스가 빠지면서 다시 그리기가 겹치지 않도록 한 박자 늦게
-    var later = function () { clearTimeout(an.anomTimer); an.anomTimer = setTimeout(function () { drawAnomalies(rows); }, 0); };
-    $$('#anomKind button').forEach(function (b) { b.onclick = function () { set.kind = b.dataset.k; set.limit = 30; later(); }; });
-    $('#anomTh').onchange = function () { set.th = Math.min(200, Math.max(5, Number(this.value) || 20)); later(); };
-    $('#anomMin').onchange = function () { set.minN = Number(this.value); later(); };
-    var more = $('#anomMore'); if (more) more.onclick = function () { set.limit += 100; drawAnomalies(rows); };
-    var ax = $('#anomX'); if (ax) ax.onclick = function () {
+  function drawTopRoutes(rows) {
+    var an = state.an, set = an.routeView = an.routeView || { sort: 'n', limit: 15 }, box = $('#anRoutes'); if (!box) return;
+    var all = routeStats(rows);
+    var key = { n: function (x) { return x.n; }, p: function (x) { return x.p; }, s: function (x) { return x.s; } }[set.sort];
+    var top = all.slice().sort(function (a, b) { return key(b) - key(a) || b.p - a.p; });
+    var loss = all.filter(function (x) { return x.p < 0; }).sort(function (a, b) { return a.p - b.p; }).slice(0, 10);
+    var shown = top.slice(0, set.limit);
+    var row = function (x, i) {
+      return '<tr>' + (i != null ? '<td class="num muted">' + (i + 1) + '</td>' : '') + '<td class="left wrap"><span class="route"><span>' + esc(x.from) + '</span><i>→</i><span>' + esc(x.to) + '</span><em>' + esc(x.w || '-') + '</em></span></td>' +
+        '<td class="left small wrap">' + esc(x.cust) + (x.custN > 1 ? ' <span class="muted">외 ' + (x.custN - 1) + '</span>' : '') + '</td><td class="num">' + won(x.n) + '</td><td class="num">' + won(x.s) + '</td>' +
+        '<td class="num' + (x.p < 0 ? ' neg' : '') + '">' + won(x.p) + '</td><td class="num' + (x.r != null && x.r < 0 ? ' neg' : '') + '">' + pctText(x.r) + '</td></tr>';
+    };
+    var head = function (rank) { return '<thead><tr>' + (rank ? '<th></th>' : '') + '<th class="left">경로 · 중량</th><th class="left">주 매출처</th><th>건수</th><th>매출</th><th>이익</th><th>이익률</th></tr></thead>'; };
+    box.innerHTML = '<div class="card">' +
+      '<div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:10px"><div><div class="eyebrow">Routes · 주력 경로</div><h3>많이 나가는 경로 <span class="small muted">' + won(all.length) + '개 경로 · 지금 조건 기준</span></h3></div>' +
+      '<div class="actions"><div class="segmented" id="rtSort">' + [['n', '건수순'], ['s', '매출순'], ['p', '이익순']].map(function (x) { return '<button type="button" data-k="' + x[0] + '" class="' + (set.sort === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('') + '</div>' +
+      '<button class="btn btn-sm" id="rtX"' + (all.length ? '' : ' disabled') + '>엑셀</button></div></div>' +
+      (all.length ? '<div class="cc-routes"><div><div class="table-wrap"><table class="data grp mini">' + head(true) + '<tbody>' + shown.map(row).join('') + '</tbody></table></div>' +
+        (top.length > shown.length ? '<div style="text-align:center;margin-top:8px"><button class="btn btn-sm" id="rtMore">더 보기 (' + won(top.length - shown.length) + '개 남음)</button></div>' : '') + '</div>' +
+        '<div><h3 style="margin:0 0 8px">손실 경로 <span class="muted small">손실 큰 순</span></h3>' + (loss.length ? '<div class="table-wrap"><table class="data grp mini">' + head(false) + '<tbody>' + loss.map(function (x) { return row(x); }).join('') + '</tbody></table></div>' : '<p class="muted small" style="margin:0">손실 난 경로가 없어요. 👍</p>') + '</div></div>'
+        : '<p class="muted" style="margin:0">지금 조건에 맞는 오더가 없어요.</p>') + '</div>';
+    $$('#rtSort button').forEach(function (b) { b.onclick = function () { set.sort = b.dataset.k; set.limit = 15; drawTopRoutes(rows); }; });
+    var more = $('#rtMore'); if (more) more.onclick = function () { set.limit += 30; drawTopRoutes(rows); };
+    var x = $('#rtX'); if (x) x.onclick = function () {
       var btn = this; busy(btn, true, '…');
-      downloadXlsx('JOIL_단가이상치_' + (isBuy ? '매입' : '매출') + '_' + an.f.from + '_' + an.f.to + '.xlsx', [{
-        name: isBuy ? '매입 비싼 오더' : '매출 싼 오더', widths: [11, 10, 26, 18, 18, 8, 12, 12, 12, 9, 12, 10, 12, 20, 20],
-        rows: [['날짜', '사업자', '매출처', '발지', '착지', '중량', isBuy ? '매입' : '매출', '보통 단가', '차이', '벗어난 정도(%)', isBuy ? '매출' : '매입', '기사명', '차량번호', '기타1', '비고']].concat(list.map(function (x) {
-          var r = x.r;
-          return [r[C.date], r[C.biz], r[C.disp], r[C.from], r[C.to], r[C.weight], isBuy ? r[C.buys] : r[C.sales], Math.round(x.base), Math.round(x.diff), Math.round(x.ratio), isBuy ? r[C.sales] : r[C.buys], r[C.driver], r[C.car], r[C.etc], r[C.note]];
-        }))
-      }]).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
+      downloadXlsx('JOIL_주력경로_' + an.f.from + '_' + an.f.to + '.xlsx', [{ name: '주력 경로', widths: [20, 20, 8, 26, 8, 14, 14, 14, 9],
+        rows: [['발지', '착지', '중량', '주 매출처', '건수', '매출', '매입', '이익', '이익률(%)']].concat(top.map(function (r) { return [r.from, r.to, r.w, r.cust, r.n, r.s, r.b, r.p, r.r == null ? '' : +r.r.toFixed(1)]; })) }])
+        .catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
   }
 
@@ -2553,8 +2506,7 @@
         .filter(function (x) { return x && x.s >= an.alert.minSales && (x.turned || (x.dr != null && x.dr <= -an.alert.drop)); })
         .sort(function (a, b) { return a.dr - b.dr; }).slice(0, 10);
     }
-    var buyAnom = findAnomalies('buy', rows), sellAnom = findAnomalies('sell', rows);
-    var sumDiff = function (l) { return Math.round(l.reduce(function (s, x) { return s + x.diff; }, 0)); };
+    var topRoutes = routeStats(rows).sort(function (a, b) { return b.n - a.n || b.p - a.p; });
     // 월별 (최근 12개월)
     var all = anFilter(null, { from: '', to: '' }), byM = {};
     all.forEach(function (r) { var m = r[C.date].slice(0, 7); var x = byM[m] || (byM[m] = { s: 0, b: 0, n: 0 }); x.s += r[C.sales]; x.b += r[C.buys]; x.n++; });
@@ -2592,10 +2544,7 @@
         (watch.length ? tbl(watch, [['매출처', function (x) { return '<td class="left">' + (x.turned ? '<b class="neg">[적자 전환]</b> ' : '') + esc(x.k) + '</td>'; }, 1], ['이익률', function (x) { return numCell(pctText(x.r), x.r < 0); }], [esc(cr.label), function (x) { return numCell(pctText(x.cr)); }], ['변화', function (x) { return '<td class="num">' + deltaHtml(x.dr, '%p', true) + '</td>'; }], ['이익', function (x) { return numCell(won(x.p), x.p < 0); }], ['매출', function (x) { return numCell(won(x.s)); }]]) : '<p class="muted">해당하는 매출처가 없습니다.</p>') + '</section>' : '') +
       '<section class="rpt-two"><div><h2>' + (hasCmp ? '5' : '4') + '. 이익 상위 10</h2>' + tbl(topP, [['매출처', function (x) { return '<td class="left">' + esc(x.k) + '</td>'; }, 1], ['이익', function (x) { return numCell(won(x.p), x.p < 0); }], ['이익률', function (x) { return numCell(pctText(x.r)); }], ['건수', function (x) { return numCell(won(x.n)); }]]) + '</div>' +
       '<div><h2>' + (hasCmp ? '6' : '5') + '. 손실 · 저마진 10 <span class="small muted">이익률 3% 미만</span></h2>' + (lowP.length ? tbl(lowP, [['매출처', function (x) { return '<td class="left">' + esc(x.k) + '</td>'; }, 1], ['이익', function (x) { return numCell(won(x.p), x.p < 0); }], ['이익률', function (x) { return numCell(pctText(x.r), x.r < 0); }], ['건수', function (x) { return numCell(won(x.n)); }]]) : '<p class="muted">없습니다.</p>') + '</div></section>' +
-      '<section><h2>' + (hasCmp ? '7' : '6') + '. 단가 이상치 <span class="small muted">같은 경로·중량 보통 단가 대비 ±' + an.anom.th + '%</span></h2>' +
-      '<table class="data rpt"><tbody><tr><td class="left">매입이 평소보다 비싼 오더</td><td class="num">' + won(buyAnom.length) + '건</td><td class="num neg">+' + won(sumDiff(buyAnom)) + '원</td></tr>' +
-      '<tr><td class="left">매출이 평소보다 싼 오더</td><td class="num">' + won(sellAnom.length) + '건</td><td class="num neg">−' + won(sumDiff(sellAnom)) + '원</td></tr></tbody></table>' +
-      (buyAnom.length ? '<p class="small muted" style="margin:8px 0 4px">매입 초과 상위 5건</p>' + tbl(buyAnom.slice(0, 5), [['날짜', function (x) { return '<td class="left small">' + esc(x.r[C.date]) + '</td>'; }, 1], ['매출처', function (x) { return '<td class="left">' + esc(x.r[C.disp]) + '</td>'; }, 1], ['경로', function (x) { return '<td class="left">' + esc(x.r[C.from] + ' → ' + x.r[C.to] + ' · ' + x.r[C.weight]) + '</td>'; }, 1], ['매입', function (x) { return numCell(won(x.r[C.buys])); }], ['보통', function (x) { return numCell(won(Math.round(x.base))); }], ['기사', function (x) { return '<td class="left small">' + esc(x.r[C.driver]) + '</td>'; }, 1]]) : '') +
+      '<section><h2>' + (hasCmp ? '7' : '6') + '. 주력 경로 10 <span class="small muted">건수 많은 순</span></h2>' + (topRoutes.length ? tbl(topRoutes.slice(0, 10), [['경로 · 중량', function (x) { return '<td class="left">' + esc(x.from + ' → ' + x.to + ' · ' + (x.w || '-')) + '</td>'; }, 1], ['주 매출처', function (x) { return '<td class="left small">' + esc(x.cust) + '</td>'; }, 1], ['건수', function (x) { return numCell(won(x.n)); }], ['매출', function (x) { return numCell(won(x.s)); }], ['이익', function (x) { return numCell(won(x.p), x.p < 0); }], ['이익률', function (x) { return numCell(pctText(x.r), x.r != null && x.r < 0); }]]) : '<p class="muted">없습니다.</p>') +
       '</section>' +
       (function () {
         var ns = notesBetween(hasCmp ? cr.from : f.from, f.to, null).filter(function (n) { return !(f.sel.cust || []).length || n.cust === '(전체)' || f.sel.cust.indexOf(n.cust) !== -1; });
@@ -2623,7 +2572,7 @@
         { name: '매출처별', widths: [32, 8, 15, 15, 15, 9], rows: [['매출처', '건수', '매출', '매입', '이익', '이익률(%)']].concat(custRows.map(function (x) { return [x.k, x.n, x.s, x.b, x.p, x.r == null ? '' : +x.r.toFixed(1)]; })) }
       ];
       if (hasCmp) sheets.push({ name: '확인해 볼 곳', widths: [32, 9, 12, 10, 15, 15], rows: [['매출처', '이익률(%)', cr.label + '(%)', '변화(%p)', '이익', '매출']].concat(watch.map(function (x) { return [(x.turned ? '[적자 전환] ' : '') + x.k, x.r == null ? '' : +x.r.toFixed(1), x.cr == null ? '' : +x.cr.toFixed(1), x.dr == null ? '' : +x.dr.toFixed(1), x.p, x.s]; })) });
-      sheets.push({ name: '단가 이상치', widths: [8, 11, 26, 18, 18, 8, 12, 12, 12, 10], rows: [['구분', '날짜', '매출처', '발지', '착지', '중량', '금액', '보통 단가', '차이', '기사명']].concat(buyAnom.map(function (x) { return ['매입 비쌈', x.r[C.date], x.r[C.disp], x.r[C.from], x.r[C.to], x.r[C.weight], x.r[C.buys], Math.round(x.base), Math.round(x.diff), x.r[C.driver]]; })).concat(sellAnom.map(function (x) { return ['매출 쌈', x.r[C.date], x.r[C.disp], x.r[C.from], x.r[C.to], x.r[C.weight], x.r[C.sales], Math.round(x.base), Math.round(x.diff), x.r[C.driver]]; })) });
+      sheets.push({ name: '주력 경로', widths: [20, 20, 8, 26, 8, 14, 14, 14, 9], rows: [['발지', '착지', '중량', '주 매출처', '건수', '매출', '매입', '이익', '이익률(%)']].concat(topRoutes.map(function (r) { return [r.from, r.to, r.w, r.cust, r.n, r.s, r.b, r.p, r.r == null ? '' : +r.r.toFixed(1)]; })) });
       downloadXlsx('JOIL_매출매입보고_' + period.replace(/ ~ /, '_') + '.xlsx', sheets).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
   }
@@ -2643,6 +2592,11 @@
   }
   function attachNotes(data, custs) { data.forEach(function (d) { d.notes = notesFor(d.m, custs); }); return data; }
   function noteRoute(n) { return ([n.from, n.to].filter(Boolean).join('→') + ' ' + (n.weight || '')).trim(); }
+  /** 서버가 숫자로 돌려준 변동(0.022000000000000002)을 퍼센트 글자로 */
+  function fixNotes(list) {
+    (list || []).forEach(function (n) { var c = String(n.change == null ? '' : n.change).trim(); if (/^[-+]?(\d+\.\d*|\.\d+|\d+)(e-?\d+)?$/i.test(c) && Math.abs(Number(c)) < 1 && c.indexOf('.') !== -1) { var p = Math.round(Number(c) * 10000) / 100; n.change = (p > 0 ? '+' : '') + p + '%'; } });
+    return list || [];
+  }
   function noteText(n, withCust) {
     return (withCust ? n.cust + ' ' : '') + '[' + n.kind + '] ' + (n.target && n.target !== '매출' ? n.target + ' ' : '') + (n.change || '') + (noteRoute(n) ? ' (' + noteRoute(n) + ')' : '') + (n.memo ? ' · ' + n.memo : '');
   }
@@ -2683,7 +2637,7 @@
           $$('[data-d]', m).forEach(function (b) {
             b.onclick = function () {
               if (!confirm('이 기록을 지울까요?')) return;
-              api('notes.delete', { id: b.dataset.d }).then(function (r) { an.notes = r.notes; draw(); redrawAnalysisNotes(); }).catch(function (err) { toast(err.message, 'err'); });
+              api('notes.delete', { id: b.dataset.d }).then(function (r) { an.notes = fixNotes(r.notes); draw(); redrawAnalysisNotes(); }).catch(function (err) { toast(err.message, 'err'); });
             };
           });
         };
@@ -2721,7 +2675,7 @@
             if (!rows.length) throw new Error('올릴 기록이 없어요.');
             if (!confirm(rows.length + '개 기록을 추가할까요?')) return null;
             return api('notes.import', { rows: rows });
-          }).then(function (r) { if (!r) return; an.notes = r.notes; toast(r.count + '개 기록을 추가했어요.'); draw(); redrawAnalysisNotes(); })
+          }).then(function (r) { if (!r) return; an.notes = fixNotes(r.notes); toast(r.count + '개 기록을 추가했어요.'); draw(); redrawAnalysisNotes(); })
             .catch(function (err) { toast(err.message, 'err'); });
         };
         draw();
@@ -2766,7 +2720,7 @@
           if (note.cust !== '(전체)' && !custs[note.cust] && !confirm('"' + note.cust + '"은 분석 데이터에 없는 이름이에요. 그래도 저장할까요?')) return;
           var btn = this; busy(btn, true, '저장 중…');
           api('notes.save', { id: n.id || '', note: note }).then(function (r) {
-            an.notes = r.notes; close(); toast('기록을 저장했어요.'); if (after) after(); redrawAnalysisNotes();
+            an.notes = fixNotes(r.notes); close(); toast('기록을 저장했어요.'); if (after) after(); redrawAnalysisNotes();
           }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
         };
       }
@@ -2901,7 +2855,7 @@
       '<div id="anKpi" class="kpis"></div><div id="anAlerts"></div><div id="anCats"></div>' +
       '<div class="an-charts"><div class="card" id="anTrend"></div><div class="card" id="anRate"></div></div>' +
       '<div class="card" id="anGroup" style="margin-top:16px"></div>' +
-      '<div id="anAnom" style="margin-top:16px"></div>' +
+      '<div id="anRoutes" style="margin-top:16px"></div>' +
       '<div class="card" id="anDetail" style="margin-top:16px"></div>';
 
     $('#anFrom').onchange = function () { f.from = this.value; if (f.to < f.from) f.to = f.from; refresh(); };
@@ -2975,7 +2929,7 @@
     if (an.dim === 'cat' && !(an.hasCats && f.withCats)) an.dim = 'cust';
     drawTrend();
     drawGroup();
-    drawAnomalies(rows);
+    drawTopRoutes(rows);
     drawDetail(rows);
   }
 
@@ -7462,7 +7416,7 @@
         '순위표의 줄을 누르면 그 조건으로 걸러지고, 위쪽 칩의 ✕를 누르면 풀립니다. <b>초기화</b>로 한 번에 풀 수도 있어요.',
         '<b>이익 = 매출 − 매입</b>, <b>이익률 = 이익 ÷ 매출</b>입니다. 비교 기준은 직전 같은 기간 또는 전년 같은 기간 중에서 고릅니다.',
         '<b>확인해 볼 곳</b>은 비교 기간보다 이익률이 떨어졌거나 적자로 바뀐 매출처입니다. 매출처 이름 옆 <b>상세</b>를 누르면 월별 추이와 주력·손실 경로가 나옵니다.',
-        '<b>단가 이상치</b>는 같은 발지·착지·중량의 보통 단가(중앙값)보다 매입이 비싸거나 매출이 싼 오더입니다.',
+        '<b>주력 경로</b>는 지금 조건(기간·사업자·고른 항목)에서 많이 나간 발지·착지·중량 조합이에요. 건수·매출·이익순으로 바꿔 보고, 오른쪽에서 손실 난 경로를 확인하세요.',
         '<b>보고서</b> 버튼으로 지금 조건의 월간 보고서를 인쇄/PDF·엑셀로 만들 수 있습니다.',
         '<b>📌 단가 변경 기록</b>: 재계약·유가연동·구두 합의처럼 엑셀에 없는 단가 변경을 적어 두면, 그래프에 📌로 표시되고 확인해 볼 곳·매출처 상세·월간 보고서에도 같이 나와요. 지난 기록은 엑셀 양식으로 한꺼번에 올릴 수 있어요.'
       ]]
