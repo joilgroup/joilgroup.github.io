@@ -434,6 +434,33 @@
           return { id: x.id || calId('S'), name: nm2, biz: x.biz || '', dept: x.dept || '', team: String(x.team || '').trim().slice(0, 30), email: x.email || '', account: x.account || '', active: x.active !== false, weekly: !!x.weekly && !!x.email };
         });
         save(); return { staff: calStore().staff };
+      case 'dispatch.day':
+        var dc = String(req.cust || ''), dd = String(req.date || ''), dday = {};
+        wk('dispOrd').forEach(function (o) { if (o.cust === dc) dday[o.date] = (dday[o.date] || 0) + 1; });
+        return { orders: wk('dispOrd').filter(function (o) { return o.cust === dc && o.date === dd; }).sort(function (a, b) { return a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === dc && t.date === dd; }), days: dday };
+      case 'dispatch.month':
+        return { orders: wk('dispOrd').filter(function (o) { return o.cust === req.cust && o.date.slice(0, 7) === req.ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date.slice(0, 7) === req.ym; }) };
+      case 'dispatch.import':
+        var dh = {}, dmax = {}, dres = { added: 0, skipped: 0, dates: {} }, dnow = today();
+        wk('dispOrd').forEach(function (o) { if (o.cust !== req.cust) return; dh[o.key] = 1; dmax[o.date] = Math.max(dmax[o.date] || 0, o.seq); });
+        (req.rows || []).forEach(function (x, i) { if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date)) fail('날짜 형식은 YYYY-MM-DD 입니다: ' + x.date); if (dh[x.key]) { dres.skipped++; return; } dh[x.key] = 1; dmax[x.date] = (dmax[x.date] || 0) + 1; dres.dates[x.date] = (dres.dates[x.date] || 0) + 1; dres.added++;
+          wk('dispOrd').push({ id: calId('D') + i, cust: req.cust, date: x.date, key: x.key, d: x.d, truck: '', seq: dmax[x.date], by: me.name, at: dnow }); });
+        save(); return dres;
+      case 'dispatch.save':
+        var dw = {}; (req.orders || []).forEach(function (o) { dw[o.id] = o; });
+        wk('dispOrd').forEach(function (o) { var w = dw[o.id]; if (w && o.cust === req.cust && o.date === req.date) { o.truck = w.truck === '' || w.truck == null ? '' : Number(w.truck); o.seq = Number(w.seq) || 0; } });
+        store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat((req.trucks || []).map(function (t) { return { cust: req.cust, date: req.date, no: Number(t.no), car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '' }; }));
+        save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
+      case 'dispatch.deleteOrders':
+        var dids = {}; (req.ids || []).forEach(function (x) { dids[x] = 1; }); store.dispOrd = wk('dispOrd').filter(function (o) { return !dids[o.id]; }); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
+      case 'loading.list': return { places: wk('places').slice().sort(function (a, b) { return a.name.localeCompare(b.name); }) };
+      case 'loading.save':
+        var lp = req.place || {}, ln = String(lp.name || '').trim(); if (!ln) fail('상차지명을 넣으세요.');
+        if (wk('places').some(function (x) { return x.name === ln && x.id !== req.id; })) fail('"' + ln + '" 상차지가 이미 있어요.');
+        var lv = { name: ln, addr: lp.addr || '', time: lp.time || '', contact: lp.contact || '', memo: lp.memo || '' };
+        if (req.id) Object.assign(wk('places').filter(function (x) { return x.id === req.id; })[0] || fail('상차지를 찾을 수 없습니다.'), lv); else wk('places').push(Object.assign({ id: calId('L') }, lv));
+        save(); return handle(Object.assign({}, req, { action: 'loading.list' }));
+      case 'loading.delete': store.places = wk('places').filter(function (x) { return x.id !== req.id; }); save(); return { places: wk('places') };
       case 'manual.list': return { manuals: demoManuals() };
       case 'manual.save':
         var mm = req.manual || {}, mt = String(mm.title || '').trim().slice(0, 100); if (!mt) fail('매뉴얼 제목을 넣으세요.');
