@@ -248,6 +248,21 @@
     return { items: items, diesel: dp, baseTon: baseTon.name, specials: sps.map(function (x) { return x.id; }), cust: req.cust || '' };
   }
 
+  function demoGeo(a) { try { var g = geocode(String(a)); return { lat: g.lat, lng: g.lng }; } catch (e) { return null; } }
+  var rcptData = {};
+  function demoDrv(req) {
+    var tr = wk('dispTrk').filter(function (t) { return t.token && t.token === req.t; })[0]; if (!tr) fail('링크를 찾을 수 없어요. 배차 담당자에게 문의하세요.');
+    var orders = wk('dispOrd').filter(function (o) { return o.cust === tr.cust && o.date === tr.date && o.truck === tr.no; }).sort(function (a, b) { return a.seq - b.seq; });
+    if (req.action === 'drv.upload') {
+      if (!orders.some(function (o) { return o.d.fc === req.fc; })) fail('이 호차의 착지가 아니에요.');
+      var rid = calId('R'); rcptData[rid] = req.data; wk('rcpt').push({ id: rid, cust: tr.cust, date: tr.date, no: tr.no, fc: req.fc, at: today() }); save();
+    }
+    var stops = [], by = {};
+    orders.forEach(function (o) { var d = o.d, k = d.fc; var x = by[k] || (by[k] = { fc: k, addr: d.addr, hours: d.hours, dock: d.dock, mgr: [d.m1, d.m2, d.m3].filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] }); if (stops.indexOf(x) === -1) stops.push(x);
+      var n = Number(String(d.bundle).replace(/,/g, '')) || 0; x.bundle += n; x.kg += Number(String(d.kg).replace(/,/g, '')) || 0; x.items[d.item] = (x.items[d.item] || 0) + n; if (d.bl && x.bl.indexOf(d.bl) === -1) x.bl.push(d.bl); var g = demoGeo(d.addr); if (g) { x.lat = g.lat; x.lng = g.lng; } });
+    var from = orders[0] && orders[0].d.from, pl = wk('places').filter(function (p) { return p.name === from; })[0] || null;
+    return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: pl, stops: stops, receipts: wk('rcpt').filter(function (x) { return x.cust === tr.cust && x.date === tr.date && x.no === tr.no; }).map(function (x) { return { fc: x.fc, at: x.at }; }) };
+  }
   function handle(req) {
     if (req.action === 'login') {
       var u = store.users.filter(function (u) { return u.id === String(req.id || '').trim(); })[0];
@@ -257,6 +272,7 @@
       sessions[token] = u.id; saveSessions();
       return { token: token, user: { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u) }, settings: pubSettings() };
     }
+    if (req.action === 'drv.get' || req.action === 'drv.upload') return demoDrv(req);
     var me = session(req.token);
     curMe = me;
     var s = store.settings;
@@ -437,7 +453,7 @@
       case 'dispatch.day':
         var dc = String(req.cust || ''), dd = String(req.date || ''), dday = {};
         wk('dispOrd').forEach(function (o) { if (o.cust === dc) dday[o.date] = (dday[o.date] || 0) + 1; });
-        return { orders: wk('dispOrd').filter(function (o) { return o.cust === dc && o.date === dd; }).sort(function (a, b) { return a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === dc && t.date === dd; }), days: dday };
+        return { orders: wk('dispOrd').filter(function (o) { return o.cust === dc && o.date === dd; }).sort(function (a, b) { return a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === dc && t.date === dd; }), days: dday, receipts: wk('rcpt').filter(function (x) { return x.cust === dc && x.date === dd; }) };
       case 'dispatch.month':
         return { orders: wk('dispOrd').filter(function (o) { return o.cust === req.cust && o.date.slice(0, 7) === req.ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date.slice(0, 7) === req.ym; }) };
       case 'dispatch.import':
@@ -449,15 +465,28 @@
       case 'dispatch.save':
         var dw = {}; (req.orders || []).forEach(function (o) { dw[o.id] = o; });
         wk('dispOrd').forEach(function (o) { var w = dw[o.id]; if (w && o.cust === req.cust && o.date === req.date) { o.truck = w.truck === '' || w.truck == null ? '' : Number(w.truck); o.seq = Number(w.seq) || 0; } });
-        store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat((req.trucks || []).map(function (t) { return { cust: req.cust, date: req.date, no: Number(t.no), car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '' }; }));
+        var dtok = {}; wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date && t.token) dtok[t.no] = t.token; });
+        store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat((req.trucks || []).map(function (t) { var no = Number(t.no); return { cust: req.cust, date: req.date, no: no, car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '', token: dtok[no] || (Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2) + '00000000000000000000').slice(0, 20) }; }));
         save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
       case 'dispatch.deleteOrders':
         var dids = {}; (req.ids || []).forEach(function (x) { dids[x] = 1; }); store.dispOrd = wk('dispOrd').filter(function (o) { return !dids[o.id]; }); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
+      case 'dispatch.rates':
+        if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');
+        var dm = {}; wk('dispMap').forEach(function (x) { dm[x.fc] = x.dest; }); return { rates: wk('dispRates'), map: dm, tons: ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤'] };
+      case 'dispatch.ratesSave':
+        if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');
+        store.dispRates = (req.rates || []).map(function (x) { var p = {}; Object.keys(x.p || {}).forEach(function (k) { var v = Number(String(x.p[k]).replace(/[,\s원]/g, '')); if (v > 0) p[k] = v; }); return { from: x.from, to: x.to, dist: Number(x.dist) || 0, p: p }; });
+        save(); return handle(Object.assign({}, req, { action: 'dispatch.rates' }));
+      case 'dispatch.mapSave':
+        if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');
+        store.dispMap = wk('dispMap').filter(function (x) { return x.fc !== req.fc; }); if (req.dest) store.dispMap.push({ fc: req.fc, dest: req.dest }); save(); return handle(Object.assign({}, req, { action: 'dispatch.rates' }));
+      case 'dispatch.geo': var dg = {}; (req.addrs || []).forEach(function (a) { var g = demoGeo(a); if (g) dg[a] = g; }); return { coords: dg };
+      case 'dispatch.receipt': if (!rcptData[req.id]) fail('데모 모드에서는 새로고침하면 사진이 사라져요.'); return { data: rcptData[req.id], mime: 'image/jpeg' };
       case 'loading.list': return { places: wk('places').slice().sort(function (a, b) { return a.name.localeCompare(b.name); }) };
       case 'loading.save':
         var lp = req.place || {}, ln = String(lp.name || '').trim(); if (!ln) fail('상차지명을 넣으세요.');
         if (wk('places').some(function (x) { return x.name === ln && x.id !== req.id; })) fail('"' + ln + '" 상차지가 이미 있어요.');
-        var lv = { name: ln, addr: lp.addr || '', time: lp.time || '', contact: lp.contact || '', memo: lp.memo || '' };
+        var lv = { name: ln, addr: lp.addr || '', time: lp.time || '', contact: lp.contact || '', memo: lp.memo || '', rateFrom: lp.rateFrom || '' };
         if (req.id) Object.assign(wk('places').filter(function (x) { return x.id === req.id; })[0] || fail('상차지를 찾을 수 없습니다.'), lv); else wk('places').push(Object.assign({ id: calId('L') }, lv));
         save(); return handle(Object.assign({}, req, { action: 'loading.list' }));
       case 'loading.delete': store.places = wk('places').filter(function (x) { return x.id !== req.id; }); save(); return { places: wk('places') };

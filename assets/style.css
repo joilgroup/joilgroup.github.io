@@ -1198,3 +1198,28 @@ table.data.rpt tr.tot td { border-top: 1.5px solid var(--ink); font-weight: 700;
 .pl-it { display: flex; flex-direction: column; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 10px; cursor: pointer; font: inherit; color: inherit; }
 .pl-it:hover, .pl-it.on { background: var(--panel-2); } .pl-it small { color: var(--muted); font-size: 12px; }
 @media (max-width: 700px) { .pl-grid { grid-template-columns: 1fr; } .dp-trucks { grid-template-columns: 1fr; } }
+
+/* 배차시트 v2: 넓은 화면 · 출발지 탭 · 호차 한 줄 카드 */
+main.wide { max-width: 1880px; }
+.dp-tabs { display: flex; gap: 6px; margin-top: 12px; border-bottom: 2px solid var(--line); }
+.dp-tabs button { border: 0; background: transparent; padding: 9px 18px; border-radius: 10px 10px 0 0; cursor: pointer; font: inherit; color: var(--muted); margin-bottom: -2px; border-bottom: 3px solid transparent; }
+.dp-tabs button.on { color: var(--ink); border-bottom-color: var(--orange); background: var(--panel-2); }
+.dp-table .dp-addr { min-width: 200px; max-width: 320px; } .dp-table .dp-hrs { min-width: 160px; max-width: 280px; }
+.dp-trucks { display: block; }
+.dp-tgrp { margin-top: 14px; } .dp-tgrp + .dp-tgrp { padding-top: 14px; border-top: 1px solid var(--line); }
+.dp-tgrp .dp-truck { margin-top: 10px; }
+.dp-th { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 14px; }
+.dp-no { color: #fff; padding: 3px 10px; border-radius: 8px; font-size: 14px; }
+.dp-cost { font-size: 13px; background: rgba(79,168,100,.12); padding: 2px 8px; border-radius: 8px; }
+.dp-rc { font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--bg-2); color: var(--muted); }
+.dp-rc.ok { background: rgba(79,168,100,.18); color: #2C7040; }
+.dp-route { list-style: none; margin: 10px 0 4px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: stretch; }
+.dp-route li { display: flex; align-items: center; gap: 6px; background: var(--panel-2); border-radius: 10px; padding: 6px 10px; font-size: 13.5px; flex-wrap: wrap; }
+.dp-route li.from { background: transparent; padding-left: 0; font-weight: 700; }
+.dp-route li + li::before { content: '→'; color: var(--muted); margin-right: 4px; }
+.dp-sn { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--ink); color: #fff; font-size: 12px; font-weight: 700; }
+.dp-rcb { border: 0; background: transparent; font: inherit; font-size: 12px; color: var(--muted); padding: 0; }
+.dp-rcb.ok { color: #2C7040; font-weight: 700; cursor: pointer; }
+.dp-rec { font-size: 13px; background: #FFF3E8; border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+.dp-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
+@media (max-width: 1100px) { .dp-two { grid-template-columns: minmax(0, 1fr); } }
