@@ -6919,18 +6919,7 @@
     // 협력사는 '정보넘김'을 고를 수 없어요 (이미 정보넘김이면 그대로 보여줌)
     return '<select class="input input-sm dp-stsel s' + DISP_STATUS.indexOf(v) + '" data-st="' + esc(D.tab) + '|' + no + '" title="호차 상태">' + DISP_STATUS.filter(function (x) { return !(isPartner() && x === '정보넘김' && v !== '정보넘김'); }).map(function (x) { return '<option' + (x === v ? ' selected' : '') + (isPartner() && x === '정보넘김' ? ' disabled' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   }
-  function truckCostHtml(D, no, t, cost) {
-    if (!can('analysis') && !isPartner()) return ''; // 협력사는 보기만 (운임 수정 버튼은 분석 권한만)
-    var base = null, tip = [], head;
-    if (t.status === '회차') { base = Number(t.retCost) || 0; head = '회차'; tip.push('회차 ' + won(base) + '원'); }
-    else if (cost) { base = cost.total; head = cost.ton + ' 기준'; if (cost.max) tip.push('가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (cost.stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원 = 단가 ' + won(cost.total) + '원'); }
-    var ex = DISP_EXTRA.filter(function (x) { return Number(t[x[0]]); });
-    if (head == null && !ex.length) return '';
-    ex.forEach(function (x) { tip.push(x[1] + ' ' + won(t[x[0]]) + '원'); });
-    var sum = (base || 0) + ex.reduce(function (a, x) { return a + Number(t[x[0]]); }, 0), miss = cost && t.status !== '회차' && cost.miss.length;
-    var amount = t.status === '회차' && !base ? '<span class="err-text">금액을 넣으세요</span>' : base == null && !ex.length ? '–' : '<b>' + won(sum) + '원</b>';
-    return '<span class="dp-cost" title="' + esc(tip.join('\n')) + '">' + esc(head || '') + ' ' + (ex.length || t.status === '회차' ? '운송비 ' : '단가 ') + amount + (ex.length ? ' <span class="muted small">(' + ex.map(function (x) { return x[1]; }).join('·') + ' 포함)</span>' : '') + (miss ? ' <span class="err-text">단가 없음: ' + esc(cost.miss.join(', ')) + '</span>' : '') + '</span>';
-  }
+
   /** 운임 수정: 회차 비용 · 대기료 · 운송료지원 (분석 권한만) */
   function openFare(D, no) {
     var t = truckInfo(D, no), cost = truckCost(D, no), rows = (t.status === '회차' ? [['retCost', '회차 비용']] : []).concat(DISP_EXTRA);
@@ -6948,39 +6937,53 @@
         $('#fareSave', m).onclick = function () { rows.forEach(function (x) { t[x[0]] = val(x[0]); }); dispQueueSave(D.tab); close(); drawDispDay(); toast(no + '호차 운임을 저장했어요.'); };
       } });
   }
-  /** 호차 표 (지금 쓰는 구글시트처럼): 착지마다 한 줄, 같은 호차의 상태·차량정보·운송비·버튼은 칸을 합쳐 한 번만 */
+  /** 호차 표 (지금 쓰는 구글시트처럼): 착지마다 한 줄, 같은 호차의 차량정보·상태·문자·운송비·호차는 칸을 합쳐 한 번만 */
+  function dispKind(D) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0]; return (t && t[2]) || String(D.tab || '').split('-')[0]; }
   function truckTableHtml(D, ns) {
     var showCost = can('analysis') || isPartner();
-    var head = ['호차', '상태', '출발센터', '도착지', '도착지 주소', '번들', '무게(kg)', '하차 가능시간 · 공지'].concat(TRK_FIELDS.map(function (f) { return f[1]; })).concat(showCost ? ['운송비'] : []).concat(['']);
+    var head = ['구분', '출발센터', '도착지', '도착지 주소', '번들', '무게(kg)', '하차 가능시간 · 공지'].concat(TRK_FIELDS.map(function (f) { return f[1]; })).concat(['상태', '문자']).concat(showCost ? ['운송비'] : []).concat(['호차']);
     return '<div class="table-wrap dp-tt-wrap"><table class="dp-tt"><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead>' +
       ns.map(function (no) { return truckRowsHtml(D, no, showCost); }).join('') + '</table></div>';
   }
+  /** 운송비 칸: 두 줄 (톤수 또는 회차 / 금액) */
+  function truckCostCell(D, no, t, cost) {
+    var base = null, tip = [], top;
+    if (t.status === '회차') { base = Number(t.retCost) || 0; top = '회차'; tip.push('회차 ' + won(base) + '원'); }
+    else if (cost) { base = cost.total; top = cost.ton; if (cost.max) tip.push('가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (cost.stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원 = 단가 ' + won(cost.total) + '원'); }
+    var ex = DISP_EXTRA.filter(function (x) { return Number(t[x[0]]); }); ex.forEach(function (x) { tip.push(x[1] + ' ' + won(t[x[0]]) + '원'); });
+    if (top == null && !ex.length) return '–';
+    var sum = (base || 0) + ex.reduce(function (a, x) { return a + Number(t[x[0]]); }, 0), miss = cost && t.status !== '회차' && cost.miss.length;
+    return '<div class="tt-cv" title="' + esc(tip.join('\n')) + '"><div class="tt-ton">' + esc(top || '') + (ex.length ? ' <small>(' + ex.map(function (x) { return x[1]; }).join('·') + ' 포함)</small>' : '') + '</div>' +
+      '<div class="tt-amt">' + (t.status === '회차' && !base ? '<span class="err-text">금액 입력</span>' : base == null && !ex.length ? '–' : won(sum)) + '</div>' +
+      (miss ? '<div class="err-text small">단가 없음: ' + esc(cost.miss.join(', ')) + '</div>' : '') + '</div>';
+  }
   function truckRowsHtml(D, no, showCost) {
-    var t = truckInfo(D, no), cost = truckCost(D, no), stops = cost ? cost.stops : truckStops(D, no), b = 0, kg = 0, key = D.tab + '|' + no;
-    stops.forEach(function (s) { b += s.b; kg += s.kg; });
+    var t = truckInfo(D, no), cost = truckCost(D, no), stops = cost ? cost.stops : truckStops(D, no), key = D.tab + '|' + no;
     var rc = (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
     var nGot = stops.filter(function (s) { return got(s.fc).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
-    var rec = bestOrder(D, no), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv');
+    var rec = bestOrder(D, no), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
-    var from = stops[0] ? ((findPlace(stops[0].d.from) || {}).name || stops[0].d.from) : '';
     return '<tbody class="tt-g' + (t.status ? ' st-' + DISP_STATUS.indexOf(t.status) : '') + '">' + stops.map(function (s, i) {
       var g = got(s.fc);
       return '<tr>' +
-        (i ? '' : '<td class="tt-no"' + rs + '><b>' + no + '호차</b><small>' + (n > 1 ? n + '착 · ' : '') + won(b) + '번들<br>' + won(kg) + 'kg</small>' + (stops.length ? '<small class="tt-rc' + (nGot === stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</small>' : '') + '</td><td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>') +
-        '<td>' + esc(i && s.d.from === stops[0].d.from ? from : ((findPlace(s.d.from) || {}).name || s.d.from || '')) + '</td>' +
-        '<td class="tt-fc"><b>' + (n > 1 ? (i + 1) + '. ' : '') + esc(s.fc) + '</b>' + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + '</td>' +
+        '<td class="tt-kind">' + esc(kind) + '</td>' +
+        '<td>' + esc((findPlace(s.d.from) || {}).name || s.d.from || '') + '</td>' +
+        '<td class="tt-fc"><b>' + esc(s.fc) + '</b>' + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + '</td>' +
         '<td class="tt-addr"><div class="clip" title="' + esc(s.d.addr) + '">' + esc(s.d.addr) + '</div></td>' +
         '<td class="num">' + won(s.b) + '</td><td class="num">' + won(s.kg) + '</td>' +
         '<td class="tt-hrs"><div class="clip" title="' + esc(s.d.hours) + '">' + esc(s.d.hours) + '</div>' + notesOf(s.fc) + '</td>' +
         (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in"' + rs + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
-          (showCost ? '<td class="tt-cost"' + rs + '>' + (truckCostHtml(D, no, t, cost) || '–') + '</td>' : '') +
+          '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
             '<div class="tt-links"><button data-preview="' + esc(key) + '">미리보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">엑셀 복사</button>' +
             (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') +
-            (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>') +
+            (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>' +
+          (showCost ? '<td class="tt-cost"' + rs + '>' + truckCostCell(D, no, t, cost) + '</td>' : '') +
+          '<td class="tt-no"' + rs + '><span class="tt-tab">' + esc(D.tab) + '</span><b>' + no + '호차</b>' + (stops.length ? '<small class="tt-rc' + (nGot === stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</small>' : '') + '</td>') +
         '</tr>';
     }).join('') + '</tbody>';
   }
+
 
   /** 표 줄 끌어 옮기기 (마우스·터치 공통). 입력칸·버튼 위에서 누르면 무시 */
   function dispRowDrag(tbody, done) {
