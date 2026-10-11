@@ -1297,3 +1297,14 @@ table.data.dpool td { padding: 7px 8px; }
 .dp-truck select.input.dp-stsel { width: auto; flex: none; min-width: 0; height: auto; }
 .dp-tabx { display: flex; align-items: center; gap: 6px; margin-left: auto; padding-bottom: 4px; }
 .dp-tabx select.input { width: auto; }
+/* 오더 줄 끌어 옮기기 */
+.dp-table tbody tr[data-o] { cursor: grab; }
+.dp-table tr.dp-shift { transition: transform .18s ease; }
+.dp-table tr.dp-lift { position: relative; z-index: 5; cursor: grabbing; }
+.dp-table tr.dp-lift td { background: var(--panel); box-shadow: 0 6px 18px rgba(0,0,0,.14); }
+.dp-drag { touch-action: none; }
+body.dp-noselect, body.dp-noselect * { user-select: none !important; }
+/* 운임 수정 */
+.fare-row { display: grid; grid-template-columns: 140px 160px auto; gap: 8px; align-items: center; margin: 8px 0; }
+.fare-row .input { text-align: right; }
+.fare-sum { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 15px; }

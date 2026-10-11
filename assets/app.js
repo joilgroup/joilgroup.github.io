@@ -6911,19 +6911,32 @@
   }
   function truckCostHtml(D, no, t, cost) {
     if (!can('analysis')) return '';
-    var base = null, label;
-    if (t.status === '회차') { base = Number(t.retCost) || 0; label = '회차 ' + (base ? '<b>' + won(base) + '원</b>' : '<span class="err-text">금액을 넣으세요</span>'); }
-    else if (cost) { base = cost.total; label = esc(cost.ton) + ' 기준 단가 ' + (cost.total != null ? '<b>' + won(cost.total) + '원</b>' : '–') + (cost.miss.length ? ' <span class="err-text">단가 없음: ' + esc(cost.miss.join(', ')) + '</span>' : ''); }
+    var base = null, tip = [], head;
+    if (t.status === '회차') { base = Number(t.retCost) || 0; head = '회차'; tip.push('회차 ' + won(base) + '원'); }
+    else if (cost) { base = cost.total; head = cost.ton + ' 기준'; if (cost.max) tip.push('가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (cost.stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원 = 단가 ' + won(cost.total) + '원'); }
     var ex = DISP_EXTRA.filter(function (x) { return Number(t[x[0]]); });
-    if (label == null && !ex.length) return '';
-    var sum = (base || 0) + ex.reduce(function (a, x) { return a + Number(t[x[0]]); }, 0);
-    return '<span class="dp-cost"' + (cost && cost.max && t.status !== '회차' ? ' title="' + esc('가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (cost.stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원') + '"' : '') + '>' + (label || '') +
-      ex.map(function (x) { return ' + ' + x[1] + ' ' + won(t[x[0]]) + '원'; }).join('') + (ex.length && base != null ? ' = <b>' + won(sum) + '원</b>' : '') + '</span>';
+    if (head == null && !ex.length) return '';
+    ex.forEach(function (x) { tip.push(x[1] + ' ' + won(t[x[0]]) + '원'); });
+    var sum = (base || 0) + ex.reduce(function (a, x) { return a + Number(t[x[0]]); }, 0), miss = cost && t.status !== '회차' && cost.miss.length;
+    var amount = t.status === '회차' && !base ? '<span class="err-text">금액을 넣으세요</span>' : base == null && !ex.length ? '–' : '<b>' + won(sum) + '원</b>';
+    return '<span class="dp-cost" title="' + esc(tip.join('\n')) + '">' + esc(head || '') + ' ' + (ex.length || t.status === '회차' ? '운송비 ' : '단가 ') + amount + (ex.length ? ' <span class="muted small">(' + ex.map(function (x) { return x[1]; }).join('·') + ' 포함)</span>' : '') + (miss ? ' <span class="err-text">단가 없음: ' + esc(cost.miss.join(', ')) + '</span>' : '') + '</span>';
   }
-  function truckCostInputs(D, no, t) {
-    if (!can('analysis')) return '';
-    var f = (t.status === '회차' ? [['retCost', '회차 비용']] : []).concat(DISP_EXTRA);
-    return '<div class="dp-costs">' + f.map(function (x) { return '<label><span>' + x[1] + '</span><input class="input input-sm num" inputmode="numeric" data-cf="' + x[0] + '" data-tn="' + esc(D.tab) + '|' + no + '" value="' + (Number(t[x[0]]) ? won(t[x[0]]) : '') + '" placeholder="0"></label>'; }).join('') + '</div>';
+  /** 운임 수정: 회차 비용 · 대기료 · 운송료지원 (분석 권한만) */
+  function openFare(D, no) {
+    var t = truckInfo(D, no), cost = truckCost(D, no), rows = (t.status === '회차' ? [['retCost', '회차 비용']] : []).concat(DISP_EXTRA);
+    modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 운임 수정',
+      body: '<p class="muted small" style="margin:0 0 10px">' + (t.status === '회차' ? '회차는 단가표 대신 적은 회차 비용으로 계산해요.' : (cost && cost.total != null ? esc(cost.ton) + ' 기준 단가 ' + won(cost.total) + '원' : '단가표에서 단가를 찾지 못했어요.')) + ' 추가 비용은 체크하고 금액을 넣으세요.</p>' +
+        rows.map(function (x) { var v = Number(t[x[0]]) || 0, fixed = x[0] === 'retCost'; return '<div class="fare-row"><label>' + (fixed ? '' : '<input type="checkbox" data-fon="' + x[0] + '"' + (v ? ' checked' : '') + '> ') + '<b>' + x[1] + '</b></label><input class="input input-sm num" inputmode="numeric" data-fv="' + x[0] + '" value="' + (v ? won(v) : '') + '" placeholder="0"' + (fixed || v ? '' : ' disabled') + '><span class="muted small">원</span></div>'; }).join('') +
+        '<div class="fare-sum" id="fareSum"></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="fareSave">저장</button>',
+      onMount: function (m, close) {
+        var val = function (k) { var on = k === 'retCost' || $('[data-fon="' + k + '"]', m).checked; return on ? (Math.round(Number(String($('[data-fv="' + k + '"]', m).value).replace(/[^0-9.]/g, ''))) || 0) : 0; };
+        var sum = function () { var base = t.status === '회차' ? val('retCost') : (cost && cost.total) || 0; $('#fareSum', m).innerHTML = '운송비 <b>' + won(base + DISP_EXTRA.reduce(function (a, x) { return a + val(x[0]); }, 0)) + '원</b>'; };
+        $$('[data-fon]', m).forEach(function (c) { c.onchange = function () { var i = $('[data-fv="' + c.dataset.fon + '"]', m); i.disabled = !c.checked; if (c.checked) i.focus(); sum(); }; });
+        $$('[data-fv]', m).forEach(function (i) { i.oninput = sum; });
+        sum();
+        $('#fareSave', m).onclick = function () { rows.forEach(function (x) { t[x[0]] = val(x[0]); }); dispQueueSave(D.tab); close(); drawDispDay(); toast(no + '호차 운임을 저장했어요.'); };
+      } });
   }
   /** 정보넘김·회차: 한 줄로 (누르면 펼치기) */
   function truckMiniHtml(D, no, t, cost) {
@@ -6933,7 +6946,7 @@
     return '<div class="dp-truck dp-mini" style="border-left-color:' + hue + '"><b class="dp-no" style="background:' + hue + '">' + no + '호차</b>' + statusSelect(D, no, t) +
       '<span class="dp-mini-route">' + esc([from].concat(stops.map(function (s) { return s.fc; })).join(' > ')) + '</span><span class="small">' + won(b) + '번들 / ' + won(kg) + 'kg</span>' +
       '<span class="small muted">' + esc([t.car, t.driver, t.phone].filter(Boolean).join(' · ') || '차량정보 없음') + '</span>' + truckCostHtml(D, no, t, cost) +
-      '<span class="spacer"></span><button class="btn btn-sm btn-ghost" data-open="' + esc(D.tab) + '|' + no + '">펼치기 ▾</button></div>';
+      '<span class="spacer"></span>' + (can('analysis') ? '<button class="btn btn-sm" data-fare="' + esc(D.tab) + '|' + no + '">운임 수정</button>' : '') + '<button class="btn btn-sm btn-ghost" data-open="' + esc(D.tab) + '|' + no + '">펼치기 ▾</button></div>';
   }
   function truckCardHtml(D, no) {
     var st = dispState(), t = truckInfo(D, no), cost = truckCost(D, no), stops = cost ? cost.stops : truckStops(D, no), b = 0, kg = 0;
@@ -6946,14 +6959,14 @@
       '<span>착지 <b>' + stops.length + '</b>곳 · 총 <b>' + won(b) + '</b>번들 / <b>' + won(kg) + '</b>kg</span>' +
       truckCostHtml(D, no, t, cost) + (dispMini(t) ? '<button class="btn btn-sm btn-ghost" data-open="' + esc(okey) + '">접기 ▴</button>' : '') +
       '<span class="dp-rc' + (nGot === stops.length && stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</span>' +
-      '<span class="spacer"></span><button class="btn btn-sm" data-map="' + D.tab + '|' + no + '">🗺 지도</button><button class="btn btn-sm" data-link="' + D.tab + '|' + no + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button class="btn btn-sm btn-primary" data-copy="' + D.tab + '|' + no + '">문자 복사</button></div>' +
+      '<span class="spacer"></span>' + (can('analysis') ? '<button class="btn btn-sm" data-fare="' + esc(D.tab) + '|' + no + '">운임 수정</button>' : '') + '<button class="btn btn-sm" data-map="' + D.tab + '|' + no + '">지도</button><button class="btn btn-sm" data-link="' + D.tab + '|' + no + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button class="btn btn-sm btn-primary" data-copy="' + D.tab + '|' + no + '">문자 복사</button></div>' +
       '<div class="dp-body"><ol class="dp-route"><li class="from">🏭 ' + esc((stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) {
         var g = got(s.fc);
-        return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b>' + (s.dest && s.dest.name ? ' <span class="muted small" title="단가표 도착">(' + esc(s.dest.name) + (s.price ? ' ' + won(s.price) : '') + ')</span>' : '') +
+        return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b>' +
           (g.length ? '<button class="dp-rcb ok" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">✅ ' + (g.length > 1 ? g.length + '장' : '인수증') + '</button>' : '<span class="dp-rcb">⬜ 인수증</span>') + '</li>';
       }).join('') + '</ol>' +
       '<div class="dp-tf" title="엑셀·구글시트에서 5칸을 복사해 아무 칸에나 붙여넣으면 나눠 들어가요">' + TRK_FIELDS.map(function (f) { return '<label><span>' + f[1] + '</span><input class="input input-sm" data-tf="' + f[0] + '" data-tn="' + D.tab + '|' + no + '" value="' + esc(t[f[0]] || '') + '"></label>'; }).join('') +
-        '<button class="btn btn-sm" data-xl="' + D.tab + '|' + no + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">엑셀 복사</button></div></div>' + truckCostInputs(D, no, t) +
+        '<button class="btn btn-sm" data-xl="' + D.tab + '|' + no + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">엑셀 복사</button></div></div>' +
       (function () {
         var pl = stops[0] && findPlace(stops[0].d.from), line = function (txt, icon) { return txt ? '<div class="clip" title="' + esc(txt) + '">' + icon + esc(txt) + '</div>' : ''; };
         return '<div class="dp-hours">' + (stops[0] ? '<div class="dp-hr"><span class="dp-sn from">🏭</span><b>' + esc((pl && pl.name) || stops[0].d.from) + '</b><div>' + (pl ? line(pl.addr, '') + line(pl.time, '⏰ ') : '<div class="muted">상차지 설정에 주소가 없어요</div>') + '</div></div>' : '') +
@@ -6963,7 +6976,37 @@
       (rec && !rec.ok ? '<div class="dp-rec">🧭 추천 순서: ' + rec.order.map(function (i, k) { return (k + 1) + ' ' + esc(rec.stops[i].fc); }).join(' → ') + ' <span class="muted small">(직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)</span>' + (isPartner() ? '' : ' <button class="btn btn-sm" data-rec="' + D.tab + '|' + no + '">이 순서로</button>') + '</div>' : '') +
       '<details><summary class="small">문자 미리보기</summary><pre class="dp-msg">' + esc(truckMessage(D, no)) + '</pre></details></div>';
   }
+  /** 표 줄 끌어 옮기기 (마우스·터치 공통). 입력칸·버튼 위에서 누르면 무시 */
+  function dispRowDrag(tbody, done) {
+    if (!tbody) return;
+    var rows = function () { return Array.prototype.slice.call(tbody.querySelectorAll('tr[data-o]')); };
+    tbody.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      var tr = e.target.closest('tr[data-o]'); if (!tr || e.target.closest('input, button, select, a, label, textarea')) return;
+      var list = rows(), from = list.indexOf(tr), y0 = e.clientY, started = false, to = from;
+      var mids = list.map(function (r) { var b = r.getBoundingClientRect(); return b.top + b.height / 2; }), h = tr.getBoundingClientRect().height;
+      var move = function (ev) {
+        var dy = ev.clientY - y0;
+        if (!started) { if (Math.abs(dy) < 6) return; started = true; dispState().dragging = true; document.body.classList.add('dp-noselect'); tr.classList.add('dp-lift'); list.forEach(function (r) { if (r !== tr) r.classList.add('dp-shift'); }); }
+        ev.preventDefault();
+        tr.style.transform = 'translateY(' + dy + 'px)';
+        var c = mids[from] + dy; to = from;
+        for (var i = 0; i < list.length; i++) { if (i < from && c < mids[i]) { to = i; break; } }
+        for (var j = list.length - 1; j > from; j--) { if (c > mids[j]) { to = j; break; } }
+        list.forEach(function (r, i) { if (r === tr) return; var sh = from < to && i > from && i <= to ? -h : from > to && i >= to && i < from ? h : 0; r.style.transform = sh ? 'translateY(' + sh + 'px)' : ''; });
+      };
+      var up = function () {
+        document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up);
+        if (!started) return;
+        document.body.classList.remove('dp-noselect'); dispState().dragging = false;
+        list.forEach(function (r) { r.style.transform = ''; r.classList.remove('dp-lift', 'dp-shift'); });
+        if (to !== from) done(from, to); else drawDispDay();
+      };
+      document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
+    });
+  }
   function drawDispDay() {
+    if (dispState().dragging) return; // 끄는 중엔 다시 그리지 않기
     var st = dispState(), box = $('#dpBody'); if (!box || !st.tabs) return;
     syncRoute();
     var D = st.tabs[st.tab], orders = D.orders, trucks = dispTrucks(D), days = {};
@@ -6987,7 +7030,7 @@
         (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"' + (isPartner() ? ' disabled' : '') + '></th><th>호차</th><th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th><th class="left">공지</th></tr></thead><tbody>' +
           orders.map(function (o) {
             var on = !!st.sel[o.id], t = o.truck;
-            return '<tr draggable="' + (isPartner() ? 'false' : 'true') + '" data-o="' + esc(o.id) + '" style="' + (t !== '' && t != null ? 'background:' + hue(t) : '') + '"' + (on ? ' class="on"' : '') + '><td class="dp-drag" title="끌어서 순서 바꾸기">⠿</td><td><input type="checkbox" data-sel="' + esc(o.id) + '"' + (on ? ' checked' : '') + (isPartner() ? ' disabled' : '') + '></td>' +
+            return '<tr data-o="' + esc(o.id) + '" style="' + (t !== '' && t != null ? 'background:' + hue(t) : '') + '"' + (on ? ' class="on"' : '') + '><td class="dp-drag" title="끌어서 순서 바꾸기">⠿</td><td><input type="checkbox" data-sel="' + esc(o.id) + '"' + (on ? ' checked' : '') + (isPartner() ? ' disabled' : '') + '></td>' +
               '<td><input class="input input-sm num dp-tno" data-t="' + esc(o.id) + '" value="' + (t === '' || t == null ? '' : t) + '" inputmode="numeric"' + (isPartner() ? ' disabled' : '') + '></td><td class="left"><b>' + esc(o.d.fc) + '</b></td><td class="left small">' + esc(o.d.dest) + '</td><td class="left small">' + esc(o.d.item) + '</td>' +
               '<td class="num">' + esc(o.d.bundle) + '</td><td class="num">' + won(dispNum(o.d.kg)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div></td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td><td class="left dp-note">' + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
@@ -7031,17 +7074,9 @@
       dispSaveNow().then(function () { return api('dispatch.deleteOrders', { cust: D.key, date: st.date, ids: l.map(function (o) { return o.id; }) }); })
         .then(function (r) { r.tab = st.tab; r.date = st.date; r.key = D.key; st.tabs[st.tab] = r; st.sel = {}; drawDispDay(); }).catch(function (err) { toast(err.message, 'err'); });
     };
-    var dragId = null;
-    $$('tr[data-o]', box).forEach(function (tr) {
-      tr.ondragstart = function (e) { dragId = tr.dataset.o; e.dataTransfer.effectAllowed = 'move'; tr.classList.add('dragging'); };
-      tr.ondragend = function () { tr.classList.remove('dragging'); };
-      tr.ondragover = function (e) { e.preventDefault(); tr.classList.add('drop'); };
-      tr.ondragleave = function () { tr.classList.remove('drop'); };
-      tr.ondrop = function (e) {
-        e.preventDefault(); tr.classList.remove('drop'); if (!dragId || dragId === tr.dataset.o) return;
-        var a = orders.map(function (o) { return o.id; }), from = a.indexOf(dragId), to = a.indexOf(tr.dataset.o), mv = orders.splice(from, 1)[0];
-        orders.splice(to, 0, mv); orders.forEach(function (o, i) { o.seq = i + 1; }); redraw();
-      };
+    /* 줄 끌어서 하차 순서 바꾸기: 누른 채로 위아래로 → 다른 줄이 부드럽게 비켜나고, 놓으면 그 자리에 */
+    if (!isPartner()) dispRowDrag($('.dp-table tbody', box), function (from, to) {
+      var mv = orders.splice(from, 1)[0]; orders.splice(to, 0, mv); orders.forEach(function (o, i) { o.seq = i + 1; }); redraw();
     });
     var tn = function (v) { var p = v.split('|'); return { D: st.tabs[p[0]], no: Number(p[1]), tab: p[0] }; };
     $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); drawDispDay(); }; });
@@ -7074,7 +7109,7 @@
     $$('[data-copy]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.copy); if (noLink(x)) { st.dirty[x.tab] = 1; toast('기사 링크를 만드는 중이에요…'); dispSaveNow().then(function () { drawDispDay(); toast(noLink(x) ? '기사 링크가 안 만들어졌어요. Apps Script(Code.js)를 최신으로 새 버전 배포했는지 확인해 주세요.' : '기사 링크가 생겼어요. 문자 복사를 다시 눌러 주세요.', noLink(x) ? 'err' : ''); }); return; } copyText(truckMessage(x.D, x.no), x.tab + ' ' + x.no + '호차 문자를 복사했어요.'); }; });
     $$('[data-note]', box).forEach(function (b) { b.onclick = function () { var o = D.orders.filter(function (x) { return x.id === b.dataset.note; })[0]; if (o) openOrderNote(D, o); }; });
     $$('[data-st]', box).forEach(function (sel) { sel.onchange = function () { var x = tn(sel.dataset.st), t = truckInfo(x.D, x.no); t.status = sel.value === '배차전' ? '' : sel.value; delete st.open[sel.dataset.st]; dispQueueSave(x.tab); drawDispDay(); }; });
-    $$('[data-cf]', box).forEach(function (inp) { inp.onchange = function () { var x = tn(inp.dataset.tn), v = Math.round(Number(String(inp.value).replace(/[^0-9.]/g, ''))) || 0; truckInfo(x.D, x.no)[inp.dataset.cf] = v; dispQueueSave(x.tab); drawDispDay(); }; });
+    $$('[data-fare]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.fare); openFare(x.D, x.no); }; });
     $$('[data-open]', box).forEach(function (b) { b.onclick = function () { var k = b.dataset.open; if (st.open[k]) delete st.open[k]; else st.open[k] = 1; drawDispDay(); }; });
     $$('[data-map]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.map); openTruckMap(x.D, x.no); }; });
     $$('[data-link]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.link), t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; window.open(driverUrl(t.token), '_blank'); }; });
@@ -8215,7 +8250,7 @@
       '<b>호차 상태</b>: 호차마다 배차전·배차중·배차완료·정보넘김·회차·차량변경을 골라요. 정보넘김·회차는 한 줄로 줄어들고, 펼치기를 누르면 다시 보여요. 비용(분석 권한만): 평소엔 "톤수 기준 단가", 회차면 직접 적은 회차 비용, 그리고 대기료·운송료지원을 더해 합계를 보여줘요.',
       '<b>기사 풀</b>: 호차에 넣은 차량정보는 자동으로 기사 풀에 쌓여요(횟수·마지막 배차일). 차량정보·운전원·연락처 칸에 몇 글자(이름, 차량번호 끝자리, 전화번호 일부)만 치면 목록이 떠서 고르면 4칸이 채워져요. 위쪽 "기사 풀" 버튼에서 직접 추가·수정·삭제하고 ★로 고정할 수 있어요.',
       '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나오고, 상차지 설정에서 올린 상차지 사진(2장까지, 설명 포함)도 상차지 카드에 보여요.',
-      '<b>🗺 지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
+      '<b>지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',
       '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게로 자동이에요. 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
       '모든 배정은 자동 저장되고, <b>월별 기록</b>에서 날짜별 운행 대수·번들·kg·차량/기사별 횟수를 보고 엑셀로 받을 수 있어요.'
