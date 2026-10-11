@@ -1308,3 +1308,6 @@ body.dp-noselect, body.dp-noselect * { user-select: none !important; }
 .fare-row { display: grid; grid-template-columns: 140px 160px auto; gap: 8px; align-items: center; margin: 8px 0; }
 .fare-row .input { text-align: right; }
 .fare-sum { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 15px; }
+.dp-table tr.dp-shift td { transition: transform .18s ease; }
+.dp-table tr.dp-lift td { position: relative; z-index: 5; background: var(--panel); box-shadow: 0 8px 18px rgba(0,0,0,.16); }
+.dp-table tr.dp-lift td { box-shadow: 0 12px 14px -10px rgba(0,0,0,.28), 0 -10px 14px -10px rgba(0,0,0,.18); }

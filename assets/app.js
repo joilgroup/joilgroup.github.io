@@ -6980,6 +6980,11 @@
   function dispRowDrag(tbody, done) {
     if (!tbody) return;
     var rows = function () { return Array.prototype.slice.call(tbody.querySelectorAll('tr[data-o]')); };
+    // 칸을 합친 표에서는 줄(tr)을 옮겨도 화면에 안 그려져서 칸(td)마다 옮겨요
+    // 줄 색도 줄(tr)에 칠해져 있어서, 끄는 동안엔 칸마다 불투명하게 칠해 같이 움직이게
+    var paintCells = function (r) { var c = getComputedStyle(r).backgroundColor, bg = c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent' ? 'linear-gradient(' + c + ',' + c + '), var(--panel)' : 'var(--panel)'; r.dataset.bg = r.style.background; r.style.background = 'transparent'; Array.prototype.forEach.call(r.children, function (td) { td.style.background = bg; }); };
+    var unpaint = function (r) { r.style.background = r.dataset.bg || ''; Array.prototype.forEach.call(r.children, function (td) { td.style.background = ''; }); };
+    var setY = function (r, y) { Array.prototype.forEach.call(r.children, function (td) { td.style.transform = y ? 'translateY(' + y + 'px)' : ''; }); };
     tbody.addEventListener('pointerdown', function (e) {
       if (e.button !== 0) return;
       var tr = e.target.closest('tr[data-o]'); if (!tr || e.target.closest('input, button, select, a, label, textarea')) return;
@@ -6987,19 +6992,19 @@
       var mids = list.map(function (r) { var b = r.getBoundingClientRect(); return b.top + b.height / 2; }), h = tr.getBoundingClientRect().height;
       var move = function (ev) {
         var dy = ev.clientY - y0;
-        if (!started) { if (Math.abs(dy) < 6) return; started = true; dispState().dragging = true; document.body.classList.add('dp-noselect'); tr.classList.add('dp-lift'); list.forEach(function (r) { if (r !== tr) r.classList.add('dp-shift'); }); }
+        if (!started) { if (Math.abs(dy) < 6) return; started = true; dispState().dragging = true; document.body.classList.add('dp-noselect'); list.forEach(paintCells); tr.classList.add('dp-lift'); list.forEach(function (r) { if (r !== tr) r.classList.add('dp-shift'); }); }
         ev.preventDefault();
-        tr.style.transform = 'translateY(' + dy + 'px)';
+        setY(tr, dy);
         var c = mids[from] + dy; to = from;
         for (var i = 0; i < list.length; i++) { if (i < from && c < mids[i]) { to = i; break; } }
         for (var j = list.length - 1; j > from; j--) { if (c > mids[j]) { to = j; break; } }
-        list.forEach(function (r, i) { if (r === tr) return; var sh = from < to && i > from && i <= to ? -h : from > to && i >= to && i < from ? h : 0; r.style.transform = sh ? 'translateY(' + sh + 'px)' : ''; });
+        list.forEach(function (r, i) { if (r === tr) return; var sh = from < to && i > from && i <= to ? -h : from > to && i >= to && i < from ? h : 0; setY(r, sh); });
       };
       var up = function () {
         document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up);
         if (!started) return;
         document.body.classList.remove('dp-noselect'); dispState().dragging = false;
-        list.forEach(function (r) { r.style.transform = ''; r.classList.remove('dp-lift', 'dp-shift'); });
+        list.forEach(function (r) { setY(r, 0); unpaint(r); r.classList.remove('dp-lift', 'dp-shift'); });
         if (to !== from) done(from, to); else drawDispDay();
       };
       document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
