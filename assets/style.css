@@ -1223,3 +1223,7 @@ main.wide { max-width: 1880px; }
 .dp-rec { font-size: 13px; background: #FFF3E8; border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
 .dp-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 16px; }
 @media (max-width: 1100px) { .dp-two { grid-template-columns: minmax(0, 1fr); } }
+/* 경로 지도 */
+.dp-map { height: min(62vh, 560px); min-height: 320px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--panel-2); }
+.kpin { width: 28px; height: 28px; border-radius: 50%; background: #1E1C19; color: #fff; font: 800 14px/28px Pretendard, sans-serif; text-align: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); cursor: pointer; }
+.kpin.from { background: #F07A22; font-size: 15px; }

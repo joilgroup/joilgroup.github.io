@@ -6,5 +6,7 @@
 window.JOIL_CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbxIsfUYOD9xWmA2JAVXsV94-CKcOb1o3OfCCbCwO5ALkqFXjW_Zcy_seTwbPjK26ayj/exec',
   // 기사용 링크 주소 (회사명이 안 드러나는 별도 사이트, driver-site/index.html)
-  DRIVER_URL: 'https://truck-stopinfo.github.io/'
+  DRIVER_URL: 'https://truck-stopinfo.github.io/',
+  // 카카오 지도 JavaScript 키 (화면에 들어가는 공개용 키 · 카카오 개발자 사이트에 등록한 주소에서만 작동)
+  KAKAO_JS_KEY: 'f70cb8ae1c6ad8cba10d83b8a9c6cf33'
 };

@@ -2072,7 +2072,7 @@ function drvGet_(t) {
   var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : [])); } catch (e) { /* 지도 없이 */ }
   stops.forEach(function (s) { var g = geo[String(s.addr).replace(/\s+/g, ' ').trim()]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
   var rc = dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no; });
-  return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
+  return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact, lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
 }
 function drvUpload_(req) {
   var tr = drvFind_(req.t), fc = String(req.fc || '');

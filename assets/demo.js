@@ -261,6 +261,7 @@
     orders.forEach(function (o) { var d = o.d, k = d.fc; var x = by[k] || (by[k] = { fc: k, addr: d.addr, hours: d.hours, dock: d.dock, mgr: [d.m1, d.m2, d.m3].filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] }); if (stops.indexOf(x) === -1) stops.push(x);
       var n = Number(String(d.bundle).replace(/,/g, '')) || 0; x.bundle += n; x.kg += Number(String(d.kg).replace(/,/g, '')) || 0; x.items[d.item] = (x.items[d.item] || 0) + n; if (d.bl && x.bl.indexOf(d.bl) === -1) x.bl.push(d.bl); var g = demoGeo(d.addr); if (g) { x.lat = g.lat; x.lng = g.lng; } });
     var from = orders[0] && orders[0].d.from, pl = wk('places').filter(function (p) { return p.name === from; })[0] || null;
+    var plg = pl && pl.addr && demoGeo(pl.addr); if (pl) pl = Object.assign({}, pl, plg ? { lat: plg.lat, lng: plg.lng } : {});
     return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: pl, stops: stops, receipts: wk('rcpt').filter(function (x) { return x.cust === tr.cust && x.date === tr.date && x.no === tr.no; }).map(function (x) { return { fc: x.fc, at: x.at }; }) };
   }
   function handle(req) {

@@ -6662,6 +6662,50 @@
     rec.order.forEach(function (i) { rec.stops[i].rows.forEach(function (o) { o.seq = slots[n++]; }); });
     D.orders.sort(function (a, b) { return a.seq - b.seq; });
   }
+  /* 경로 지도 (카카오 지도 · 상차지 → 착지 번호 핀을 하차 순서대로 직선 연결) */
+  var kakaoReady = null;
+  function kakaoMaps() {
+    var key = window.JOIL_CONFIG && window.JOIL_CONFIG.KAKAO_JS_KEY;
+    if (!key) return Promise.reject(new Error('config.js에 KAKAO_JS_KEY(카카오 지도 키)가 없어요.'));
+    if (window.kakao && window.kakao.maps && window.kakao.maps.LatLng) return Promise.resolve(window.kakao.maps);
+    if (kakaoReady) return kakaoReady;
+    kakaoReady = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + encodeURIComponent(key) + '&autoload=false';
+      s.onload = function () { if (window.kakao && window.kakao.maps) window.kakao.maps.load(function () { resolve(window.kakao.maps); }); else { kakaoReady = null; reject(new Error('카카오 지도를 불러오지 못했어요.')); } };
+      s.onerror = function () { kakaoReady = null; s.remove(); reject(new Error('카카오 지도를 불러오지 못했어요. 카카오 개발자 사이트에 이 사이트 주소가 등록됐는지 확인해 주세요.')); };
+      document.head.appendChild(s);
+    });
+    return kakaoReady;
+  }
+  /** pts: [{ lat, lng, label('🏭' 또는 번호), title }] — 순서대로 선으로 이어요 */
+  function drawRouteMap(el, pts, color) {
+    return kakaoMaps().then(function (K) {
+      var ok = pts.filter(function (p) { return p && p.lat && p.lng; });
+      if (!ok.length) { el.innerHTML = '<div class="muted small" style="padding:20px">좌표를 찾은 곳이 없어 지도를 그릴 수 없어요.</div>'; return null; }
+      var map = new K.Map(el, { center: new K.LatLng(ok[0].lat, ok[0].lng), level: 8 }), bounds = new K.LatLngBounds(), path = [];
+      ok.forEach(function (p) {
+        var pos = new K.LatLng(p.lat, p.lng); bounds.extend(pos); path.push(pos);
+        var pin = document.createElement('div'); pin.className = 'kpin' + (p.from ? ' from' : ''); pin.textContent = p.label; pin.title = p.title || '';
+        if (p.onClick) pin.onclick = p.onClick;
+        new K.CustomOverlay({ map: map, position: pos, content: pin, yAnchor: 0.5, xAnchor: 0.5 });
+      });
+      if (path.length > 1) new K.Polyline({ map: map, path: path, strokeWeight: 4, strokeColor: color || '#1E1C19', strokeOpacity: 0.75, strokeStyle: 'solid' });
+      if (ok.length > 1) map.setBounds(bounds, 40, 40, 40, 40); else map.setLevel(5);
+      return map;
+    });
+  }
+  function openTruckMap(D, no) {
+    var st = dispState(), stops = truckStops(D, no), p = stops[0] && findPlace(stops[0].d.from), hue = 'hsl(' + ((no * 67) % 360) + ' 60% 45%)';
+    var pts = [p && p.addr ? Object.assign({ label: '🏭', from: 1, title: p.name }, st.geo[geoKey(p.addr)] || {}) : null].concat(stops.map(function (s, i) { return Object.assign({ label: String(i + 1), title: s.fc }, st.geo[geoKey(s.d.addr)] || {}); }));
+    var miss = [(!p || !p.addr) ? '상차지(상차지 설정에 주소 없음)' : (!st.geo[geoKey(p.addr)] ? '상차지 ' + p.name : '')].concat(stops.filter(function (s) { return !st.geo[geoKey(s.d.addr)]; }).map(function (s) { return s.fc; })).filter(Boolean);
+    modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 경로', wide: true,
+      body: '<div class="dp-map" id="dpMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div>' +
+        '<ol class="dp-route" style="margin-top:10px"><li class="from">🏭 ' + esc((p && p.name) || (stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) { return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b><span class="small muted">' + esc(s.d.addr || '') + '</span></li>'; }).join('') + '</ol>' +
+        (miss.length ? '<p class="hint err-text">지도에 못 찍은 곳: ' + esc(miss.join(', ')) + '</p>' : '') + '<p class="hint">선은 하차 순서대로 이은 직선이에요. 실제 길은 기사님 화면의 길안내 버튼으로 봐요.</p>',
+      onMount: function (m) { var el = $('#dpMap', m); drawRouteMap(el, pts, hue).catch(function (e) { el.innerHTML = '<div class="err-text small" style="padding:20px">' + esc(e.message) + '</div>'; }); }
+    });
+  }
   function needGeo() {
     var st = dispState(), want = {};
     DISP_TABS.forEach(function (t) { var D = st.tabs && st.tabs[t[0]]; if (!D) return; D.orders.forEach(function (o) { if (o.d.addr) want[geoKey(o.d.addr)] = 1; var p = findPlace(o.d.from); if (p && p.addr) want[geoKey(p.addr)] = 1; }); });
@@ -6713,12 +6757,13 @@
   function dispSaveNow() {
     var st = dispState(), tabs = Object.keys(st.dirty); if (!st.tabs || !tabs.length) return Promise.resolve();
     st.dirty = {}; var el = $('#dpSaveSt'); if (el) el.innerHTML = '<span class="spinner dark"></span> 저장 중';
+    var fresh = false;
     return Promise.all(tabs.map(function (tab) {
       var D = st.tabs[tab]; if (!D) return null; var used = dispTrucks(D);
       return api('dispatch.save', { cust: D.key, date: D.date, orders: D.orders.map(function (o) { return { id: o.id, truck: o.truck, seq: o.seq }; }), trucks: D.trucks.filter(function (t) { return used.indexOf(t.no) !== -1; }) })
-        .then(function (r) { r.trucks.forEach(function (t) { var x = D.trucks.filter(function (y) { return y.no === t.no; })[0]; if (x) x.token = t.token; }); D.receipts = r.receipts || D.receipts; })
+        .then(function (r) { r.trucks.forEach(function (t) { var x = D.trucks.filter(function (y) { return y.no === t.no; })[0]; if (x) { if (t.token && !x.token) fresh = true; x.token = t.token; } }); D.receipts = r.receipts || D.receipts; })
         .catch(function (err) { st.dirty[tab] = 1; throw err; });
-    })).then(function () { var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
+    })).then(function () { if (fresh && state.view === 'dispatch' && st.view === 'day' && !document.querySelector('.dp-table input:focus, .dp-tf input:focus')) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
       .catch(function (err) { toast('저장하지 못했어요: ' + err.message, 'err'); var e = $('#dpSaveSt'); if (e) e.innerHTML = '<span class="err-text">저장 안 됨</span>'; });
   }
   function renderDispatch() {
@@ -6746,7 +6791,7 @@
       '<span>착지 <b>' + stops.length + '</b>곳 · 총 <b>' + won(b) + '</b>번들 / <b>' + won(kg) + '</b>kg</span>' +
       (cost ? '<span class="dp-cost" title="' + esc(cost.max ? '가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원' : '') + '">' + esc(cost.ton) + ' 기준 예상 매입 ' + (cost.total != null ? '<b>' + won(cost.total) + '원</b>' : '–') + (cost.miss.length ? ' <span class="err-text">단가 없음: ' + esc(cost.miss.join(', ')) + '</span>' : '') + '</span>' : '') +
       '<span class="dp-rc' + (nGot === stops.length && stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</span>' +
-      '<span class="spacer"></span><button class="btn btn-sm" data-link="' + D.tab + '|' + no + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button class="btn btn-sm btn-primary" data-copy="' + D.tab + '|' + no + '">문자 복사</button></div>' +
+      '<span class="spacer"></span><button class="btn btn-sm" data-map="' + D.tab + '|' + no + '">🗺 지도</button><button class="btn btn-sm" data-link="' + D.tab + '|' + no + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button class="btn btn-sm btn-primary" data-copy="' + D.tab + '|' + no + '">문자 복사</button></div>' +
       '<ol class="dp-route"><li class="from">🏭 ' + esc((stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) {
         var g = got(s.fc), items = {}; s.rows.forEach(function (o) { items[o.d.item] = (items[o.d.item] || 0) + dispNum(o.d.bundle); });
         return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b>' + (s.dest && s.dest.name ? ' <span class="muted small" title="단가표 도착">(' + esc(s.dest.name) + (s.price ? ' ' + won(s.price) : '') + ')</span>' : '') +
@@ -6845,6 +6890,7 @@
     var copyText = function (txt, msg) { (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(msg); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('복사하지 못했어요. 미리보기에서 직접 복사하세요.', 'err'); } ta.remove(); }); };
     var noLink = function (x) { var t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; return !(t && t.token); };
     $$('[data-copy]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.copy); if (noLink(x)) { st.dirty[x.tab] = 1; toast('기사 링크를 만드는 중이에요…'); dispSaveNow().then(function () { drawDispDay(); toast(noLink(x) ? '기사 링크가 안 만들어졌어요. Apps Script(Code.js)를 최신으로 새 버전 배포했는지 확인해 주세요.' : '기사 링크가 생겼어요. 문자 복사를 다시 눌러 주세요.', noLink(x) ? 'err' : ''); }); return; } copyText(truckMessage(x.D, x.no), x.tab + ' ' + x.no + '호차 문자를 복사했어요.'); }; });
+    $$('[data-map]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.map); openTruckMap(x.D, x.no); }; });
     $$('[data-link]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.link), t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; window.open(driverUrl(t.token), '_blank'); }; });
     $$('[data-copyall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.copyall], ns = dispTrucks(X); copyText(ns.map(function (n) { return '[' + X.tab + ' ' + n + '호차]\n' + truckMessage(X, n); }).join('\n\n────────\n\n'), X.tab + ' ' + ns.length + '대 문자를 복사했어요.'); }; });
     $$('[data-rcv]', box).forEach(function (b) {
@@ -7911,7 +7957,8 @@
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',
       '<b>③ 문자</b>: 호차마다 총 번들·kg, 상차지(상차지 설정에서 찾음), 하차지, BL·품목이 자동으로 만들어져요. "문자 복사"로 바로 붙여넣으세요.',
       '<b>④ 차량정보</b>: 다온업체 구글시트에서 호차 순서대로 차량정보~톤수 5칸을 복사해 붙여넣어요. <b>⑤ 팀즈 회신용</b>은 원래 줄 순서대로 같은 5칸이라 팀즈 엑셀 M열에 그대로 붙여넣으면 돼요.',
-      '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요.',
+      '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나와요.',
+      '<b>🗺 지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',
       '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게로 자동이에요. 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
       '모든 배정은 자동 저장되고, <b>월별 기록</b>에서 날짜별 운행 대수·번들·kg·차량/기사별 횟수를 보고 엑셀로 받을 수 있어요.'

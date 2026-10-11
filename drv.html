@@ -32,6 +32,9 @@
     .spin { display: inline-block; width: 18px; height: 18px; border: 3px solid #ddd; border-top-color: var(--ink); border-radius: 50%; animation: s .8s linear infinite; vertical-align: -3px; }
     @keyframes s { to { transform: rotate(360deg); } }
     input[type=file] { display: none; }
+    #map { height: 240px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); margin-top: 12px; background: #EDE6DA; }
+    .kpin { width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: #fff; font: 800 15px/30px sans-serif; text-align: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+    .kpin.from { background: var(--orange); }
   </style>
 </head>
 <body>
@@ -60,6 +63,35 @@
       var t = lat ? 'tmap://route?goalname=' + encodeURIComponent(name) + '&goalx=' + lng + '&goaly=' + lat : 'tmap://search?name=' + encodeURIComponent(addr || name);
       return '<a class="btn" href="' + k + '" target="_blank" rel="noopener">🗺 카카오맵</a><a class="btn" href="' + t + '">🚗 티맵</a>';
     }
+    var KAKAO_KEY = (window.JOIL_CONFIG && window.JOIL_CONFIG.KAKAO_JS_KEY) || '';
+    var mapNode = null;
+    /** 지도: 상차지 → 착지 번호 핀, 하차 순서대로 직선 (핀을 누르면 그 착지로 이동) */
+    function drawMap() {
+      if (mapNode) return;
+      var d = data, pts = [d.place && d.place.lat ? { lat: d.place.lat, lng: d.place.lng, label: '🏭', from: 1 } : null].concat(d.stops.map(function (s, i) { return s.lat ? { lat: s.lat, lng: s.lng, label: String(i + 1), i: i } : null; })).filter(Boolean);
+      if (!KAKAO_KEY || !pts.length) return;
+      mapNode = document.createElement('div'); mapNode.id = 'map';
+      var place = function () { var slot = document.getElementById('mapSlot'); if (slot) slot.replaceWith(mapNode); };
+      place();
+      var sc = document.createElement('script');
+      sc.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + encodeURIComponent(KAKAO_KEY) + '&autoload=false';
+      sc.onerror = function () { mapNode.remove(); };
+      sc.onload = function () {
+        if (!(window.kakao && window.kakao.maps)) { mapNode.remove(); return; }
+        window.kakao.maps.load(function () {
+          var K = window.kakao.maps, map = new K.Map(mapNode, { center: new K.LatLng(pts[0].lat, pts[0].lng), level: 8 }), b = new K.LatLngBounds(), path = [];
+          pts.forEach(function (p) {
+            var pos = new K.LatLng(p.lat, p.lng), pin = document.createElement('div'); b.extend(pos); path.push(pos);
+            pin.className = 'kpin' + (p.from ? ' from' : ''); pin.textContent = p.label;
+            if (p.i != null) pin.onclick = function () { var c = document.getElementById('st' + p.i); if (c) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+            new K.CustomOverlay({ map: map, position: pos, content: pin, xAnchor: 0.5, yAnchor: 0.5 });
+          });
+          if (path.length > 1) { new K.Polyline({ map: map, path: path, strokeWeight: 4, strokeColor: '#1E1C19', strokeOpacity: 0.7 }); map.setBounds(b, 30, 30, 30, 30); } else map.setLevel(5);
+          mapNode._map = map;
+        });
+      };
+      document.head.appendChild(sc);
+    }
     function draw() {
       var d = data, tb = 0, tk = 0;
       d.stops.forEach(function (s) { tb += s.bundle; tk += s.kg; });
@@ -69,10 +101,10 @@
       app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.cust) + '</div><h1>' + d.no + '호차 · 착지 ' + d.stops.length + '곳</h1>' +
         '<div class="sub">총 ' + won(tb) + '번들 / ' + won(tk) + 'kg' + (d.car || d.driver ? ' · ' + esc([d.car, d.driver].filter(Boolean).join(' ')) : '') + '</div>' +
         '<div class="sub ' + (nGot === d.stops.length ? 'ok' : '') + '" style="margin-top:4px">인수증 ' + nGot + ' / ' + d.stops.length + (nGot === d.stops.length ? ' · 모두 올렸어요 👍' : '') + '</div>' +
-        '<div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from) + '</div>' + (p ? (p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') + (p.contact ? '<div class="row">' + tels(String(p.contact).split(/\n/)) + '</div>' : '') + (p.addr ? '<div class="btns">' + navLinks(p.name, p.addr) + '</div>' : '') : '') + '</div>' +
+        '<div id="mapSlot"></div><div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from) + '</div>' + (p ? (p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') + (p.contact ? '<div class="row">' + tels(String(p.contact).split(/\n/)) + '</div>' : '') + (p.addr ? '<div class="btns">' + navLinks(p.name, p.addr) + '</div>' : '') : '') + '</div>' +
         d.stops.map(function (s, i) {
           var g = got(s.fc), items = Object.keys(s.items).map(function (k) { return esc(k) + ' <b>' + won(s.items[k]) + '</b>번들'; }).join(' · ');
-          return '<div class="card"><div class="ttl"><span class="no">' + (i + 1) + '</span>' + esc(s.fc) + '</div>' +
+          return '<div class="card" id="st' + i + '"><div class="ttl"><span class="no">' + (i + 1) + '</span>' + esc(s.fc) + '</div>' +
             (s.addr ? '<div class="row">' + esc(s.addr) + '</div>' : '') + (s.hours ? '<div class="row muted">⏰ ' + esc(s.hours) + '</div>' : '') + (s.dock ? '<div class="row muted">📌 ' + esc(s.dock) + '</div>' : '') +
             '<div class="items">' + items + ' · 총 ' + won(s.bundle) + '번들' + (s.bl.length ? '<br><span class="muted">BL ' + esc(s.bl.join(', ')) + '</span>' : '') + '</div>' +
             (s.mgr.length ? '<div class="row">' + tels(s.mgr) + '</div>' : '') +
@@ -81,6 +113,7 @@
             '<input type="file" accept="image/*" capture="environment" data-fc="' + esc(s.fc) + '"></label></div></div>';
         }).join('') +
         '<p class="note">이 페이지는 이 호차 기사님용이에요. 올린 사진은 배차 담당자만 볼 수 있어요.</p>';
+      if (mapNode) { var slot = document.getElementById('mapSlot'); if (slot) slot.replaceWith(mapNode); if (mapNode._map) mapNode._map.relayout(); } else drawMap();
       Array.prototype.forEach.call(app.querySelectorAll('input[type=file]'), function (inp) { inp.onchange = function () { if (inp.files[0]) upload(inp.dataset.fc, inp.files[0]); inp.value = ''; }; });
     }
     function shrink(file) {
