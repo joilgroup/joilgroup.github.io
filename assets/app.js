@@ -6758,7 +6758,8 @@
     modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 경로', wide: true,
       body: '<div class="dp-map" id="dpMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div>' +
         '<ol class="dp-route" style="margin-top:10px"><li class="from">🏭 ' + esc((p && p.name) || (stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) { return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b><span class="small muted">' + esc(s.d.addr || '') + '</span></li>'; }).join('') + '</ol>' +
-        (miss.length ? '<p class="hint err-text">지도에 못 찍은 곳: ' + esc(miss.join(', ')) + '</p>' : '') + '<p class="hint">선은 하차 순서대로 이은 직선이에요. 실제 길은 기사님 화면의 길안내 버튼으로 봐요.</p>',
+        (miss.length ? '<p class="hint err-text">지도에 못 찍은 곳: ' + esc(miss.join(', ')) + '</p>' : '') +
+        (function () { var ap = stops.filter(function (s) { var g = st.geo[geoKey(s.d.addr)]; return g && g.approx; }).map(function (s) { return s.fc; }); return ap.length ? '<p class="hint" style="color:var(--orange)">정확한 번지를 못 찾아 동·읍·면 위치로 대략 찍은 곳: ' + esc(ap.join(', ')) + '</p>' : ''; })() + '<p class="hint">선은 하차 순서대로 이은 직선이에요. 실제 길은 기사님 화면의 길안내 버튼으로 봐요.</p>',
       onMount: function (m) { var el = $('#dpMap', m); drawRouteMap(el, pts, hue).catch(function (e) { el.innerHTML = '<div class="err-text small" style="padding:20px">' + esc(e.message) + '</div>'; }); }
     });
   }
