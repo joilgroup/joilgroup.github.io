@@ -6666,7 +6666,14 @@
   }
   /* 매입 단가 (분석 권한) */
   function rateFromName(from) { var p = findPlace(from); return (p && p.rateFrom) || String(from || '').replace(/물류센터|센터|물류/g, '').trim(); }
-  function autoTon(kg) { for (var i = 0; i < RATE_TONS.length; i++) if (kg <= RATE_TONS[i][1]) return RATE_TONS[i][0]; return RATE_TONS[RATE_TONS.length - 1][0]; }
+  /* 자동 톤수: 중량 기준과 파렛(=번들) 기준 중 더 큰 차 (8톤은 자동으로 고르지 않아요) */
+  var TON_BY_KG = [[1000, '1톤'], [2500, '2.5톤'], [3500, '3.5톤'], [5000, '5톤'], [10000, '11톤'], [Infinity, '14톤']];
+  var TON_BY_PLT = [[2, '1톤'], [3, '2.5톤'], [4, '3.5톤'], [10, '5톤'], [16, '11톤'], [Infinity, '14톤']];
+  function autoTon(kg, plt) {
+    var pick = function (tbl, v) { for (var i = 0; i < tbl.length; i++) if (v <= tbl[i][0]) return tbl[i][1]; return tbl[tbl.length - 1][1]; };
+    var rank = function (t) { return RATE_TONS.map(function (x) { return x[0]; }).indexOf(t); }, a = pick(TON_BY_KG, kg || 0), b = pick(TON_BY_PLT, plt || 0);
+    return rank(b) > rank(a) ? b : a;
+  }
   /** 센터 → 단가표 도착명: 직접 고친 값 > 주소의 시·군으로 단가표에서 찾기 */
   function destName(fc, addr, origin) {
     var st = dispState(), R = st.rates; if (!R) return { name: '', auto: true };
@@ -6681,7 +6688,7 @@
   function truckCost(D, no) {
     var st = dispState(), R = st.rates; if (!R) return null;
     var stops = truckStops(D, no); if (!stops.length) return null;
-    var kg = stops.reduce(function (a, s) { return a + s.kg; }, 0), ton = autoTon(kg), origin = rateFromName(stops[0].d.from), miss = [], best = null;
+    var kg = stops.reduce(function (a, s) { return a + s.kg; }, 0), ton = autoTon(kg, stops.reduce(function (a, s) { return a + s.b; }, 0)), origin = rateFromName(stops[0].d.from), miss = [], best = null;
     stops.forEach(function (s) {
       var dn = destName(s.fc, s.d.addr, origin); s.dest = dn;
       var r = dn.name && R.rates.filter(function (x) { return x.from === origin && x.to === dn.name; })[0], p = r && r.p[ton];
@@ -7165,7 +7172,7 @@
     var st = dispState(), parsed = null;
     var head = ['출발', '도착', '매칭', '거리'].concat(RATE_TONS.map(function (t) { return t[0]; }));
     modal({ wide: true, eyebrow: '배차시트 · 분석 권한자만', title: '매입 단가표',
-      body: '<p class="muted small" style="margin:0 0 8px">매입 = 착지 중 가장 비싼 구간 단가 + 경유지마다 ' + won(STOP_FEE) + '원 · 톤수는 호차 총 무게로 자동 (예: 10,780kg → 11톤)</p>' +
+      body: '<p class="muted small" style="margin:0 0 8px">매입 = 착지 중 가장 비싼 구간 단가 + 경유지마다 ' + won(STOP_FEE) + '원 · 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동 (예: 2파렛이라도 1,100kg이면 2.5톤)</p>' +
         '<div class="actions" style="margin-bottom:8px"><button class="btn btn-sm" id="drTpl">양식 받기</button><label class="btn btn-sm">엑셀 올리기<input type="file" id="drFile" accept=".xlsx,.xls" hidden></label><span class="small muted" id="drNow"></span></div>' +
         '<textarea class="input" id="drIn" rows="4" placeholder="또는 구글시트 단가표에서 제목 줄(출발·도착·매칭·거리·1톤…14톤)까지 복사해 붙여넣기"></textarea>' +
         '<div class="actions" style="margin-top:6px"><span class="small" id="drInfo"></span><button class="btn btn-sm btn-primary" id="drSave" disabled>단가표 바꾸기</button></div>' +
@@ -8257,7 +8264,7 @@
       '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나오고, 상차지 설정에서 올린 상차지 사진(2장까지, 설명 포함)도 상차지 카드에 보여요.',
       '<b>지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',
-      '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게로 자동이에요. 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
+      '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동이에요 (무게: 1,000kg 1톤 · 2,500kg 2.5톤 · 3,500kg 3.5톤 · 5,000kg 5톤 · 10,000kg 11톤 · 그 이상 14톤 / 파렛: 2개 1톤 · 3개 2.5톤 · 4개 3.5톤 · 10개 5톤 · 16개 11톤 · 그 이상 14톤). 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
       '모든 배정은 자동 저장되고, <b>월별 기록</b>에서 날짜별 운행 대수·번들·kg·차량/기사별 횟수를 보고 엑셀로 받을 수 있어요.'
     ]]);
     if (hq) sec.push(['work', '업무 매뉴얼 · 담당표 · 문의 기록', [
