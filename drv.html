@@ -16,6 +16,9 @@
     .sub { color: var(--muted); font-size: 14px; }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-top: 12px; }
     .card.from { background: #FFF8EE; }
+    .card.notice { background: #FFF1E0; border-color: #F4C08A; }
+    .card.notice div { font-size: 16px; font-weight: 700; margin-top: 4px; }
+    .card.notice div:first-child { margin-top: 0; }
     .no { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: #fff; font-weight: 800; font-size: 15px; margin-right: 8px; flex: none; }
     .ttl { display: flex; align-items: center; font-size: 19px; font-weight: 800; }
     .row { margin-top: 6px; font-size: 15px; }
@@ -109,6 +112,7 @@
       app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.cust) + '</div><h1>' + d.no + '호차 · 착지 ' + d.stops.length + '곳</h1>' +
         '<div class="sub">총 ' + won(tb) + '번들 / ' + won(tk) + 'kg' + (d.car || d.driver ? ' · ' + esc([d.car, d.driver].filter(Boolean).join(' ')) : '') + '</div>' +
         '<div class="sub ' + (nGot === d.stops.length ? 'ok' : '') + '" style="margin-top:4px">인수증 ' + nGot + ' / ' + d.stops.length + (nGot === d.stops.length ? ' · 모두 올렸어요 👍' : '') + '</div>' +
+        ((d.notes || []).length ? '<div class="card notice">' + d.notes.map(function (n) { return '<div>⚠️ ' + (d.stops.length > 1 && n.fc ? esc(n.fc) + ': ' : '') + esc(n.text) + '</div>'; }).join('') + '</div>' : '') +
         '<div id="mapSlot"></div><div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from) + '</div>' + (p ? (p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') + (p.contact ? '<div class="row">' + tels(String(p.contact).split(/\n/)) + '</div>' : '') + (p.addr ? '<div class="btns">' + navLinks(p.name, p.addr) + '</div>' : '') +
           ((p.photos || []).length ? '<div class="phs">' + p.photos.map(function (ph) { return '<figure class="ph"><div class="phi" data-ph="' + esc(ph.id) + '">' + (photos[ph.id] ? '<img src="data:image/jpeg;base64,' + photos[ph.id] + '" alt="">' : '<span><span class="spin"></span> 사진 불러오는 중…</span>') + '</div>' + (ph.cap ? '<figcaption>📍 ' + esc(ph.cap) + '</figcaption>' : '') + '</figure>'; }).join('') + '</div>' : '') : '') + '</div>' +
         d.stops.map(function (s, i) {

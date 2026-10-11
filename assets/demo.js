@@ -262,7 +262,8 @@
       var n = Number(String(d.bundle).replace(/,/g, '')) || 0; x.bundle += n; x.kg += Number(String(d.kg).replace(/,/g, '')) || 0; x.items[d.item] = (x.items[d.item] || 0) + n; if (d.bl && x.bl.indexOf(d.bl) === -1) x.bl.push(d.bl); var g = demoGeo(d.addr); if (g) { x.lat = g.lat; x.lng = g.lng; } });
     var from = orders[0] && orders[0].d.from, pl = wk('places').filter(function (p) { return p.name === from; })[0] || null;
     var plg = pl && pl.addr && demoGeo(pl.addr); if (pl) pl = Object.assign({}, pl, plg ? { lat: plg.lat, lng: plg.lng } : {});
-    return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: pl, stops: stops, receipts: wk('rcpt').filter(function (x) { return x.cust === tr.cust && x.date === tr.date && x.no === tr.no; }).map(function (x) { return { fc: x.fc, at: x.at }; }) };
+    var dn = [], dseen = {}; orders.forEach(function (o) { var k = o.d.fc + '|' + o.noteDrv; if (o.noteDrv && !dseen[k]) { dseen[k] = 1; dn.push({ fc: o.d.fc, text: o.noteDrv }); } });
+    return { notes: dn, date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: pl, stops: stops, receipts: wk('rcpt').filter(function (x) { return x.cust === tr.cust && x.date === tr.date && x.no === tr.no; }).map(function (x) { return { fc: x.fc, at: x.at }; }) };
   }
   function handle(req) {
     if (req.action === 'login') {
@@ -470,6 +471,9 @@
         var dtok = {}; wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date && t.token) dtok[t.no] = t.token; });
         store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat((req.trucks || []).map(function (t) { var no = Number(t.no); return { cust: req.cust, date: req.date, no: no, car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '', token: dtok[no] || (Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2) + '00000000000000000000').slice(0, 20) }; }));
         save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
+      case 'dispatch.note':
+        var no_ = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
+        no_.noteIn = String(req.noteIn || '').trim(); no_.noteDrv = String(req.noteDrv || '').trim(); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
       case 'dispatch.deleteOrders':
         var dids = {}; (req.ids || []).forEach(function (x) { dids[x] = 1; }); store.dispOrd = wk('dispOrd').filter(function (o) { return !dids[o.id]; }); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
       case 'dispatch.rates':

@@ -154,7 +154,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -191,6 +191,7 @@ function handle_(req) {
     case 'dispatch.import': return dispImport_(session, req);
     case 'dispatch.save': return dispSave_(session, req);
     case 'dispatch.deleteOrders': return dispDeleteOrders_(session, req);
+    case 'dispatch.note': return dispNote_(req);
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
     case 'dispatch.mapSave': return dispMapSave_(session, req);
@@ -1920,7 +1921,7 @@ function ownerCover_(cal, from, to) {
  * 거래처가 준 오더(엑셀 붙여넣기)를 날짜별로 보관하고, 호차로 묶어 문자·회신표를 만듦. 금액 없음 · 견적 권한자
  */
 var SHEET_DISP_ORD = '배차오더';
-var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시'];
+var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시', '내부공지', '기사공지'];
 var SHEET_DISP_TRK = '배차호차';
 var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드'];
 var SHEET_LOADING = '상차지';
@@ -1928,11 +1929,11 @@ var LOADING_HEADER = ['ID', '이름', '주소', '상차가능시간', '연락처
 var DISP_TRK_FIELDS = ['car', 'driver', 'phone', 'time', 'ton', 'memo'];
 function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업체를 고르세요.'); return c.slice(0, 50); }
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
-function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]) }; }
+function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]), noteIn: dispTxt_(r[9]), noteDrv: dispTxt_(r[10]) }; }
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
 function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || '') }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
-function dispOrders_(cust, test) { return rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
+function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
 function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
 function dispDay_(cust, date) {
   cust = dispCust_(cust); date = dispDate_(date);
@@ -1989,6 +1990,13 @@ function dispSave_(session, req) {
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
     return dispDay_(cust, date);
   } finally { lock.releaseLock(); }
+}
+/** 오더 공지: 내부용(배차 담당만) · 기사용(문자·기사 링크에 표시) */
+function dispNote_(req) {
+  var cust = dispCust_(req.cust), date = dispDate_(req.date), sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER);
+  var f = findRow_(SHEET_DISP_ORD, DISP_ORD_HEADER, req.id); if (!f || String(f.raw[1]) !== cust || textDate_(f.raw[2]) !== date) throw new Error('오더를 찾을 수 없어요.');
+  sh.getRange(f.row, 10, 1, 2).setValues([["'" + String(req.noteIn || '').trim().slice(0, 300), "'" + String(req.noteDrv || '').trim().slice(0, 300)]]);
+  return dispDay_(cust, date);
 }
 function dispDeleteOrders_(session, req) {
   var cust = dispCust_(req.cust), date = dispDate_(req.date), ids = {}; (req.ids || []).forEach(function (x) { ids[String(x)] = 1; });
@@ -2076,8 +2084,9 @@ function drvGet_(t) {
   var from = orders[0] && orders[0].d.from, place = loadingList_().filter(function (p) { return String(p.name).replace(/\s|\(주\)|㈜/g, '') === String(from || '').replace(/\s|\(주\)|㈜/g, ''); })[0] || null;
   var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : [])); } catch (e) { /* 지도 없이 */ }
   stops.forEach(function (s) { var g = geo[String(s.addr).replace(/\s+/g, ' ').trim()]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
-  var rc = dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no; });
-  return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact, photos: place.photos || [], lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
+  var rc = dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no; }), notes = [], seen = {};
+  orders.forEach(function (o) { var k = (o.d.fc || '') + '|' + o.noteDrv; if (o.noteDrv && !seen[k]) { seen[k] = 1; notes.push({ fc: o.d.fc || '', text: o.noteDrv }); } });
+  return { notes: notes, date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact, photos: place.photos || [], lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
 }
 function drvUpload_(req) {
   var tr = drvFind_(req.t), fc = String(req.fc || '');
