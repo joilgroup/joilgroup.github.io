@@ -7159,7 +7159,7 @@
       var mv = orders.splice(from, 1)[0]; orders.splice(to, 0, mv); orders.forEach(function (o, i) { o.seq = i + 1; }); redraw();
     });
     var tn = function (v) { var p = v.split('|'); return { D: st.tabs[p[0]], no: Number(p[1]), tab: p[0] }; };
-    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중)
+    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { if (inp.dataset.skip) return; var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중)
     /* 엑셀·구글시트에서 차량정보~톤수를 복사해 붙여넣으면 칸마다 나눠 넣기 (여러 줄이면 다음 호차로 이어서) */
     $$('[data-tf]', box).forEach(function (inp) {
       inp.onpaste = function (e) {
@@ -7172,7 +7172,7 @@
           var no = ns[start + i]; if (no == null) return; var t = truckInfo(x.D, no); n++;
           r.forEach(function (c, j) { var f = TRK_FIELDS[k0 + j]; if (f) t[f[0]] = String(c).trim(); });
         });
-        dispQueueSave(x.tab); drawDispDay(true); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
+        inp.dataset.skip = 1; dispQueueSave(x.tab); drawDispDay(true); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
       };
     });
     /* 기사 풀: 차량정보·운전원·연락처 칸에 치면 맞는 기사 목록 → 고르면 4칸 채우기 */
@@ -7192,7 +7192,7 @@
     });
     $$('[data-tf=car], [data-tf=driver], [data-tf=phone]', box).forEach(function (inp) {
       inp.setAttribute('autocomplete', 'off');
-      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
+      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { inp.dataset.skip = 1; /* 다시 그릴 때 칸이 사라지며 오는 늦은 '바뀜' 신호(직접 친 '김')는 무시 */ var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
       inp.addEventListener('keydown', driverSuggestKey);
       inp.addEventListener('blur', function () { setTimeout(closeDriverSuggest, 150); });
     });
