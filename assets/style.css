@@ -1274,3 +1274,10 @@ label.btn.disabled { pointer-events: none; opacity: .6; }
 .dpool-pin { border: 0; background: transparent; font-size: 16px; color: #CFC6B6; cursor: pointer; }
 .dpool-pin.on { color: #F4BE2E; }
 table.data.dpool td { padding: 7px 8px; }
+/* 호차 카드: 상차지·착지 주소와 상하차 가능시간 (두 줄) */
+.dp-hr { align-items: start; }
+.dp-hr > b { white-space: nowrap; min-width: 110px; }
+.dp-hr > div { min-width: 0; }
+.dp-hr > div .clip:first-child { color: var(--ink); }
+.dp-hr > div .clip + .clip { color: var(--muted); }
+.dp-sn.from { background: transparent; width: 20px; font-size: 14px; }

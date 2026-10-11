@@ -6838,14 +6838,17 @@
       '<span class="dp-rc' + (nGot === stops.length && stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</span>' +
       '<span class="spacer"></span><button class="btn btn-sm" data-map="' + D.tab + '|' + no + '">🗺 지도</button><button class="btn btn-sm" data-link="' + D.tab + '|' + no + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button class="btn btn-sm btn-primary" data-copy="' + D.tab + '|' + no + '">문자 복사</button></div>' +
       '<div class="dp-body"><ol class="dp-route"><li class="from">🏭 ' + esc((stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) {
-        var g = got(s.fc), items = {}; s.rows.forEach(function (o) { items[o.d.item] = (items[o.d.item] || 0) + dispNum(o.d.bundle); });
+        var g = got(s.fc);
         return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b>' + (s.dest && s.dest.name ? ' <span class="muted small" title="단가표 도착">(' + esc(s.dest.name) + (s.price ? ' ' + won(s.price) : '') + ')</span>' : '') +
-          '<span class="small">' + esc(Object.keys(items).map(function (k) { return k + ' ' + items[k]; }).join(', ')) + ' · ' + won(s.b) + '번들</span>' +
           (g.length ? '<button class="dp-rcb ok" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">✅ ' + (g.length > 1 ? g.length + '장' : '인수증') + '</button>' : '<span class="dp-rcb">⬜ 인수증</span>') + '</li>';
       }).join('') + '</ol>' +
       '<div class="dp-tf" title="엑셀·구글시트에서 5칸을 복사해 아무 칸에나 붙여넣으면 나눠 들어가요">' + TRK_FIELDS.map(function (f) { return '<label><span>' + f[1] + '</span><input class="input input-sm" data-tf="' + f[0] + '" data-tn="' + D.tab + '|' + no + '" value="' + esc(t[f[0]] || '') + '"></label>'; }).join('') +
         '<button class="btn btn-sm" data-xl="' + D.tab + '|' + no + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">엑셀 복사</button></div></div>' +
-      (stops.some(function (s) { return s.d.hours; }) ? '<div class="dp-hours">' + stops.map(function (s, i) { return s.d.hours ? '<div class="dp-hr"><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b><div class="clip" title="' + esc(s.d.hours) + '">⏰ ' + esc(s.d.hours) + '</div></div>' : ''; }).join('') + '</div>' : '') +
+      (function () {
+        var pl = stops[0] && findPlace(stops[0].d.from), line = function (txt, icon) { return txt ? '<div class="clip" title="' + esc(txt) + '">' + icon + esc(txt) + '</div>' : ''; };
+        return '<div class="dp-hours">' + (stops[0] ? '<div class="dp-hr"><span class="dp-sn from">🏭</span><b>' + esc((pl && pl.name) || stops[0].d.from) + '</b><div>' + (pl ? line(pl.addr, '') + line(pl.time, '⏰ ') : '<div class="muted">상차지 설정에 주소가 없어요</div>') + '</div></div>' : '') +
+          stops.map(function (s, i) { return '<div class="dp-hr"><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b><div>' + line(s.d.addr, '') + line(s.d.hours, '⏰ ') + '</div></div>'; }).join('') + '</div>';
+      })() +
       (function () { var ni = truckNotes(D, no, 'in'), nd = truckNotes(D, no, 'drv'); return ni.length || nd.length ? '<div class="dp-notes">' + ni.map(function (x) { return '<div class="nt in">🔒 <b>' + esc(x.fc) + '</b> ' + esc(x.text) + '</div>'; }).join('') + nd.map(function (x) { return '<div class="nt drv">📢 <b>' + esc(x.fc) + '</b> ' + esc(x.text) + ' <span class="muted small">(문자에 포함)</span></div>'; }).join('') + '</div>' : ''; })() +
       (rec && !rec.ok ? '<div class="dp-rec">🧭 추천 순서: ' + rec.order.map(function (i, k) { return (k + 1) + ' ' + esc(rec.stops[i].fc); }).join(' → ') + ' <span class="muted small">(직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)</span> <button class="btn btn-sm" data-rec="' + D.tab + '|' + no + '">이 순서로</button></div>' : '') +
       '<details><summary class="small">문자 미리보기</summary><pre class="dp-msg">' + esc(truckMessage(D, no)) + '</pre></details></div>';
