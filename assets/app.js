@@ -6534,7 +6534,8 @@
   /* ───────── 배차시트 (거래처 오더 붙여넣기 → 호차 묶기 → 문자 · 기사용 링크 · 인수증 · 차량정보) ───────── */
   var DISP_CUSTS = ['쿠팡부자재'];
   var DISP_TABS = [['인천', ''], ['평택', '/평택'], ['부산', '/부산']];
-  var DISP_COLS = [['no', '순번'], ['from', '출발센터'], ['maker', '제조사'], ['item', 'Item'], ['date', '납품일자'], ['inQty', '입고수량'], ['outQty', '출고수량'], ['dest', '도착지'], ['fc', '센터명'], ['po', 'CP 발주번호'], ['bl', 'BL#'],
+  /* 동방 엑셀 C~AF열 (첫 칸은 항상 출발센터 · B열 순번은 쓰지 않아요) */
+  var DISP_COLS = [['from', '출발센터'], ['maker', '제조사'], ['item', 'Item'], ['date', '납품일자'], ['inQty', '입고수량'], ['outQty', '출고수량'], ['dest', '도착지'], ['fc', '센터명'], ['po', 'CP 발주번호'], ['bl', 'BL#'],
     ['bundle', '상차수량(BUNDLE)'], ['car', '차량정보'], ['driver', '운전원'], ['phone', '연락처'], ['time', '입차 예정시간'], ['ton', '톤수'], ['kg', '무게(KG)'], ['load', '상차'], ['qty', '수량'], ['bundle2', '상차수량(BUNDLE)'],
     ['truckNo', '호차'], ['dist', '운송거리'], ['stmt', '거래명세서 회수'], ['kpp', 'KPP 전표 회수'], ['dock', 'FC 배정도크'], ['addr', '주소'], ['hours', '상하차 가능시간'], ['m1', '쿠팡담당자1'], ['m2', '쿠팡담당자2'], ['m3', '쿠팡담당자3']];
   var TRK_FIELDS = [['car', '차량정보', 130], ['driver', '운전원', 80], ['phone', '연락처', 120], ['time', '입차 예정시간', 100], ['ton', '톤수', 60]];
@@ -6567,6 +6568,8 @@
     return '';
   }
   function dispNum(v) { var n = Number(String(v == null ? '' : v).replace(/[,\s]/g, '')); return isFinite(n) ? n : 0; }
+  /** 이미 가져온 줄인지 가리는 키 (순번 제외: 날짜·발주번호·BL·센터·품목·출고수량·번들) */
+  function dispOrderKey(date, d) { return [date, d.po, d.bl, d.fc, d.item, d.outQty, d.bundle].join('|'); }
   function dispParse(text) {
     var rows = parseTsv(text); if (!rows.length) return { items: [], warn: '붙여넣은 내용이 없어요.' };
     var norm = function (h) { return String(h || '').replace(/\s/g, '').toLowerCase(); };
@@ -6578,16 +6581,20 @@
         for (var j = 0; j < head.length; j++) { if (used[j]) continue; if (isMgr ? head[j].indexOf('쿠팡담당자') === 0 : head[j] === want) { idx[c[0]] = j; used[j] = 1; return; } }
       });
       rows = rows.slice(1);
-    } else DISP_COLS.forEach(function (c, j) { idx[c[0]] = j; });
+    } else {
+      // 제목 줄 없이 데이터만: C열(출발센터)부터가 기본. 실수로 B열(순번)부터 복사했으면 한 칸 밀어서 읽어요.
+      var di = DISP_COLS.map(function (c) { return c[0]; }).indexOf('date'), ok = function (off) { return rows.filter(function (r) { return dispYmd(String(r[di + off] == null ? '' : r[di + off]).trim()); }).length; };
+      var off = ok(1) > ok(0) ? 1 : 0; DISP_COLS.forEach(function (c, j) { idx[c[0]] = j + off; });
+    }
     if (idx.date == null || idx.fc == null) return { items: [], warn: '"납품일자"나 "센터명" 칸을 찾지 못했어요. 동방 엑셀의 제목 줄까지 같이 복사해 주세요.' };
     var items = [], bad = 0;
     rows.forEach(function (r) {
       var d = {}; DISP_COLS.forEach(function (c) { var j = idx[c[0]]; d[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); });
       var date = dispYmd(d.date); if (!date || !d.fc) { bad++; return; }
       d.date = date; d._n = items.length + bad;
-      items.push({ date: date, key: [date, d.no, d.po, d.bl, d.fc, d.item, d.outQty, d.bundle].join('|'), d: d });
+      items.push({ date: date, key: dispOrderKey(date, d), d: d });
     });
-    return { items: items, warn: bad ? '날짜나 센터명이 없는 ' + bad + '줄은 건너뛰었어요.' : '' };
+    return { items: items, warn: bad ? '날짜나 센터명이 없는 ' + bad + '줄은 건너뛰었어요.' + (!items.length ? ' 동방 엑셀의 C열(출발센터)부터 복사했는지 확인해 주세요.' : '') : '' };
   }
   function loadDispDay(force) {
     var st = dispState();
@@ -6868,7 +6875,7 @@
         (near.length ? '<span class="chips" style="margin-left:6px">' + near.map(function (d) { return '<button type="button" class="chip' + (d === st.date ? ' on' : '') + '" data-day="' + d + '">' + (+d.slice(5, 7)) + '/' + (+d.slice(8)) + ' <span class="cnt">' + days[d] + '</span></button>'; }).join('') + '</span>' : '') + '</div>' +
         '<div class="small" id="dpSaveSt"></div></div>' +
         '<div class="dp-tabs" id="dpTabs">' + DISP_TABS.map(function (t) { var x = st.tabs[t[0]], n = x.orders.length, nt = dispTrucks(x).length; return '<button type="button" data-tab="' + t[0] + '" class="' + (t[0] === st.tab ? 'on' : '') + '"><b>' + t[0] + '</b> <span class="small">' + n + '줄' + (nt ? ' · ' + nt + '대' : '') + '</span></button>'; }).join('') + '</div>' +
-        '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">동방 엑셀에서 제목 줄까지 복사해서 붙여넣으세요 (날짜별로 나눠 저장, 이미 있는 줄은 건너뜀)</span></summary>' +
+        '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">동방 엑셀에서 C열(출발센터)부터 AF열까지 데이터만 복사해서 붙여넣으세요 (날짜별로 나눠 저장, 이미 있는 줄은 건너뜀)</span></summary>' +
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details></div>' +
       '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
         '<div class="actions"><button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
@@ -8091,7 +8098,7 @@
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
       '<b>출발지 탭</b>(인천·평택·부산)마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 세 곳이 나뉘어 함께 보여요.',
-      '<b>① 오더 붙여넣기</b>: 동방 엑셀(팀즈)에서 제목 줄까지 복사해 붙여넣으면 납품일자별로 나눠 저장돼요. 이미 가져온 줄은 건너뛰어요.',
+      '<b>① 오더 붙여넣기</b>: 동방 엑셀(팀즈)에서 C열(출발센터)부터 AF열까지 데이터 줄만 복사해 붙여넣으면 납품일자별로 나눠 저장돼요. 빈 칸이 있어도 괜찮고, 제목 줄을 같이 복사해도 알아서 맞춰요. 이미 가져온 줄은 건너뛰어요.',
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',
       '<b>③ 문자</b>: 호차마다 총 번들·kg, 상차지(상차지 설정에서 찾음), 하차지, BL·품목이 자동으로 만들어져요. "문자 복사"로 바로 붙여넣으세요.',
       '<b>차량정보</b>: 엑셀·구글시트에서 차량정보~톤수 5칸을 복사해 호차 카드의 차량정보 칸에 붙여넣으면 칸마다 나눠 들어가요. 여러 줄을 붙여넣으면 그 호차부터 다음 호차로 이어서 들어가요. <b>엑셀 복사</b>를 누르면 그 호차 5칸이 엑셀 한 줄로 복사돼요.',

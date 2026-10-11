@@ -462,8 +462,9 @@
         return { orders: wk('dispOrd').filter(function (o) { return o.cust === req.cust && o.date.slice(0, 7) === req.ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date.slice(0, 7) === req.ym; }) };
       case 'dispatch.import':
         var dh = {}, dmax = {}, dres = { added: 0, skipped: 0, dates: {} }, dnow = today();
-        wk('dispOrd').forEach(function (o) { if (o.cust !== req.cust) return; dh[o.key] = 1; dmax[o.date] = Math.max(dmax[o.date] || 0, o.seq); });
-        (req.rows || []).forEach(function (x, i) { if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date)) fail('날짜 형식은 YYYY-MM-DD 입니다: ' + x.date); if (dh[x.key]) { dres.skipped++; return; } dh[x.key] = 1; dmax[x.date] = (dmax[x.date] || 0) + 1; dres.dates[x.date] = (dres.dates[x.date] || 0) + 1; dres.added++;
+        var dkn = function (k) { var p = String(k || '').split('|'); if (p.length === 8) p.splice(1, 1); return p.join('|'); };
+        wk('dispOrd').forEach(function (o) { if (o.cust !== req.cust) return; dh[dkn(o.key)] = 1; dmax[o.date] = Math.max(dmax[o.date] || 0, o.seq); });
+        (req.rows || []).forEach(function (x, i) { if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date)) fail('날짜 형식은 YYYY-MM-DD 입니다: ' + x.date); if (dh[dkn(x.key)]) { dres.skipped++; return; } dh[dkn(x.key)] = 1; dmax[x.date] = (dmax[x.date] || 0) + 1; dres.dates[x.date] = (dres.dates[x.date] || 0) + 1; dres.added++;
           wk('dispOrd').push({ id: calId('D') + i, cust: req.cust, date: x.date, key: x.key, d: x.d, truck: '', seq: dmax[x.date], by: me.name, at: dnow }); });
         save(); return dres;
       case 'dispatch.save':

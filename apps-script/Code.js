@@ -1952,16 +1952,18 @@ function dispMonth_(cust, ym) {
   return { orders: dispOrders_(cust, inM), trucks: dispTrucks_(cust, inM) };
 }
 /** rows: [{ date, key, d }] · 같은 업체·키는 건너뜀 */
+/** 예전 키는 순번이 두 번째 칸에 있었어요(8칸) → 빼고 비교 */
+function dispKeyNorm_(k) { var p = String(k || '').split('|'); if (p.length === 8) p.splice(1, 1); return p.join('|'); }
 function dispImport_(session, req) {
   var cust = dispCust_(req.cust), rows = (req.rows || []).slice(0, 2000), lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     var sh = cacheSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), have = {}, maxSeq = {}, now = now_(), out = [], dates = {}, skipped = 0;
-    rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).forEach(function (r) { if (String(r[1]) !== cust) return; have[String(r[3])] = 1; var d = textDate_(r[2]); maxSeq[d] = Math.max(maxSeq[d] || 0, Number(r[6]) || 0); });
+    rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).forEach(function (r) { if (String(r[1]) !== cust) return; have[dispKeyNorm_(r[3])] = 1; var d = textDate_(r[2]); maxSeq[d] = Math.max(maxSeq[d] || 0, Number(r[6]) || 0); });
     rows.forEach(function (x, i) {
-      var date = dispDate_(x.date), key = String(x.key || '').slice(0, 300);
+      var date = dispDate_(x.date), key = String(x.key || '').slice(0, 300), nk = dispKeyNorm_(key);
       if (!key) throw new Error((i + 1) + '번째 줄: 구분할 키가 없습니다.');
-      if (have[key]) { skipped++; return; }
-      have[key] = 1; maxSeq[date] = (maxSeq[date] || 0) + 1; dates[date] = (dates[date] || 0) + 1;
+      if (have[nk]) { skipped++; return; }
+      have[nk] = 1; maxSeq[date] = (maxSeq[date] || 0) + 1; dates[date] = (dates[date] || 0) + 1;
       var data = JSON.stringify(x.d || {}); if (data.length > 20000) throw new Error((i + 1) + '번째 줄이 너무 깁니다.');
       out.push([newId_('D') + i, cust, "'" + date, key, data, '', maxSeq[date], session.name, now]);
     });
