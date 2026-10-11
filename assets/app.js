@@ -6823,7 +6823,7 @@
       return api('dispatch.save', { cust: D.key, date: D.date, orders: D.orders.map(function (o) { return { id: o.id, truck: o.truck, seq: o.seq }; }), trucks: D.trucks.filter(function (t) { return used.indexOf(t.no) !== -1; }) })
         .then(function (r) { r.trucks.forEach(function (t) { var x = D.trucks.filter(function (y) { return y.no === t.no; })[0]; if (x) { if (t.token && !x.token) fresh = true; x.token = t.token; } }); D.receipts = r.receipts || D.receipts; if (r.drivers) st.drivers = r.drivers; })
         .catch(function (err) { st.dirty[tab] = 1; throw err; });
-    })).then(function () { var pin = $('#dpPasteIn'); if (fresh && state.view === 'dispatch' && st.view === 'day' && !document.querySelector('.dp-table input:focus, .dp-tf input:focus') && !(pin && pin.value.trim())) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
+    })).then(function () { var pin = $('#dpPasteIn'); if (fresh && state.view === 'dispatch' && st.view === 'day' && !(pin && pin.value.trim())) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
       .catch(function (err) { toast('저장하지 못했어요: ' + err.message, 'err'); var e = $('#dpSaveSt'); if (e) e.innerHTML = '<span class="err-text">저장 안 됨</span>'; });
   }
   function renderDispatch() {
@@ -6833,6 +6833,9 @@
       '<div class="actions"><select class="input input-sm" id="dpCust" style="width:auto">' + DISP_CUSTS.map(function (c) { return '<option' + (c === st.cust ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
       '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>' +
       (isPartner() ? '' : '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpPool">기사 풀</button>') + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+    $('#dpBody').addEventListener('focusout', function () {
+      setTimeout(function () { var s2 = dispState(), ae = document.activeElement; if (!s2.drawLater || dispTyping() || (ae && ae.tagName === 'SELECT' && ae.closest('#dpBody'))) return; s2.drawLater = false; if (state.view === 'dispatch' && s2.view === 'day') drawDispDay(); }, 250);
+    });
     $('#dpCust').onchange = function () { dispSaveNow(); st.cust = this.value; st.tabs = null; st.tabList = null; renderDispatch(); };
     $$('#dpView button').forEach(function (b) { b.onclick = function () { dispSaveNow(); st.view = b.dataset.v; renderDispatch(); }; });
     if (!isPartner()) { $('#dpPlaces').onclick = openPlaces; $('#dpPool').onclick = openDriverPool; }
@@ -7044,8 +7047,12 @@
       document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
     });
   }
-  function drawDispDay() {
-    if (dispState().dragging) return; // 끄는 중엔 다시 그리지 않기
+  /** 배차 화면에서 글자를 치는 중인지 (치는 중엔 뒤에서 화면을 다시 그리지 않아요 — 그리면 치던 글자가 잘려 저장됨) */
+  function dispTyping() { var ae = document.activeElement; return !!(ae && ae.closest && ae.closest('#dpBody') && (ae.tagName === 'TEXTAREA' || (ae.tagName === 'INPUT' && !/^(checkbox|radio|date|file|button)$/.test(ae.type)))); }
+  function drawDispDay(force) {
+    var st0 = dispState();
+    if (st0.dragging) return; // 끄는 중엔 다시 그리지 않기
+    if (!force && dispTyping()) { st0.drawLater = true; return; } // 다 치고 나가면 그려요
     var st = dispState(), box = $('#dpBody'); if (!box || !st.tabs) return;
     syncRoute();
     var D = st.tabs[st.tab], orders = D.orders, trucks = dispTrucks(D), days = {};
@@ -7062,7 +7069,7 @@
           (function () { var rest = DISP_TABS.filter(function (t) { return t[0] !== st.tab && !st.tabs[t[0]].orders.length; }); return '<span class="dp-tabx">' + (rest.length ? '<select class="input input-sm" id="dpTabMore"><option value="">＋ 다른 탭 열기 (' + rest.length + ')</option>' + rest.map(function (t) { return '<option>' + esc(t[0]) + '</option>'; }).join('') + '</select>' : '') + (isPartner() ? '' : '<button type="button" class="btn btn-sm btn-ghost" id="dpTabMgr">탭 관리</button>') + '</span>'; })() + '</div>' +
         (isPartner() ? '' : '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">동방 엑셀에서 C열(출발센터)부터 AF열까지 데이터만 복사해서 붙여넣으세요 (날짜별로 나눠 저장, 이미 있는 줄은 건너뜀)</span></summary>' +
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details>') + '</div>' +
-      '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
+      '<div class="card"' + (isPartner() ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
         '<div class="actions"' + (isPartner() ? ' style="display:none"' : '') + '><button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
         '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
         (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"' + (isPartner() ? ' disabled' : '') + '></th><th>호차</th><th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th><th class="left">공지</th></tr></thead><tbody>' +
@@ -7117,7 +7124,7 @@
       var mv = orders.splice(from, 1)[0]; orders.splice(to, 0, mv); orders.forEach(function (o, i) { o.seq = i + 1; }); redraw();
     });
     var tn = function (v) { var p = v.split('|'); return { D: st.tabs[p[0]], no: Number(p[1]), tab: p[0] }; };
-    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); drawDispDay(); }; });
+    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중)
     /* 엑셀·구글시트에서 차량정보~톤수를 복사해 붙여넣으면 칸마다 나눠 넣기 (여러 줄이면 다음 호차로 이어서) */
     $$('[data-tf]', box).forEach(function (inp) {
       inp.onpaste = function (e) {
@@ -7130,13 +7137,13 @@
           var no = ns[start + i]; if (no == null) return; var t = truckInfo(x.D, no); n++;
           r.forEach(function (c, j) { var f = TRK_FIELDS[k0 + j]; if (f) t[f[0]] = String(c).trim(); });
         });
-        dispQueueSave(x.tab); drawDispDay(); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
+        dispQueueSave(x.tab); drawDispDay(true); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
       };
     });
     /* 기사 풀: 차량정보·운전원·연락처 칸에 치면 맞는 기사 목록 → 고르면 4칸 채우기 */
     $$('[data-tf=car], [data-tf=driver], [data-tf=phone]', box).forEach(function (inp) {
       inp.setAttribute('autocomplete', 'off');
-      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(); toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
+      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
       inp.addEventListener('keydown', driverSuggestKey);
       inp.addEventListener('blur', function () { setTimeout(closeDriverSuggest, 150); });
     });
@@ -7258,7 +7265,7 @@
     $$('.drv-op', box).forEach(function (el) { el.onmousedown = function (e) { e.preventDefault(); drvSug.pick(list[Number(el.dataset.i)]); }; });
   }
   function driverSuggestKey(e) {
-    if (!drvSug) return; var n = drvSug.list.length;
+    if (!drvSug || e.isComposing || e.keyCode === 229) return; var n = drvSug.list.length; // 한글 조합 중 Enter는 무시
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); drvSug.i = (drvSug.i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n; $$('.drv-op', drvSug.box).forEach(function (el, i) { el.classList.toggle('on', i === drvSug.i); }); }
     else if (e.key === 'Enter') { e.preventDefault(); drvSug.pick(drvSug.list[drvSug.i]); }
     else if (e.key === 'Escape') closeDriverSuggest();

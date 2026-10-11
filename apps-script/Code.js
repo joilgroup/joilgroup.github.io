@@ -2258,7 +2258,9 @@ function driverCollect_(session, date, trucks) {
     var k = driverKey_(car, drv, ph), i = idx[k];
     if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_()]); idx[k] = rows.length; rows.push([]); return; }
     var r = sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length), v = r.getValues()[0], n = Number(v[7]) || 0, last = textDate_(v[8]);
-    if (drv) v[2] = q(drv); else v[2] = q(dispTxt_(v[2])); if (ph) v[3] = q(ph); else v[3] = q(dispTxt_(v[3])); if (ton) v[4] = q(ton); else v[4] = q(dispTxt_(v[4]));
+    // 잘린 값(예: '홍길동' → '홍')이 기존 값을 덮지 않게: 새 값이 기존 값의 앞부분이면 기존 값 유지
+    var keep = function (oldV, newV) { oldV = dispTxt_(oldV); return newV && !(oldV.length > newV.length && oldV.indexOf(newV) === 0) ? newV : oldV; };
+    v[2] = q(keep(v[2], drv)); v[3] = q(keep(v[3], ph)); if (ton) v[4] = q(ton); else v[4] = q(dispTxt_(v[4]));
     v[1] = q(dispTxt_(v[1]) || car); v[5] = q(dispTxt_(v[5]));
     if (last !== date) { v[7] = n + 1; if (!last || date > last) v[8] = "'" + date; else v[8] = "'" + last; }
     r.setValues([v]);
