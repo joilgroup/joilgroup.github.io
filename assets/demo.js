@@ -248,6 +248,7 @@
     return { items: items, diesel: dp, baseTon: baseTon.name, specials: sps.map(function (x) { return x.id; }), cust: req.cust || '' };
   }
 
+  function dKey(car, dr, ph) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(dr || '').replace(/\s/g, '') + '|' + String(ph || '').replace(/[^0-9]/g, ''); }
   function demoGeo(a) { try { var g = geocode(String(a)); return { lat: g.lat, lng: g.lng }; } catch (e) { return null; } }
   var rcptData = {};
   function demoDrv(req) {
@@ -470,7 +471,18 @@
         wk('dispOrd').forEach(function (o) { var w = dw[o.id]; if (w && o.cust === req.cust && o.date === req.date) { o.truck = w.truck === '' || w.truck == null ? '' : Number(w.truck); o.seq = Number(w.seq) || 0; } });
         var dtok = {}; wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date && t.token) dtok[t.no] = t.token; });
         store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat((req.trucks || []).map(function (t) { var no = Number(t.no); return { cust: req.cust, date: req.date, no: no, car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '', token: dtok[no] || (Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2) + '00000000000000000000').slice(0, 20) }; }));
-        save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
+        (req.trucks || []).forEach(function (t) { var car = String(t.car || '').trim(), dr = String(t.driver || '').trim(), ph = String(t.phone || '').trim(); if (!car && !(dr && ph)) return; var k = dKey(car, dr, ph), x = wk('drivers').filter(function (v) { return dKey(v.car, v.driver, v.phone) === k; })[0];
+          if (!x) { wk('drivers').push({ id: calId('V'), car: car, driver: dr, phone: ph, ton: String(t.ton || '').trim(), memo: '', pin: false, n: 1, last: req.date }); return; }
+          if (dr) x.driver = dr; if (ph) x.phone = ph; if (t.ton) x.ton = String(t.ton).trim(); if (x.last !== req.date) { x.n++; if (req.date > x.last) x.last = req.date; } });
+        save(); var dsv = handle(Object.assign({}, req, { action: 'dispatch.day' })); dsv.drivers = handle({ action: 'drivers.list', token: req.token }).drivers; return dsv;
+      case 'drivers.list': return { drivers: wk('drivers').slice().sort(function (a, b) { return (b.pin - a.pin) || (b.n - a.n) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); }) };
+      case 'drivers.save':
+        var dv = req.driver || {}; if (!String(dv.car || '').trim() && !String(dv.driver || '').trim()) fail('차량정보나 운전원을 넣으세요.');
+        if (wk('drivers').some(function (v) { return v.id !== req.id && dKey(v.car, v.driver, v.phone) === dKey(dv.car, dv.driver, dv.phone); })) fail('같은 기사가 이미 있어요.');
+        var dvals = { car: String(dv.car || '').trim(), driver: String(dv.driver || '').trim(), phone: String(dv.phone || '').trim(), ton: String(dv.ton || '').trim(), memo: String(dv.memo || '').trim(), pin: !!dv.pin };
+        if (req.id) Object.assign(wk('drivers').filter(function (v) { return v.id === req.id; })[0] || fail('기사를 찾을 수 없어요.'), dvals); else wk('drivers').push(Object.assign({ id: calId('V'), n: 0, last: '' }, dvals));
+        save(); return handle({ action: 'drivers.list', token: req.token });
+      case 'drivers.delete': store.drivers = wk('drivers').filter(function (v) { return v.id !== req.id; }); save(); return handle({ action: 'drivers.list', token: req.token });
       case 'dispatch.note':
         var no_ = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
         no_.noteIn = String(req.noteIn || '').trim(); no_.noteDrv = String(req.noteDrv || '').trim(); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));

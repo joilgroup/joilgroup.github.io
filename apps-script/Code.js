@@ -154,7 +154,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -198,6 +198,9 @@ function handle_(req) {
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
     case 'dispatch.receipt': return dispReceipt_(req.id);
     case 'loading.list': return { places: loadingList_() };
+    case 'drivers.list': return { drivers: driverList_() };
+    case 'drivers.save': return driverSave_(session, req);
+    case 'drivers.delete': return driverDelete_(req.id);
     case 'loading.save': return loadingSave_(session, req);
     case 'loading.delete': return loadingDelete_(req.id);
     case 'loading.photo': return placePhoto_(req.id);
@@ -1988,7 +1991,8 @@ function dispSave_(session, req) {
       return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok]);
     });
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
-    return dispDay_(cust, date);
+    try { driverCollect_(session, date, req.trucks || []); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
+    var out = dispDay_(cust, date); out.drivers = driverList_(); return out;
   } finally { lock.releaseLock(); }
 }
 /** 오더 공지: 내부용(배차 담당만) · 기사용(문자·기사 링크에 표시) */
@@ -2110,6 +2114,44 @@ function loadingSave_(session, req) {
   return { places: loadingList_() };
 }
 function loadingDelete_(id) { var f = findRow_(SHEET_LOADING, LOADING_HEADER, id); if (!f) throw new Error('상차지를 찾을 수 없습니다.'); placePhotos_().filter(function (x) { return x.place === String(id); }).forEach(function (x) { placePhotoDelete_(x.id); }); f.sh.deleteRow(f.row); return { places: loadingList_() }; }
+/* 기사 풀: 호차에 넣은 차량정보가 자동으로 쌓이고(횟수·마지막 배차일), 직접 고치기·지우기·고정(★) */
+var SHEET_DRIVERS = '기사풀';
+var DRIVER_HEADER = ['ID', '차량정보', '운전원', '연락처', '톤수', '메모', '고정', '횟수', '마지막배차', '수정자', '수정일시'];
+function driverKey_(car, driver, phone) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(driver || '').replace(/\s/g, '') + '|' + String(phone || '').replace(/[^0-9]/g, ''); }
+function driverList_() {
+  return rowsOf_(SHEET_DRIVERS, DRIVER_HEADER).map(function (r) { return { id: String(r[0]), car: dispTxt_(r[1]), driver: dispTxt_(r[2]), phone: dispTxt_(r[3]), ton: dispTxt_(r[4]), memo: dispTxt_(r[5]), pin: r[6] === true || String(r[6]) === 'Y', n: Number(r[7]) || 0, last: textDate_(r[8]) }; })
+    .sort(function (a, b) { return (b.pin - a.pin) || (b.n - a.n) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); });
+}
+function driverCollect_(session, date, trucks) {
+  var sh = cacheSheet_(SHEET_DRIVERS, DRIVER_HEADER), rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, DRIVER_HEADER.length).getValues() : [], idx = {};
+  rows.forEach(function (r, i) { idx[driverKey_(dispTxt_(r[1]), dispTxt_(r[2]), dispTxt_(r[3]))] = i; });
+  var q = function (v) { return "'" + String(v || '').trim().slice(0, 100); };
+  trucks.forEach(function (t) {
+    var car = String(t.car || '').trim(), drv = String(t.driver || '').trim(), ph = String(t.phone || '').trim(), ton = String(t.ton || '').trim();
+    if (!car && !(drv && ph)) return;
+    var k = driverKey_(car, drv, ph), i = idx[k];
+    if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_()]); idx[k] = rows.length; rows.push([]); return; }
+    var r = sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length), v = r.getValues()[0], n = Number(v[7]) || 0, last = textDate_(v[8]);
+    if (drv) v[2] = q(drv); else v[2] = q(dispTxt_(v[2])); if (ph) v[3] = q(ph); else v[3] = q(dispTxt_(v[3])); if (ton) v[4] = q(ton); else v[4] = q(dispTxt_(v[4]));
+    v[1] = q(dispTxt_(v[1]) || car); v[5] = q(dispTxt_(v[5]));
+    if (last !== date) { v[7] = n + 1; if (!last || date > last) v[8] = "'" + date; else v[8] = "'" + last; }
+    r.setValues([v]);
+  });
+}
+function driverSave_(session, req) {
+  var x = req.driver || {}, car = String(x.car || '').trim(), drv = String(x.driver || '').trim();
+  if (!car && !drv) throw new Error('차량정보나 운전원을 넣으세요.');
+  var q = function (v) { return "'" + String(v || '').trim().slice(0, 100); };
+  var k = driverKey_(car, drv, x.phone), dup = driverList_().filter(function (d) { return d.id !== req.id && driverKey_(d.car, d.driver, d.phone) === k; })[0];
+  if (dup) throw new Error('같은 기사가 이미 있어요' + (dup.car ? ' (' + dup.car + ')' : '') + '.');
+  if (req.id) {
+    var f = findRow_(SHEET_DRIVERS, DRIVER_HEADER, req.id); if (!f) throw new Error('기사를 찾을 수 없어요.');
+    f.sh.getRange(f.row, 2, 1, 6).setValues([[q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N']]);
+    f.sh.getRange(f.row, 10, 1, 2).setValues([[session.name, now_()]]);
+  } else cacheSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_()]);
+  return { drivers: driverList_() };
+}
+function driverDelete_(id) { var f = findRow_(SHEET_DRIVERS, DRIVER_HEADER, id); if (!f) throw new Error('기사를 찾을 수 없어요.'); f.sh.deleteRow(f.row); return { drivers: driverList_() }; }
 /* 상차지 사진 (기사 링크의 상차지 카드에 보여요 · 한 곳에 2장까지) */
 var SHEET_PLACE_PHOTOS = '상차지사진';
 var PLACE_PHOTO_HEADER = ['ID', '상차지ID', '파일ID', '설명', '올린이', '올린시각'];

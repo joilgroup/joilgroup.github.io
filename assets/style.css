@@ -1265,3 +1265,12 @@ label.btn.disabled { pointer-events: none; opacity: .6; }
 .dp-hours { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 2px; }
 .dp-hr { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 6px; align-items: center; font-size: 13px; }
 .dp-hr .clip { color: var(--muted); }
+/* 기사 풀 */
+.drv-sug { position: absolute; z-index: 60; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 4px; max-width: 520px; }
+.drv-op { padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13.5px; }
+.drv-op.on, .drv-op:hover { background: var(--panel-2); }
+.dpool-grid { display: grid; grid-template-columns: 1.4fr 1fr 1.2fr .7fr 1.5fr auto auto auto; gap: 6px; align-items: center; }
+@media (max-width: 900px) { .dpool-grid { grid-template-columns: 1fr 1fr; } }
+.dpool-pin { border: 0; background: transparent; font-size: 16px; color: #CFC6B6; cursor: pointer; }
+.dpool-pin.on { color: #F4BE2E; }
+table.data.dpool td { padding: 7px 8px; }
