@@ -6603,7 +6603,8 @@
   }
   function findPlace(name) { var n = custNorm(name); return (dispState().places || []).filter(function (p) { return custNorm(p.name) === n; })[0] || null; }
   function dispPrefix(cust, from) { return cust.replace(/^쿠팡/, '') + '[' + String(from || '').replace(/물류센터|센터|물류/g, '') + ']'; }
-  function driverUrl(tok) { return location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '') + 'drv.html#' + tok; }
+  /** 기사 링크 주소: config.js의 DRIVER_URL(회사명이 안 드러나는 별도 주소)이 있으면 그것, 없으면 이 사이트의 drv.html */
+  function driverUrl(tok) { var base = (window.JOIL_CONFIG && window.JOIL_CONFIG.DRIVER_URL) || (location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '') + 'drv.html'); return base.replace(/#.*$/, '') + '#' + tok; }
   function truckOrders(D, no) { return D.orders.filter(function (o) { return o.truck === no; }).sort(function (a, b) { return a.seq - b.seq; }); }
   /** 호차의 착지 (센터명 기준, 하차 순서대로) */
   function truckStops(D, no) {
@@ -7910,7 +7911,7 @@
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',
       '<b>③ 문자</b>: 호차마다 총 번들·kg, 상차지(상차지 설정에서 찾음), 하차지, BL·품목이 자동으로 만들어져요. "문자 복사"로 바로 붙여넣으세요.',
       '<b>④ 차량정보</b>: 다온업체 구글시트에서 호차 순서대로 차량정보~톤수 5칸을 복사해 붙여넣어요. <b>⑤ 팀즈 회신용</b>은 원래 줄 순서대로 같은 5칸이라 팀즈 엑셀 M열에 그대로 붙여넣으면 돼요.',
-      '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 배차일 7일 뒤 막혀요.',
+      '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',
       '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게로 자동이에요. 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
       '모든 배정은 자동 저장되고, <b>월별 기록</b>에서 날짜별 운행 대수·번들·kg·차량/기사별 횟수를 보고 엑셀로 받을 수 있어요.'

@@ -2055,9 +2055,7 @@ function drvFind_(t) {
   t = String(t || ''); if (!/^[0-9a-f]{20}$/.test(t)) throw new Error('잘못된 링크예요.');
   var hit = (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).filter(function (r) { return String(r[11]) === t; })[0];
   if (!hit) throw new Error('링크를 찾을 수 없어요. 배차 담당자에게 문의하세요.');
-  var tr = dispTrkRow_(hit);
-  if (tr.date < ymd_(new Date(Date.now() - 7 * 86400000))) throw new Error('기한(7일)이 지난 링크예요.');
-  return tr;
+  return dispTrkRow_(hit); // 보기는 기한 없음 (사진 올리기만 배차일 60일까지)
 }
 function drvGet_(t) {
   var tr = drvFind_(t);
@@ -2078,6 +2076,7 @@ function drvGet_(t) {
 }
 function drvUpload_(req) {
   var tr = drvFind_(req.t), fc = String(req.fc || '');
+  if (tr.date < ymd_(new Date(Date.now() - 60 * 86400000))) throw new Error('배차일로부터 60일이 지나 사진을 올릴 수 없어요. 배차 담당자에게 보내 주세요.');
   var orders = dispOrders_(tr.cust, function (d) { return d === tr.date; }).filter(function (o) { return o.truck === tr.no && (o.d.fc || '-') === fc; });
   if (!orders.length) throw new Error('이 호차의 착지가 아니에요.');
   if (dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no && x.fc === fc; }).length >= 10) throw new Error('한 착지에 10장까지 올릴 수 있어요.');

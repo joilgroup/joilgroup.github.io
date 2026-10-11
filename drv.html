@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>배차 안내 · 조일그룹</title>
+  <title>배차 안내</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
   <style>
     :root { --bg: #F3EEE5; --panel: #FFFFFF; --ink: #1E1C19; --muted: #7A7265; --line: #E2D9C9; --orange: #F07A22; --green: #2C7040; --red: #C2412B; }
@@ -80,7 +80,7 @@
             '<label class="btn main' + (g.length ? ' done' : '') + '">' + (busy[s.fc] ? '<span class="spin"></span> 올리는 중…' : g.length ? '✅ 인수증 올림 (' + esc(String(g[g.length - 1].at).slice(11, 16)) + (g.length > 1 ? ' · ' + g.length + '장' : '') + ') · 다시 올리기' : '📷 싸인 받은 거래명세서 사진 올리기') +
             '<input type="file" accept="image/*" capture="environment" data-fc="' + esc(s.fc) + '"></label></div></div>';
         }).join('') +
-        '<p class="note">이 페이지는 이 호차 기사님용이에요. 사진은 조일 사무실에서만 볼 수 있어요.</p>';
+        '<p class="note">이 페이지는 이 호차 기사님용이에요. 올린 사진은 배차 담당자만 볼 수 있어요.</p>';
       Array.prototype.forEach.call(app.querySelectorAll('input[type=file]'), function (inp) { inp.onchange = function () { if (inp.files[0]) upload(inp.dataset.fc, inp.files[0]); inp.value = ''; }; });
     }
     function shrink(file) {
