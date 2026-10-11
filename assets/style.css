@@ -1257,3 +1257,11 @@ label.btn.disabled { pointer-events: none; opacity: .6; }
 .dp-todo li.warn { color: var(--orange); }
 .dp-todo li.note { color: #9A4A0E; }
 .dp-tail { height: 55vh; }
+/* 긴 문구 잘림: 기본은 … 처리, 마우스를 올리면 가로로 밀어(드래그·휠) 끝까지 볼 수 있어요 */
+.clip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; scrollbar-width: thin; }
+.clip:hover { overflow-x: auto; text-overflow: clip; }
+.dp-table .clip.dp-addr { max-width: 260px; } .dp-table .clip.dp-hrs { max-width: 340px; }
+.dp-table .dp-addr, .dp-table .dp-hrs { min-width: 0; }
+.dp-hours { display: flex; flex-direction: column; gap: 3px; margin: 8px 0 2px; }
+.dp-hr { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 6px; align-items: center; font-size: 13px; }
+.dp-hr .clip { color: var(--muted); }
