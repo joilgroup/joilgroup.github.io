@@ -64,7 +64,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list'];
+  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list'];
   var TIMEOUT_MS = 25000;
   var inflight = {};
 
@@ -6533,7 +6533,8 @@
 
   /* ───────── 배차시트 (거래처 오더 붙여넣기 → 호차 묶기 → 문자 · 기사용 링크 · 인수증 · 차량정보) ───────── */
   var DISP_CUSTS = ['쿠팡부자재'];
-  var DISP_TABS = [['인천', ''], ['평택', '/평택'], ['부산', '/부산']];
+  /* 출발지 탭: [이름, 저장 키 꼬리, 문자 머리말] · 탭 관리에서 추가·이름 바꾸기·순서·숨기기 (서버에 업체별로 저장) */
+  var DISP_TABS = [['부자재-인천', '', '부자재'], ['부자재-평택', '/평택', '부자재'], ['부자재-부산', '/부산', '부자재']];
   /* 동방 엑셀 C~AF열 (첫 칸은 항상 출발센터 · B열 순번은 쓰지 않아요) */
   var DISP_COLS = [['from', '출발센터'], ['maker', '제조사'], ['item', 'Item'], ['date', '납품일자'], ['inQty', '입고수량'], ['outQty', '출고수량'], ['dest', '도착지'], ['fc', '센터명'], ['po', 'CP 발주번호'], ['bl', 'BL#'],
     ['bundle', '상차수량(BUNDLE)'], ['car', '차량정보'], ['driver', '운전원'], ['phone', '연락처'], ['time', '입차 예정시간'], ['ton', '톤수'], ['kg', '무게(KG)'], ['load', '상차'], ['qty', '수량'], ['bundle2', '상차수량(BUNDLE)'],
@@ -6596,11 +6597,26 @@
     });
     return { items: items, warn: bad ? '날짜나 센터명이 없는 ' + bad + '줄은 건너뛰었어요.' + (!items.length ? ' 동방 엑셀의 C열(출발센터)부터 복사했는지 확인해 주세요.' : '') : '' };
   }
+  function loadDispTabs(force) {
+    var st = dispState(); if (st.tabList && st.tabList._cust === st.cust && !force) return Promise.resolve(st.tabList);
+    return api('dispatch.tabs', { cust: st.cust }).then(function (r) { setDispTabs(r.tabs); return st.tabList; });
+  }
+  function setDispTabs(list) {
+    var st = dispState(); st.tabList = list; st.tabList._cust = st.cust;
+    DISP_TABS = list.filter(function (t) { return !t.hidden; }).map(function (t) { return [t.name, t.suf, t.prefix]; });
+    if (!DISP_TABS.some(function (t) { return t[0] === st.tab; })) st.tab = DISP_TABS[0][0];
+  }
   function loadDispDay(force) {
     var st = dispState();
-    if (st.tabs && st.tabs._date === st.date && st.tabs._cust === st.cust && !force) return Promise.resolve(st.tabs);
-    return Promise.all(DISP_TABS.map(function (t) { return api('dispatch.day', { cust: dispKey(st, t[0]), date: st.date }).then(function (r) { r.tab = t[0]; r.date = st.date; r.key = dispKey(st, t[0]); return r; }); }))
-      .then(function (list) { var o = { _date: st.date, _cust: st.cust }; list.forEach(function (r) { o[r.tab] = r; }); st.tabs = o; st.sel = {}; return o; });
+    return loadDispTabs().then(function () {
+      if (st.tabs && st.tabs._date === st.date && st.tabs._cust === st.cust && !force) return st.tabs;
+      var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); });
+      return api('dispatch.dayAll', { keys: keys, date: st.date }).then(function (res) {
+        var o = { _date: st.date, _cust: st.cust };
+        DISP_TABS.forEach(function (t, i) { var r = res.byKey[keys[i]] || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = t[0]; r.date = st.date; r.key = keys[i]; o[t[0]] = r; });
+        st.tabs = o; st.sel = {}; return o;
+      });
+    });
   }
   function loadDrivers(force) { var st = dispState(); if (st.drivers && !force) return Promise.resolve(st.drivers); return api('drivers.list').then(function (r) { st.drivers = r.drivers; return r.drivers; }); }
   function loadPlaces(force) { var st = dispState(); if (st.places && !force) return Promise.resolve(st.places); return api('loading.list').then(function (r) { st.places = r.places; return r.places; }); }
@@ -6610,7 +6626,8 @@
     return api('dispatch.rates').then(function (r) { st.rates = r; return r; }).catch(function () { return null; });
   }
   function findPlace(name) { var n = custNorm(name); return (dispState().places || []).filter(function (p) { return custNorm(p.name) === n; })[0] || null; }
-  function dispPrefix(cust, from) { return cust.replace(/^쿠팡/, '') + '[' + String(from || '').replace(/물류센터|센터|물류/g, '') + ']'; }
+  /** 문자 머리말: 탭의 머리말(없으면 탭 이름 '-' 앞부분) + [출발센터] */
+  function dispPrefix(D, from) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0], pre = (t && t[2]) || String(D.tab || '').split('-')[0] || dispState().cust.replace(/^쿠팡/, ''); return pre + '[' + String(from || '').replace(/물류센터|센터|물류/g, '') + ']'; }
   /** 기사 링크 주소: config.js의 DRIVER_URL(회사명이 안 드러나는 별도 주소)이 있으면 그것, 없으면 이 사이트의 drv.html */
   function driverUrl(tok) { var base = (window.JOIL_CONFIG && window.JOIL_CONFIG.DRIVER_URL) || (location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '') + 'drv.html'); return base.replace(/#.*$/, '') + '#' + tok; }
   function truckOrders(D, no) { return D.orders.filter(function (o) { return o.truck === no; }).sort(function (a, b) { return a.seq - b.seq; }); }
@@ -6747,7 +6764,7 @@
     stops.forEach(function (s) {
       var items = {}, order = [], bls = [];
       s.rows.forEach(function (o) { var n = dispNum(o.d.bundle); if (!(o.d.item in items)) { items[o.d.item] = 0; order.push(o.d.item); } items[o.d.item] += n; if (o.d.bl && bls.indexOf(o.d.bl) === -1) bls.push(o.d.bl); });
-      out.push(dispPrefix(st.cust, s.d.from) + ' → ' + s.fc + ' → ' + won(s.b) + '번들');
+      out.push(dispPrefix(D, s.d.from) + ' → ' + s.fc + ' → ' + won(s.b) + '번들');
       if (bls.length) out.push('BL = ' + bls.join(', '));
       out.push('품목 = ' + (order.length > 1 ? order.map(function (it) { return it + ' (' + won(items[it]) + '번들)'; }).join(' / ') : order[0]));
       out.push('');
@@ -6774,7 +6791,7 @@
       return api('dispatch.save', { cust: D.key, date: D.date, orders: D.orders.map(function (o) { return { id: o.id, truck: o.truck, seq: o.seq }; }), trucks: D.trucks.filter(function (t) { return used.indexOf(t.no) !== -1; }) })
         .then(function (r) { r.trucks.forEach(function (t) { var x = D.trucks.filter(function (y) { return y.no === t.no; })[0]; if (x) { if (t.token && !x.token) fresh = true; x.token = t.token; } }); D.receipts = r.receipts || D.receipts; if (r.drivers) st.drivers = r.drivers; })
         .catch(function (err) { st.dirty[tab] = 1; throw err; });
-    })).then(function () { if (fresh && state.view === 'dispatch' && st.view === 'day' && !document.querySelector('.dp-table input:focus, .dp-tf input:focus')) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
+    })).then(function () { var pin = $('#dpPasteIn'); if (fresh && state.view === 'dispatch' && st.view === 'day' && !document.querySelector('.dp-table input:focus, .dp-tf input:focus') && !(pin && pin.value.trim())) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
       .catch(function (err) { toast('저장하지 못했어요: ' + err.message, 'err'); var e = $('#dpSaveSt'); if (e) e.innerHTML = '<span class="err-text">저장 안 됨</span>'; });
   }
   function renderDispatch() {
@@ -6784,7 +6801,7 @@
       '<div class="actions"><select class="input input-sm" id="dpCust" style="width:auto">' + DISP_CUSTS.map(function (c) { return '<option' + (c === st.cust ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
       '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>' +
       '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpPool">기사 풀</button>' + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
-    $('#dpCust').onchange = function () { dispSaveNow(); st.cust = this.value; st.tabs = null; renderDispatch(); };
+    $('#dpCust').onchange = function () { dispSaveNow(); st.cust = this.value; st.tabs = null; st.tabList = null; renderDispatch(); };
     $$('#dpView button').forEach(function (b) { b.onclick = function () { dispSaveNow(); st.view = b.dataset.v; renderDispatch(); }; });
     $('#dpPlaces').onclick = openPlaces;
     $('#dpPool').onclick = openDriverPool;
@@ -6792,6 +6809,35 @@
     if (st.view === 'month') return drawDispMonth();
     Promise.all([loadDispDay(), loadPlaces().catch(function () { return []; }), loadDispRates(), loadDrivers().catch(function () { return []; })]).then(function () { if (state.view === 'dispatch') { drawDispDay(); needGeo(); } })
       .catch(function (err) { $('#dpBody').innerHTML = '<div class="card"><p class="err-text">' + esc(err.message) + '</p></div>'; });
+  }
+  /** 탭 관리: 추가 · 이름 · 문자 머리말 · 순서 · 숨기기 (숨겨도 지난 기록은 월별 기록에 남아요) */
+  function openDispTabs() {
+    var st = dispState(), list = (st.tabList || []).map(function (t) { return Object.assign({}, t); });
+    modal({ wide: true, eyebrow: '배차시트 · ' + st.cust, title: '탭 관리',
+      body: '<p class="muted small" style="margin:0 0 10px">탭마다 오더를 따로 붙여넣고 호차를 따로 짜요. 이름을 바꿔도 지난 오더·호차는 그대로 이어져요. 문자 머리말은 문자의 "<b>머리말[출발센터]</b> → 센터 → 번들" 줄에 들어가요 (비우면 이름의 "-" 앞부분).</p><div id="tbList"></div>' +
+        '<div class="actions" style="margin-top:10px"><input class="input input-sm" id="tbNew" placeholder="새 탭 이름 (예: 컬리-평택, 부자재-평택(보스턴))" style="max-width:340px"><button class="btn btn-sm" id="tbAdd">탭 추가</button></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="tbSave">저장</button>',
+      onMount: function (m, close) {
+        var draw = function () {
+          $('#tbList', m).innerHTML = '<table class="data dpool"><thead><tr><th>순서</th><th class="left">탭 이름</th><th class="left">문자 머리말</th><th>보이기</th></tr></thead><tbody>' + list.map(function (t, i) {
+            return '<tr' + (t.hidden ? ' class="muted"' : '') + '><td><button class="btn btn-sm btn-ghost" data-up="' + i + '"' + (i ? '' : ' disabled') + '>▲</button><button class="btn btn-sm btn-ghost" data-dn="' + i + '"' + (i < list.length - 1 ? '' : ' disabled') + '>▼</button></td>' +
+              '<td class="left"><input class="input input-sm" data-nm="' + i + '" value="' + esc(t.name) + '"></td><td class="left"><input class="input input-sm" data-pf="' + i + '" value="' + esc(t.prefix || '') + '" placeholder="' + esc(String(t.name).split('-')[0]) + '" style="max-width:140px"></td>' +
+              '<td><label class="small"><input type="checkbox" data-sh="' + i + '"' + (t.hidden ? '' : ' checked') + '> ' + (t.hidden ? '숨김' : '보임') + '</label></td></tr>';
+          }).join('') + '</tbody></table>';
+          $$('[data-nm]', m).forEach(function (x) { x.oninput = function () { list[+x.dataset.nm].name = x.value; }; });
+          $$('[data-pf]', m).forEach(function (x) { x.oninput = function () { list[+x.dataset.pf].prefix = x.value; }; });
+          $$('[data-sh]', m).forEach(function (x) { x.onchange = function () { list[+x.dataset.sh].hidden = !x.checked; draw(); }; });
+          $$('[data-up]', m).forEach(function (b) { b.onclick = function () { var i = +b.dataset.up, t = list[i]; list[i] = list[i - 1]; list[i - 1] = t; draw(); }; });
+          $$('[data-dn]', m).forEach(function (b) { b.onclick = function () { var i = +b.dataset.dn, t = list[i]; list[i] = list[i + 1]; list[i + 1] = t; draw(); }; });
+        };
+        draw();
+        $('#tbAdd', m).onclick = function () { var nm = $('#tbNew', m).value.trim(); if (!nm) return; if (list.some(function (t) { return t.name === nm; })) return toast('같은 이름의 탭이 있어요.', 'err'); list.push({ name: nm, prefix: '' }); $('#tbNew', m).value = ''; draw(); };
+        $('#tbSave', m).onclick = function () {
+          var btn = this; busy(btn, true, '저장 중'); dispSaveNow();
+          api('dispatch.tabsSave', { cust: st.cust, tabs: list }).then(function (r) { setDispTabs(r.tabs); st.tabs = null; close(); toast('탭을 저장했어요.'); renderDispatch(); })
+            .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      } });
   }
   /** 오더 공지 쓰기: 🔒 내부용(배차 담당만) · 📢 기사용(문자·기사 링크 맨 위) */
   function openOrderNote(D, o) {
@@ -6874,7 +6920,8 @@
       '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div class="cal-nav"><button class="btn btn-sm" id="dpPrev">◀</button><input class="input input-sm" type="date" id="dpDate" value="' + esc(st.date) + '" style="width:auto"><button class="btn btn-sm" id="dpNext">▶</button>' +
         (near.length ? '<span class="chips" style="margin-left:6px">' + near.map(function (d) { return '<button type="button" class="chip' + (d === st.date ? ' on' : '') + '" data-day="' + d + '">' + (+d.slice(5, 7)) + '/' + (+d.slice(8)) + ' <span class="cnt">' + days[d] + '</span></button>'; }).join('') + '</span>' : '') + '</div>' +
         '<div class="small" id="dpSaveSt"></div></div>' +
-        '<div class="dp-tabs" id="dpTabs">' + DISP_TABS.map(function (t) { var x = st.tabs[t[0]], n = x.orders.length, nt = dispTrucks(x).length; return '<button type="button" data-tab="' + t[0] + '" class="' + (t[0] === st.tab ? 'on' : '') + '"><b>' + t[0] + '</b> <span class="small">' + n + '줄' + (nt ? ' · ' + nt + '대' : '') + '</span></button>'; }).join('') + '</div>' +
+        '<div class="dp-tabs" id="dpTabs">' + DISP_TABS.filter(function (t) { return t[0] === st.tab || st.tabs[t[0]].orders.length; }).map(function (t) { var x = st.tabs[t[0]], n = x.orders.length, nt = dispTrucks(x).length; return '<button type="button" data-tab="' + esc(t[0]) + '" class="' + (t[0] === st.tab ? 'on' : '') + '"><b>' + esc(t[0]) + '</b> <span class="small">' + n + '줄' + (nt ? ' · ' + nt + '대' : '') + '</span></button>'; }).join('') +
+          (function () { var rest = DISP_TABS.filter(function (t) { return t[0] !== st.tab && !st.tabs[t[0]].orders.length; }); return '<span class="dp-tabx">' + (rest.length ? '<select class="input input-sm" id="dpTabMore"><option value="">＋ 다른 탭 열기 (' + rest.length + ')</option>' + rest.map(function (t) { return '<option>' + esc(t[0]) + '</option>'; }).join('') + '</select>' : '') + '<button type="button" class="btn btn-sm btn-ghost" id="dpTabMgr">탭 관리</button></span>'; })() + '</div>' +
         '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">동방 엑셀에서 C열(출발센터)부터 AF열까지 데이터만 복사해서 붙여넣으세요 (날짜별로 나눠 저장, 이미 있는 줄은 건너뜀)</span></summary>' +
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details></div>' +
       '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
@@ -6895,11 +6942,13 @@
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
     $('#dpDate').onchange = function () { if (this.value) go(this.value); };
     $$('[data-day]', box).forEach(function (b) { b.onclick = function () { go(b.dataset.day); }; });
-    $$('[data-tab]', box).forEach(function (b) { b.onclick = function () { st.tab = b.dataset.tab; st.sel = {}; drawDispDay(); }; });
+    $$('[data-tab]', box).forEach(function (b) { b.onclick = function () { st.tab = b.dataset.tab; st.sel = {}; drawDispDay(); syncRoute(); }; });
+    var tm = $('#dpTabMore'); if (tm) tm.onchange = function () { if (!this.value) return; st.tab = this.value; st.sel = {}; drawDispDay(); syncRoute(); };
+    $('#dpTabMgr').onclick = openDispTabs;
     var parsed = null;
     $('#dpPasteIn').oninput = function () {
       parsed = dispParse(this.value); var by = {}, fr = {}; parsed.items.forEach(function (x) { by[x.date] = (by[x.date] || 0) + 1; fr[x.d.from] = 1; });
-      var other = Object.keys(fr).filter(function (f) { return f && f.indexOf(st.tab) === -1; });
+      var region = (String(st.tab).split('-').slice(1).join('-') || st.tab).replace(/\(.*?\)/g, '').trim(), other = Object.keys(fr).filter(function (f) { return f && region && f.indexOf(region) === -1; });
       $('#dpPasteInfo').innerHTML = parsed.items.length ? '<b>' + parsed.items.length + '줄</b> · ' + Object.keys(by).sort().map(function (d) { return d.slice(5) + ' ' + by[d] + '줄'; }).join(', ') + (other.length ? ' · <span style="color:var(--orange)">출발센터 ' + esc(other.join(', ')) + ' — ' + esc(st.tab) + ' 탭이 맞나요?</span>' : '') + (parsed.warn ? ' · <span style="color:var(--orange)">' + esc(parsed.warn) + '</span>' : '') : '<span class="err-text">' + esc(parsed.warn || '읽을 줄이 없어요.') + '</span>';
       $('#dpImport').disabled = !parsed.items.length;
     };
@@ -6982,7 +7031,8 @@
     var ms = []; for (var i = 0; i < 18; i++) ms.push(ymAdd(todayYmd().slice(0, 7), -i));
     box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="spacer"></span><button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
     $('#dpYm').onchange = function () { st.ym = this.value; drawDispMonth(); syncRoute(); };
-    Promise.all(DISP_TABS.map(function (t) { return api('dispatch.month', { cust: dispKey(st, t[0]), ym: st.ym }).then(function (r) { r.tab = t[0]; return r; }); })).then(function (res) {
+    var MT = [];
+    loadDispTabs().then(function (all) { MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) {
       var el = $('#dpMBody'); if (!el) return;
       var orders = [], tk = {}, days = {}, cars = {};
       res.forEach(function (r) { r.orders.forEach(function (o) { o.tab = r.tab; orders.push(o); }); r.trucks.forEach(function (t) { tk[r.tab + '|' + t.date + '|' + t.no] = t; var k = (t.car || '') + (t.driver ? ' · ' + t.driver : ''); if (k.trim()) cars[k] = (cars[k] || 0) + 1; }); });
@@ -6994,7 +7044,7 @@
       });
       var list = Object.keys(days).sort().map(function (k) { return days[k]; }), sum = {};
       list.forEach(function (d) { var x = sum[d.tab] || (sum[d.tab] = { t: 0, n: 0, b: 0, kg: 0 }); x.t += Object.keys(d.trucks).length; x.n += d.n; x.b += d.b; x.kg += d.kg; });
-      el.innerHTML = list.length ? '<div class="tr-kpis" style="margin-bottom:14px">' + DISP_TABS.filter(function (t) { return sum[t[0]]; }).map(function (t) { var x = sum[t[0]]; return '<div><small>' + t[0] + '</small><b>' + won(x.t) + '대</b><span class="small muted">' + won(x.n) + '줄 · ' + won(x.b) + '번들 · ' + won(x.kg) + 'kg</span></div>'; }).join('') + '</div>' +
+      el.innerHTML = list.length ? '<div class="tr-kpis" style="margin-bottom:14px">' + MT.filter(function (t) { return sum[t[0]]; }).map(function (t) { var x = sum[t[0]]; return '<div><small>' + esc(t[0]) + '</small><b>' + won(x.t) + '대</b><span class="small muted">' + won(x.n) + '줄 · ' + won(x.b) + '번들 · ' + won(x.kg) + 'kg</span></div>'; }).join('') + '</div>' +
         '<div class="table-wrap"><table class="data"><thead><tr><th class="left">날짜</th><th class="left">출발</th><th>호차</th><th>오더</th><th>번들</th><th>kg</th><th class="left">도착 센터</th><th></th></tr></thead><tbody>' +
         list.map(function (d) { return '<tr><td class="left">' + d.date + ' (' + WD[dDow(d.date)] + ')</td><td class="left">' + esc(d.tab) + '</td><td class="num">' + Object.keys(d.trucks).length + '대</td><td class="num">' + d.n + (d.un ? ' <span class="small" style="color:var(--orange)">미배정 ' + d.un + '</span>' : '') + '</td><td class="num">' + won(d.b) + '</td><td class="num">' + won(d.kg) + '</td><td class="left small wrap">' + Object.keys(d.fc).map(function (f) { return esc(f) + (d.fc[f] > 1 ? '×' + d.fc[f] : ''); }).join(', ') + '</td><td><button class="btn btn-sm btn-ghost" data-open="' + d.date + '|' + esc(d.tab) + '">열기</button></td></tr>'; }).join('') +
         '</tbody></table></div>' + (Object.keys(cars).length ? '<h3 style="margin:16px 0 8px">차량 · 기사별 운행 <span class="muted small">' + esc(st.ym) + '</span></h3><div class="chips">' + Object.keys(cars).sort(function (a, b) { return cars[b] - cars[a]; }).map(function (k) { return '<span class="chip">' + esc(k) + ' <span class="cnt">' + cars[k] + '</span></span>'; }).join('') + '</div>' : '')
@@ -8097,7 +8147,7 @@
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
-      '<b>출발지 탭</b>(인천·평택·부산)마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 세 곳이 나뉘어 함께 보여요.',
+      '<b>탭</b>(예: 부자재-인천, 컬리-평택, 부자재-평택(보스턴))마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 탭별로 나뉘어 모두 보여요. 그날 오더가 있는 탭만 보이고, 나머지는 "다른 탭 열기"에서 골라요. <b>탭 관리</b>에서 탭 추가·이름·문자 머리말·순서·숨기기를 해요.',
       '<b>① 오더 붙여넣기</b>: 동방 엑셀(팀즈)에서 C열(출발센터)부터 AF열까지 데이터 줄만 복사해 붙여넣으면 납품일자별로 나눠 저장돼요. 빈 칸이 있어도 괜찮고, 제목 줄을 같이 복사해도 알아서 맞춰요. 이미 가져온 줄은 건너뛰어요.',
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',
       '<b>③ 문자</b>: 호차마다 총 번들·kg, 상차지(상차지 설정에서 찾음), 하차지, BL·품목이 자동으로 만들어져요. "문자 복사"로 바로 붙여넣으세요.',

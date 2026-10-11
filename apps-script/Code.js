@@ -154,7 +154,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -188,6 +188,10 @@ function handle_(req) {
     case 'inq.delete': return inqDelete_(session, req.id);
     case 'dispatch.day': return dispDay_(req.cust, req.date);
     case 'dispatch.month': return dispMonth_(req.cust, req.ym);
+    case 'dispatch.dayAll': return dispMulti_(req.keys, function (k) { return dispDay_(k, req.date); });
+    case 'dispatch.monthAll': return dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); });
+    case 'dispatch.tabs': return { tabs: dispTabs_(req.cust) };
+    case 'dispatch.tabsSave': return dispTabsSave_(req);
     case 'dispatch.import': return dispImport_(session, req);
     case 'dispatch.save': return dispSave_(session, req);
     case 'dispatch.deleteOrders': return dispDeleteOrders_(session, req);
@@ -1381,7 +1385,9 @@ var KR_HOLIDAY_ICS = 'https://calendar.google.com/calendar/ical/ko.south_korea%2
 
 function ymd_(d) { return Utilities.formatDate(d, TZ, 'yyyy-MM-dd'); }
 function checkDate_(v, label) { v = String(v || '').trim().replace(/^'/, ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new Error((label || '날짜') + '를 YYYY-MM-DD 형식으로 넣으세요.'); return v; }
-function rowsOf_(sheet, header) { var sh = cacheSheet_(sheet, header); return sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, header.length).getValues().filter(function (r) { return r[0] !== ''; }); }
+var ROWS_MEMO_ = null; // 여러 탭을 한 번에 읽을 때만 잠깐 사용 (읽기 전용 요청)
+function rowsOf_(sheet, header) { if (ROWS_MEMO_ && ROWS_MEMO_[sheet]) return ROWS_MEMO_[sheet]; var rows = rowsOfRaw_(sheet, header); if (ROWS_MEMO_) ROWS_MEMO_[sheet] = rows; return rows; }
+function rowsOfRaw_(sheet, header) { var sh = cacheSheet_(sheet, header); return sh.getLastRow() < 2 ? [] : sh.getRange(2, 1, sh.getLastRow() - 1, header.length).getValues().filter(function (r) { return r[0] !== ''; }); }
 function findRow_(sheet, header, id) {
   var sh = cacheSheet_(sheet, header);
   if (!id || sh.getLastRow() < 2) return null;
@@ -1945,6 +1951,34 @@ function dispDay_(cust, date) {
   var since = ymd_(new Date(Date.now() - 120 * 86400000)), days = {};
   rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).forEach(function (r) { if (String(r[1]) === cust) { var d = textDate_(r[2]); if (d >= since) days[d] = (days[d] || 0) + 1; } });
   return { orders: dispOrders_(cust, eq), trucks: dispTrucks_(cust, eq), days: days, receipts: dispReceipts_(cust, date) };
+}
+/** 여러 탭(업체 키)을 한 번에: 시트는 한 번만 읽어요 */
+function dispMulti_(keys, fn) {
+  keys = (keys || []).map(String).filter(Boolean).slice(0, 40); var out = {};
+  ROWS_MEMO_ = {};
+  try { keys.forEach(function (k) { out[k] = fn(k); }); } finally { ROWS_MEMO_ = null; }
+  return { byKey: out };
+}
+/* 배차 탭 (업체마다): [{ name, suf(저장 키 꼬리), prefix(문자 머리말), hidden }] — 예전 인천·평택·부산은 키 꼬리 그대로 이름만 바꿔요 */
+function dispTabsDefault_() { return [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
+function dispTabs_(cust) {
+  cust = dispCust_(cust); var raw = PropertiesService.getScriptProperties().getProperty('DISP_TABS_' + cust);
+  var list = raw ? parseJson_(raw, null) : null; return Array.isArray(list) && list.length ? list : dispTabsDefault_();
+}
+function dispTabsSave_(req) {
+  var cust = dispCust_(req.cust), old = dispTabs_(cust), names = {}, sufs = {};
+  var list = (req.tabs || []).map(function (t) {
+    var name = String(t.name || '').trim().slice(0, 30); if (!name) throw new Error('탭 이름을 넣으세요.');
+    if (names[name]) throw new Error('"' + name + '" 탭이 두 개예요.'); names[name] = 1;
+    var suf = t.suf != null && old.some(function (o) { return o.suf === t.suf; }) ? String(t.suf) : '/' + name.replace(/[|]/g, '');
+    if (sufs[suf]) suf = suf + '_' + Object.keys(sufs).length; sufs[suf] = 1;
+    return { name: name, suf: suf, prefix: String(t.prefix || '').trim().slice(0, 20), hidden: !!t.hidden };
+  });
+  if (!list.some(function (t) { return !t.hidden; })) throw new Error('보이는 탭이 하나는 있어야 해요.');
+  // 지운 탭도 기록이 남도록 숨김으로 보관
+  old.forEach(function (o) { if (!list.some(function (t) { return t.suf === o.suf; })) list.push(Object.assign({}, o, { hidden: true })); });
+  PropertiesService.getScriptProperties().setProperty('DISP_TABS_' + cust, JSON.stringify(list));
+  return { tabs: list };
 }
 function dispMonth_(cust, ym) {
   cust = dispCust_(cust); ym = String(ym || ''); if (!/^\d{4}-\d{2}$/.test(ym)) throw new Error('월을 확인하세요.');

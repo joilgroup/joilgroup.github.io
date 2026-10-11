@@ -460,6 +460,14 @@
         return { orders: wk('dispOrd').filter(function (o) { return o.cust === dc && o.date === dd; }).sort(function (a, b) { return a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === dc && t.date === dd; }), days: dday, receipts: wk('rcpt').filter(function (x) { return x.cust === dc && x.date === dd; }) };
       case 'dispatch.month':
         return { orders: wk('dispOrd').filter(function (o) { return o.cust === req.cust && o.date.slice(0, 7) === req.ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date.slice(0, 7) === req.ym; }) };
+      case 'dispatch.dayAll': case 'dispatch.monthAll':
+        var dmk = {}; (req.keys || []).forEach(function (k) { dmk[k] = handle(Object.assign({}, req, { action: req.action === 'dispatch.dayAll' ? 'dispatch.day' : 'dispatch.month', cust: k })); }); return { byKey: dmk };
+      case 'dispatch.tabs': return { tabs: (store.dispTabs || {})[req.cust] || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }] };
+      case 'dispatch.tabsSave':
+        var dold = handle({ action: 'dispatch.tabs', cust: req.cust, token: req.token }).tabs, dnm = {}, dlist = (req.tabs || []).map(function (t) { var nm = String(t.name || '').trim(); if (!nm) fail('탭 이름을 넣으세요.'); if (dnm[nm]) fail('"' + nm + '" 탭이 두 개예요.'); dnm[nm] = 1; return { name: nm, suf: t.suf != null && dold.some(function (o) { return o.suf === t.suf; }) ? t.suf : '/' + nm, prefix: String(t.prefix || '').trim(), hidden: !!t.hidden }; });
+        if (!dlist.some(function (t) { return !t.hidden; })) fail('보이는 탭이 하나는 있어야 해요.');
+        dold.forEach(function (o) { if (!dlist.some(function (t) { return t.suf === o.suf; })) dlist.push(Object.assign({}, o, { hidden: true })); });
+        store.dispTabs = store.dispTabs || {}; store.dispTabs[req.cust] = dlist; save(); return { tabs: dlist };
       case 'dispatch.import':
         var dh = {}, dmax = {}, dres = { added: 0, skipped: 0, dates: {} }, dnow = today();
         var dkn = function (k) { var p = String(k || '').split('|'); if (p.length === 8) p.splice(1, 1); return p.join('|'); };
