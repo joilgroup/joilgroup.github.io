@@ -6531,7 +6531,7 @@
     };
   }
 
-  /* ───────── 배차시트 (거래처 오더 붙여넣기 → 호차 묶기 → 문자 · 기사용 링크 · 인수증 · 팀즈 회신) ───────── */
+  /* ───────── 배차시트 (거래처 오더 붙여넣기 → 호차 묶기 → 문자 · 기사용 링크 · 인수증 · 차량정보) ───────── */
   var DISP_CUSTS = ['쿠팡부자재'];
   var DISP_TABS = [['인천', ''], ['평택', '/평택'], ['부산', '/부산']];
   var DISP_COLS = [['no', '순번'], ['from', '출발센터'], ['maker', '제조사'], ['item', 'Item'], ['date', '납품일자'], ['inQty', '입고수량'], ['outQty', '출고수량'], ['dest', '도착지'], ['fc', '센터명'], ['po', 'CP 발주번호'], ['bl', 'BL#'],
@@ -6769,7 +6769,7 @@
   function renderDispatch() {
     var st = dispState();
     syncRoute();
-    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Dispatch · 배차시트</div><h2>배차시트</h2><p class="muted small" style="margin:4px 0 0">출발지 탭마다 오더를 붙여넣고 → 호차로 묶고 → 문자(기사용 링크 포함) 복사 → 차량정보 붙여넣기 → 팀즈 회신용 복사</p></div>' +
+    $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Dispatch · 배차시트</div><h2>배차시트</h2><p class="muted small" style="margin:4px 0 0">출발지 탭마다 오더를 붙여넣고 → 호차로 묶고 → 문자(기사용 링크 포함) 복사 → 호차 카드에 차량정보 붙여넣기 → 엑셀 복사</p></div>' +
       '<div class="actions"><select class="input input-sm" id="dpCust" style="width:auto">' + DISP_CUSTS.map(function (c) { return '<option' + (c === st.cust ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
       '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>' +
       '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button>' + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
@@ -6792,14 +6792,15 @@
       (cost ? '<span class="dp-cost" title="' + esc(cost.max ? '가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원' : '') + '">' + esc(cost.ton) + ' 기준 예상 매입 ' + (cost.total != null ? '<b>' + won(cost.total) + '원</b>' : '–') + (cost.miss.length ? ' <span class="err-text">단가 없음: ' + esc(cost.miss.join(', ')) + '</span>' : '') + '</span>' : '') +
       '<span class="dp-rc' + (nGot === stops.length && stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</span>' +
       '<span class="spacer"></span><button class="btn btn-sm" data-map="' + D.tab + '|' + no + '">🗺 지도</button><button class="btn btn-sm" data-link="' + D.tab + '|' + no + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button class="btn btn-sm btn-primary" data-copy="' + D.tab + '|' + no + '">문자 복사</button></div>' +
-      '<ol class="dp-route"><li class="from">🏭 ' + esc((stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) {
+      '<div class="dp-body"><ol class="dp-route"><li class="from">🏭 ' + esc((stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) {
         var g = got(s.fc), items = {}; s.rows.forEach(function (o) { items[o.d.item] = (items[o.d.item] || 0) + dispNum(o.d.bundle); });
         return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b>' + (s.dest && s.dest.name ? ' <span class="muted small" title="단가표 도착">(' + esc(s.dest.name) + (s.price ? ' ' + won(s.price) : '') + ')</span>' : '') +
           '<span class="small">' + esc(Object.keys(items).map(function (k) { return k + ' ' + items[k]; }).join(', ')) + ' · ' + won(s.b) + '번들</span>' +
           (g.length ? '<button class="dp-rcb ok" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">✅ ' + (g.length > 1 ? g.length + '장' : '인수증') + '</button>' : '<span class="dp-rcb">⬜ 인수증</span>') + '</li>';
       }).join('') + '</ol>' +
+      '<div class="dp-tf" title="엑셀·구글시트에서 5칸을 복사해 아무 칸에나 붙여넣으면 나눠 들어가요">' + TRK_FIELDS.map(function (f) { return '<label><span>' + f[1] + '</span><input class="input input-sm" data-tf="' + f[0] + '" data-tn="' + D.tab + '|' + no + '" value="' + esc(t[f[0]] || '') + '"></label>'; }).join('') +
+        '<button class="btn btn-sm" data-xl="' + D.tab + '|' + no + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">엑셀 복사</button></div></div>' +
       (rec && !rec.ok ? '<div class="dp-rec">🧭 추천 순서: ' + rec.order.map(function (i, k) { return (k + 1) + ' ' + esc(rec.stops[i].fc); }).join(' → ') + ' <span class="muted small">(직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)</span> <button class="btn btn-sm" data-rec="' + D.tab + '|' + no + '">이 순서로</button></div>' : '') +
-      '<div class="dp-tf">' + TRK_FIELDS.map(function (f) { return '<input class="input input-sm" data-tf="' + f[0] + '" data-tn="' + D.tab + '|' + no + '" placeholder="' + f[1] + '" value="' + esc(t[f[0]] || '') + '" style="width:' + f[2] + 'px">'; }).join('') + '</div>' +
       '<details><summary class="small">문자 미리보기</summary><pre class="dp-msg">' + esc(truckMessage(D, no)) + '</pre></details></div>';
   }
   function drawDispDay() {
@@ -6822,21 +6823,16 @@
       '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
         '<div class="actions"><button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
         '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
-        (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"></th><th>호차</th><th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th><th class="left">FC 배정도크</th></tr></thead><tbody>' +
+        (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"></th><th>호차</th><th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th></tr></thead><tbody>' +
           orders.map(function (o) {
             var on = !!st.sel[o.id], t = o.truck;
             return '<tr draggable="true" data-o="' + esc(o.id) + '" style="' + (t !== '' && t != null ? 'background:' + hue(t) : '') + '"' + (on ? ' class="on"' : '') + '><td class="dp-drag" title="끌어서 순서 바꾸기">⠿</td><td><input type="checkbox" data-sel="' + esc(o.id) + '"' + (on ? ' checked' : '') + '></td>' +
               '<td><input class="input input-sm num dp-tno" data-t="' + esc(o.id) + '" value="' + (t === '' || t == null ? '' : t) + '" inputmode="numeric"></td><td class="left"><b>' + esc(o.d.fc) + '</b></td><td class="left small">' + esc(o.d.dest) + '</td><td class="left small">' + esc(o.d.item) + '</td>' +
-              '<td class="num">' + esc(o.d.bundle) + '</td><td class="num">' + won(dispNum(o.d.kg)) + '</td><td class="left small wrap dp-addr">' + esc(o.d.addr) + '</td><td class="left small wrap dp-hrs">' + esc(o.d.hours) + '</td><td class="left small wrap dp-hrs">' + esc(o.d.dock) + '</td></tr>';
+              '<td class="num">' + esc(o.d.bundle) + '</td><td class="num">' + won(dispNum(o.d.kg)) + '</td><td class="left small wrap dp-addr">' + esc(o.d.addr) + '</td><td class="left small wrap dp-hrs">' + esc(o.d.hours) + '</td></tr>';
           }).join('') + '</tbody></table></div><p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>'
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
       (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">Trucks · ③ 호차별 문자</div>' +
-        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3><button class="btn btn-sm" data-copyall="' + t[0] + '">' + esc(t[0]) + ' 문자 전체 복사</button></div>' + ns.map(function (n) { return truckCardHtml(X, n); }).join('') + '</div>'; }).join('') + '</div>' : '') +
-      (trucks.length ? '<div class="dp-two" style="margin-top:16px"><div class="card"><div class="eyebrow">Vehicles · ④ ' + esc(st.tab) + ' 차량정보 붙여넣기</div><p class="small muted" style="margin:4px 0 8px">다온업체 구글시트에서 <b>호차 순서대로</b> 차량정보 · 운전원 · 연락처 · 입차 예정시간 · 톤수를 복사해 붙여넣으세요. (맨 앞에 호차 번호 칸이 있으면 그 번호로)</p>' +
-        '<textarea class="input" id="dpVehIn" rows="3" placeholder="여기에 붙여넣기"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpVehInfo"></span><button class="btn btn-sm btn-primary" id="dpVehApply" disabled>호차에 넣기</button></div></div>' +
-        '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:8px"><div><div class="eyebrow">Reply · ⑤ ' + esc(st.tab) + ' 팀즈 회신용</div><p class="small muted" style="margin:4px 0 0">붙여넣은 줄 순서대로 차량정보~톤수 5칸이에요. 팀즈 엑셀 ' + esc(st.date) + ' 첫 줄의 <b>M열</b>에 붙여넣으세요.</p></div><button class="btn btn-sm btn-primary" id="dpReplyCopy">복사</button></div>' +
-        '<div class="table-wrap" style="margin-top:8px;max-height:260px"><table class="data mini"><thead><tr><th class="left">센터명</th><th class="left">Item</th>' + TRK_FIELDS.map(function (f) { return '<th class="left">' + f[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
-        dispOrigOrder(orders).map(function (o) { var t = o.truck === '' || o.truck == null ? {} : truckInfo(D, o.truck); return '<tr><td class="left small">' + esc(o.d.fc) + '</td><td class="left small">' + esc(o.d.item) + '</td>' + TRK_FIELDS.map(function (f) { return '<td class="left small">' + esc(t[f[0]] || '') + '</td>'; }).join('') + '</tr>'; }).join('') + '</tbody></table></div></div></div>' : '');
+        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3><button class="btn btn-sm" data-copyall="' + t[0] + '">' + esc(t[0]) + ' 문자 전체 복사</button></div>' + ns.map(function (n) { return truckCardHtml(X, n); }).join('') + '</div>'; }).join('') + '</div>' : '');
     var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; renderDispatch(); };
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
@@ -6886,6 +6882,22 @@
     });
     var tn = function (v) { var p = v.split('|'); return { D: st.tabs[p[0]], no: Number(p[1]), tab: p[0] }; };
     $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); drawDispDay(); }; });
+    /* 엑셀·구글시트에서 차량정보~톤수를 복사해 붙여넣으면 칸마다 나눠 넣기 (여러 줄이면 다음 호차로 이어서) */
+    $$('[data-tf]', box).forEach(function (inp) {
+      inp.onpaste = function (e) {
+        var txt = ((e.clipboardData || window.clipboardData) && (e.clipboardData || window.clipboardData).getData('text')) || '';
+        if (!/[\t\n]/.test(txt.replace(/[\r\n]+$/, ''))) return;
+        e.preventDefault();
+        var x = tn(inp.dataset.tn), ns = dispTrucks(x.D), start = ns.indexOf(x.no), k0 = 0, n = 0;
+        TRK_FIELDS.forEach(function (f, k) { if (f[0] === inp.dataset.tf) k0 = k; });
+        parseTsv(txt).filter(function (r) { return r.some(function (c) { return String(c).trim(); }); }).forEach(function (r, i) {
+          var no = ns[start + i]; if (no == null) return; var t = truckInfo(x.D, no); n++;
+          r.forEach(function (c, j) { var f = TRK_FIELDS[k0 + j]; if (f) t[f[0]] = String(c).trim(); });
+        });
+        dispQueueSave(x.tab); drawDispDay(); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
+      };
+    });
+    $$('[data-xl]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xl), t = truckInfo(x.D, x.no); copyText(TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\r\n]+/g, ' '); }).join('\t'), x.no + '호차 차량정보 5칸을 복사했어요. 엑셀에 붙여넣으세요.'); }; });
     $$('[data-rec]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.rec), rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
     var copyText = function (txt, msg) { (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(msg); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('복사하지 못했어요. 미리보기에서 직접 복사하세요.', 'err'); } ta.remove(); }); };
     var noLink = function (x) { var t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; return !(t && t.token); };
@@ -6899,19 +6911,6 @@
           onMount: function (m) { api('dispatch.receipt', { id: b.dataset.rcv }).then(function (r) { var v = $('#rcV', m); if (v) v.innerHTML = '<img src="data:' + r.mime + ';base64,' + r.data + '" alt="">'; }).catch(function (err) { var v = $('#rcV', m); if (v) v.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; }); } });
       };
     });
-    var vin = $('#dpVehIn'), vrows = null;
-    if (vin) vin.oninput = function () {
-      vrows = parseTsv(this.value).map(function (r) { r = r.map(function (c) { return String(c).trim(); }); var m = /^(\d+)\s*(호차)?$/.exec(r[0] || ''); return r.length >= 6 && m ? { no: Number(m[1]), v: r.slice(1, 6) } : { no: null, v: r.slice(0, 5) }; });
-      var i = 0; vrows.forEach(function (x) { if (x.no == null) x.no = trucks[i++]; });
-      var over = vrows.filter(function (x) { return x.no == null; }).length;
-      $('#dpVehInfo').innerHTML = vrows.length ? vrows.filter(function (x) { return x.no != null; }).map(function (x) { return x.no + '호차 ← ' + esc(x.v[0] || '') + ' ' + esc(x.v[1] || ''); }).join(' · ') + (over ? ' · <span class="err-text">호차보다 ' + over + '줄 많아요</span>' : '') : '';
-      $('#dpVehApply').disabled = !vrows.length;
-    };
-    var va = $('#dpVehApply'); if (va) va.onclick = function () { vrows.forEach(function (x) { if (x.no == null) return; var t = truckInfo(D, x.no); TRK_FIELDS.forEach(function (f, j) { t[f[0]] = x.v[j] || ''; }); }); toast('차량정보를 넣었어요.'); redraw(); };
-    var rc = $('#dpReplyCopy'); if (rc) rc.onclick = function () {
-      var lines = dispOrigOrder(orders).map(function (o) { var t = o.truck === '' || o.truck == null ? {} : truckInfo(D, o.truck); return TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\n]/g, ' '); }).join('\t'); });
-      copyText(lines.join('\n'), lines.length + '줄을 복사했어요. 팀즈 엑셀 M열에 붙여넣으세요.');
-    };
   }
   function drawDispMonth() {
     var st = dispState(), box = $('#dpBody');
@@ -7979,11 +7978,11 @@
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
-      '<b>출발지 탭</b>(인천·평택·부산)마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보·팀즈 회신용도 탭별이고, 아래 호차 목록에는 세 곳이 나뉘어 함께 보여요.',
+      '<b>출발지 탭</b>(인천·평택·부산)마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 세 곳이 나뉘어 함께 보여요.',
       '<b>① 오더 붙여넣기</b>: 동방 엑셀(팀즈)에서 제목 줄까지 복사해 붙여넣으면 납품일자별로 나눠 저장돼요. 이미 가져온 줄은 건너뛰어요.',
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',
       '<b>③ 문자</b>: 호차마다 총 번들·kg, 상차지(상차지 설정에서 찾음), 하차지, BL·품목이 자동으로 만들어져요. "문자 복사"로 바로 붙여넣으세요.',
-      '<b>④ 차량정보</b>: 다온업체 구글시트에서 호차 순서대로 차량정보~톤수 5칸을 복사해 붙여넣어요. <b>⑤ 팀즈 회신용</b>은 원래 줄 순서대로 같은 5칸이라 팀즈 엑셀 M열에 그대로 붙여넣으면 돼요.',
+      '<b>차량정보</b>: 엑셀·구글시트에서 차량정보~톤수 5칸을 복사해 호차 카드의 차량정보 칸에 붙여넣으면 칸마다 나눠 들어가요. 여러 줄을 붙여넣으면 그 호차부터 다음 호차로 이어서 들어가요. <b>엑셀 복사</b>를 누르면 그 호차 5칸이 엑셀 한 줄로 복사돼요.',
       '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나오고, 상차지 설정에서 올린 상차지 사진(2장까지, 설명 포함)도 상차지 카드에 보여요.',
       '<b>🗺 지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',

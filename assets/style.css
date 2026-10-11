@@ -1234,3 +1234,13 @@ main.wide { max-width: 1880px; }
 .pl-img { height: 140px; border-radius: 8px; overflow: hidden; display: grid; place-items: center; background: var(--panel); }
 .pl-img img { width: 100%; height: 100%; object-fit: cover; }
 label.btn.disabled { pointer-events: none; opacity: .6; }
+/* 호차 카드: 왼쪽 경로 · 오른쪽 차량정보 5칸 */
+.dp-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(540px, 680px); gap: 10px 16px; align-items: start; margin-top: 8px; }
+.dp-body .dp-route { margin: 0; }
+.dp-tf { display: grid; grid-template-columns: 1.5fr 1fr 1.3fr 1fr .7fr auto; gap: 6px; margin: 0; align-items: end; }
+.dp-tf label { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dp-tf label span { font-size: 11px; color: var(--muted); }
+.dp-tf .input { width: 100%; }
+@media (max-width: 1200px) { .dp-body { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 700px) { .dp-tf { grid-template-columns: 1fr 1fr; } }
+.dp-table .dp-addr { min-width: 180px; max-width: 300px; } .dp-table .dp-hrs { min-width: 130px; max-width: 240px; }
