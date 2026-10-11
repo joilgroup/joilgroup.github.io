@@ -1375,3 +1375,18 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .tt-no b { font-size: 14.5px; white-space: normal; }
 .tt-no .tt-tab { display: block; font-size: 13px; color: #333; white-space: nowrap; }
 .tt-no b { font-size: 16px; white-space: nowrap; }
+/* 상태 색: 차량정보~상태 칸 전체 (배차전 하늘 · 배차완료 연노랑 · 정보넘김 초록 · 회차 빨강 · 정보변경 보라) */
+.dp-tt tbody.tt-g td { color: #111; }
+.dp-tt tbody.st-0 td.tt-in, .dp-tt tbody.st-0 td.tt-st { background: #DDEEFB; }
+.dp-tt tbody.st-1 td.tt-in, .dp-tt tbody.st-1 td.tt-st { background: #FFF6C6; }
+.dp-tt tbody.st-2 td.tt-in, .dp-tt tbody.st-2 td.tt-st { background: #C9E8BD; }
+.dp-tt tbody.st-3 td.tt-in, .dp-tt tbody.st-3 td.tt-st { background: #F6C9C4; }
+.dp-tt tbody.st-4 td.tt-in, .dp-tt tbody.st-4 td.tt-st { background: #E2D3F3; }
+.dp-tt select.input.dp-stsel { background: rgba(255,255,255,.75); color: #111; border-color: rgba(0,0,0,.2); font-weight: 700; }
+.dp-tt select.input.dp-stsel.s2 { background: #1E7B34; color: #fff; }
+.dp-tt select.input.dp-stsel.s3 { background: #C0392B; color: #fff; }
+.dp-tt select.input.dp-stsel.s4 { background: #7A3FA0; color: #fff; }
+.tt-re { display: inline-block; font-size: 11.5px; font-weight: 700; color: #C0392B; border: 1px solid #E8A39B; border-radius: 4px; padding: 0 4px; margin-left: 4px; }
+.tt-code { display: block; margin: 4px auto 0; border: 0; background: none; padding: 0; font: inherit; font-size: 11.5px; color: #666; cursor: copy; white-space: nowrap; }
+.tt-code:hover { color: #2A5DB0; text-decoration: underline; }
+.dp-tt tbody.st-3 td:not(.tt-st), .dp-tt tbody.st-4 td:not(.tt-st) { color: #111; }

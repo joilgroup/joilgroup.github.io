@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -198,6 +198,7 @@ function handle_(req) {
     case 'dispatch.save': return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.deleteOrders': return dispDeleteOrders_(session, req);
     case 'dispatch.note': return dispNote_(req);
+    case 'dispatch.copyOrders': return dispCopyOrders_(session, req);
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
     case 'dispatch.mapSave': return dispMapSave_(session, req);
@@ -1940,7 +1941,9 @@ var SHEET_DISP_ORD = '배차오더';
 var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시', '내부공지', '기사공지'];
 var SHEET_DISP_TRK = '배차호차';
 var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원'];
-var DISP_STATUS = ['배차전', '배차중', '배차완료', '정보넘김', '회차', '차량변경'];
+var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경'];
+/** 예전 상태 이름 맞추기: 배차중 → 배차전(빈 값), 차량변경 → 정보변경 */
+function dispStatus_(v) { v = dispTxt_(v); return v === '배차중' ? '' : v === '차량변경' ? '정보변경' : v; }
 var SHEET_LOADING = '상차지';
 var LOADING_HEADER = ['ID', '이름', '주소', '상차가능시간', '연락처', '메모', '수정자', '수정일시', '단가표출발'];
 var DISP_TRK_FIELDS = ['car', 'driver', 'phone', 'time', 'ton', 'memo'];
@@ -1948,7 +1951,7 @@ function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
 function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]), noteIn: dispTxt_(r[9]), noteDrv: dispTxt_(r[10]) }; }
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
-function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispTxt_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0 }; }
+function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0 }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
 function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
 function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
@@ -2074,13 +2077,30 @@ function dispSave_(session, req) {
     var money = function (v) { var n = Math.round(Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, ''))); return isFinite(n) && n > 0 ? Math.min(n, 100000000) : 0; };
     var add = trucks.map(function (t) {
       var no = Math.max(1, Math.round(Number(t.no)) || 1), tok = tokens[no] || Utilities.getUuid().replace(/-/g, '').slice(0, 20), o = olds[no] || {};
-      var stt = DISP_STATUS.indexOf(String(t.status || '')) !== -1 ? String(t.status) : '';
+      var stt = DISP_STATUS.indexOf(dispStatus_(t.status)) !== -1 ? dispStatus_(t.status) : ''; if (stt === '배차전') stt = '';
       var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
       return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3);
     });
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
     try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
     var out = dispDay_(cust, date); out.drivers = driverList_(); return out;
+  } finally { lock.releaseLock(); }
+}
+/** 회차 오더 다시 배차: 고른 오더를 다른(또는 같은) 날짜에 호차 미배정으로 복사 (공지는 빼고, 어디서 왔는지 표시) */
+function dispCopyOrders_(session, req) {
+  var cust = dispCust_(req.cust), date = dispDate_(req.date), to = dispDate_(req.toDate), ids = {}; (req.ids || []).forEach(function (x) { ids[String(x)] = 1; });
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), src = dispOrders_(cust, function (d) { return d === date; }).filter(function (o) { return ids[o.id]; });
+    if (!src.length) throw new Error('복사할 오더를 찾을 수 없어요.');
+    var maxSeq = 0; dispOrders_(cust, function (d) { return d === to; }).forEach(function (o) { maxSeq = Math.max(maxSeq, o.seq); });
+    var now = now_(), stamp = Utilities.formatDate(new Date(), TZ, 'MMddHHmmss');
+    var out = src.map(function (o, i) {
+      var d = JSON.parse(JSON.stringify(o.d || {})); d.date = to; d.reFrom = date + ' ' + (o.truck === '' ? '' : o.truck + '호차');
+      return [newId_('D') + i, cust, "'" + to, String(o.key).slice(0, 260) + '#재' + stamp + i, JSON.stringify(d), '', maxSeq + i + 1, session.name, now, '', ''];
+    });
+    sh.getRange(sh.getLastRow() + 1, 1, out.length, DISP_ORD_HEADER.length).setValues(out);
+    return { copied: out.length, toDate: to };
   } finally { lock.releaseLock(); }
 }
 /** 오더 공지: 내부용(배차 담당만) · 기사용(문자·기사 링크에 표시) */
