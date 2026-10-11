@@ -7176,6 +7176,20 @@
       };
     });
     /* 기사 풀: 차량정보·운전원·연락처 칸에 치면 맞는 기사 목록 → 고르면 4칸 채우기 */
+    /* 차량정보~톤수 칸 이동: Tab·Enter 다음 칸(톤수 다음은 다음 호차 차량정보), Shift는 반대로, ↑↓ 위·아래 호차 같은 칸, ←→ 글자 끝에서 옆 칸 */
+    $$('.tt-input', box).forEach(function (inp) {
+      inp.addEventListener('keydown', function (e) {
+        if (drvSug || e.isComposing || e.keyCode === 229 || e.altKey || e.ctrlKey || e.metaKey) return; // 자동완성 목록이 열려 있거나 한글 조합 중이면 그대로
+        var all = $$('.tt-input', box), i = all.indexOf(inp), w = TRK_FIELDS.length, to = null, v = inp.value, a = inp.selectionStart, z = inp.selectionEnd;
+        if (e.key === 'Tab' || e.key === 'Enter') to = e.shiftKey ? i - 1 : i + 1;
+        else if (e.key === 'ArrowDown') to = i + w;
+        else if (e.key === 'ArrowUp') to = i - w;
+        else if (e.key === 'ArrowRight' && a === z && z === v.length) to = i + 1;
+        else if (e.key === 'ArrowLeft' && a === z && a === 0) to = i - 1;
+        if (to == null || !all[to]) { if (e.key === 'Enter') e.preventDefault(); return; }
+        e.preventDefault(); all[to].focus(); all[to].select();
+      });
+    });
     $$('[data-tf=car], [data-tf=driver], [data-tf=phone]', box).forEach(function (inp) {
       inp.setAttribute('autocomplete', 'off');
       inp.addEventListener('input', function () { driverSuggest(inp, function (v) { var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
