@@ -2208,9 +2208,13 @@ function drvGet_(t) {
     var d = o.d || {}, k = d.fc || '-', v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
     var s = by[k] || (by[k] = { fc: k, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
     if (!stops.some(function (x) { return x === s; })) stops.push(s);
-    var n = Number(String(d.bundle || '').replace(/[,\s]/g, '')) || 0; s.bundle += n; s.kg += Number(String(d.kg || '').replace(/[,\s]/g, '')) || 0;
-    s.items[d.item || '-'] = (s.items[d.item || '-'] || 0) + n; if (d.bl && s.bl.indexOf(d.bl) === -1) s.bl.push(d.bl);
+    // 번들 칸이 'N패키지'면 같은 착지끼리 모아 24패키지 = 1번들
+    var pm = String(d.bundle || '').match(/(\d+(?:\.\d+)?)\s*패키지/), it = d.item || '-';
+    if (pm) { s.pkg = (s.pkg || 0) + Number(pm[1]); s.pkgItems = s.pkgItems || {}; s.pkgItems[it] = (s.pkgItems[it] || 0) + Number(pm[1]); }
+    else { var n = Number(String(d.bundle || '').replace(/[,\s]/g, '')) || 0; s.bundle += n; s.items[it] = (s.items[it] || 0) + n; }
+    s.kg += Number(String(d.kg || '').replace(/[,\s]/g, '')) || 0; if (d.bl && s.bl.indexOf(d.bl) === -1) s.bl.push(d.bl);
   });
+  stops.forEach(function (s) { if (!s.pkg) return; s.bundle += Math.ceil(s.pkg / 24); Object.keys(s.pkgItems).forEach(function (it) { s.items[it + ' ' + s.pkgItems[it] + '패키지'] = Math.ceil(s.pkgItems[it] / 24); }); delete s.pkgItems; });
   var from = orders[0] && orders[0].d.from, place = loadingList_().filter(function (p) { return String(p.name).replace(/\s|\(주\)|㈜/g, '') === String(from || '').replace(/\s|\(주\)|㈜/g, ''); })[0] || null;
   var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : [])); } catch (e) { /* 지도 없이 */ }
   stops.forEach(function (s) { var g = geo[String(s.addr).replace(/\s+/g, ' ').trim()]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
