@@ -112,6 +112,7 @@ function handle_(req) {
   if (action === 'login') return login_(req.id, req.password);
   if (action === 'drv.get') return drvGet_(req.t);
   if (action === 'drv.upload') return drvUpload_(req);
+  if (action === 'drv.photo') return drvPhoto_(req);
 
   var session = requireSession_(req.token);
   var allowedBeforeChange = ['me', 'logout', 'changePassword', 'publicSettings'];
@@ -153,7 +154,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -198,6 +199,10 @@ function handle_(req) {
     case 'loading.list': return { places: loadingList_() };
     case 'loading.save': return loadingSave_(session, req);
     case 'loading.delete': return loadingDelete_(req.id);
+    case 'loading.photo': return placePhoto_(req.id);
+    case 'loading.photoAdd': return placePhotoAdd_(session, req);
+    case 'loading.photoCap': return placePhotoCap_(req);
+    case 'loading.photoDelete': return placePhotoDelete_(req.id);
     case 'owners.list': return ownersList_();
     case 'owners.save': return ownerSave_(session, req);
     case 'owners.delete': return ownerDelete_(session, req.id);
@@ -2072,7 +2077,7 @@ function drvGet_(t) {
   var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : [])); } catch (e) { /* 지도 없이 */ }
   stops.forEach(function (s) { var g = geo[String(s.addr).replace(/\s+/g, ' ').trim()]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
   var rc = dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no; });
-  return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact, lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
+  return { date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact, photos: place.photos || [], lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
 }
 function drvUpload_(req) {
   var tr = drvFind_(req.t), fc = String(req.fc || '');
@@ -2086,7 +2091,7 @@ function drvUpload_(req) {
   cacheSheet_(SHEET_RECEIPTS, RECEIPT_HEADER).appendRow([newId_('R'), tr.cust, "'" + tr.date, tr.no, fc, file.getId(), now_(), bytes.length]);
   return drvGet_(req.t);
 }
-function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { return { id: String(r[0]), name: String(r[1]), addr: String(r[2] || ''), time: String(r[3] || ''), contact: String(r[4] || ''), memo: String(r[5] || ''), rateFrom: String(r[8] || '') }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }
+function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); var ph = placePhotos_(); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { var id = String(r[0]); return { id: id, name: String(r[1]), addr: String(r[2] || ''), time: String(r[3] || ''), contact: String(r[4] || ''), memo: String(r[5] || ''), rateFrom: String(r[8] || ''), photos: ph.filter(function (x) { return x.place === id; }).map(function (x) { return { id: x.id, cap: x.cap }; }) }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }
 function loadingSave_(session, req) {
   var x = req.place || {}, name = String(x.name || '').trim().slice(0, 60); if (!name) throw new Error('상차지명을 넣으세요.');
   var row = [name, String(x.addr || '').slice(0, 300), String(x.time || '').slice(0, 300), String(x.contact || '').slice(0, 1000), String(x.memo || '').slice(0, 500), session.name, now_(), String(x.rateFrom || '').trim().slice(0, 30)];
@@ -2095,7 +2100,46 @@ function loadingSave_(session, req) {
   else cacheSheet_(SHEET_LOADING, LOADING_HEADER).appendRow([newId_('L')].concat(row));
   return { places: loadingList_() };
 }
-function loadingDelete_(id) { var f = findRow_(SHEET_LOADING, LOADING_HEADER, id); if (!f) throw new Error('상차지를 찾을 수 없습니다.'); f.sh.deleteRow(f.row); return { places: loadingList_() }; }
+function loadingDelete_(id) { var f = findRow_(SHEET_LOADING, LOADING_HEADER, id); if (!f) throw new Error('상차지를 찾을 수 없습니다.'); placePhotos_().filter(function (x) { return x.place === String(id); }).forEach(function (x) { placePhotoDelete_(x.id); }); f.sh.deleteRow(f.row); return { places: loadingList_() }; }
+/* 상차지 사진 (기사 링크의 상차지 카드에 보여요 · 한 곳에 2장까지) */
+var SHEET_PLACE_PHOTOS = '상차지사진';
+var PLACE_PHOTO_HEADER = ['ID', '상차지ID', '파일ID', '설명', '올린이', '올린시각'];
+var PLACE_PHOTO_MAX = 2;
+function placePhotoFolder_() {
+  var props = PropertiesService.getScriptProperties(), id = props.getProperty('PLACE_PHOTO_FOLDER');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* 새로 */ } }
+  var f = docsFolder_().createFolder('상차지사진'); props.setProperty('PLACE_PHOTO_FOLDER', f.getId()); return f;
+}
+function placePhotos_() { return rowsOf_(SHEET_PLACE_PHOTOS, PLACE_PHOTO_HEADER).map(function (r) { return { id: String(r[0]), place: String(r[1]), file: String(r[2]), cap: dispTxt_(r[3]) }; }); }
+function placePhoto_(id) {
+  var x = placePhotos_().filter(function (p) { return p.id === String(id); })[0]; if (!x) throw new Error('사진을 찾을 수 없어요.');
+  return { data: Utilities.base64Encode(DriveApp.getFileById(x.file).getBlob().getBytes()), mime: 'image/jpeg' };
+}
+function placePhotoAdd_(session, req) {
+  var f = findRow_(SHEET_LOADING, LOADING_HEADER, req.placeId); if (!f) throw new Error('상차지를 먼저 저장하세요.');
+  var id = String(req.placeId);
+  if (placePhotos_().filter(function (x) { return x.place === id; }).length >= PLACE_PHOTO_MAX) throw new Error('상차지 한 곳에 사진은 ' + PLACE_PHOTO_MAX + '장까지예요. 지우고 다시 올려 주세요.');
+  var bytes = Utilities.base64Decode(String(req.data || '')); if (!bytes.length) throw new Error('사진이 비어 있어요.'); if (bytes.length > 6 * 1024 * 1024) throw new Error('사진이 너무 커요.');
+  var name = (String(f.raw[1]) + '_' + Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmmss')).replace(/[\\/:*?"<>|]/g, '_') + '.jpg';
+  var file = placePhotoFolder_().createFile(Utilities.newBlob(bytes, 'image/jpeg', name));
+  cacheSheet_(SHEET_PLACE_PHOTOS, PLACE_PHOTO_HEADER).appendRow([newId_('P'), id, file.getId(), "'" + String(req.cap || '').trim().slice(0, 200), session.name, now_()]);
+  return { places: loadingList_() };
+}
+function placePhotoCap_(req) {
+  var f = findRow_(SHEET_PLACE_PHOTOS, PLACE_PHOTO_HEADER, req.id); if (!f) throw new Error('사진을 찾을 수 없어요.');
+  f.sh.getRange(f.row, 4).setValue("'" + String(req.cap || '').trim().slice(0, 200)); return { places: loadingList_() };
+}
+function placePhotoDelete_(id) {
+  var f = findRow_(SHEET_PLACE_PHOTOS, PLACE_PHOTO_HEADER, id); if (!f) throw new Error('사진을 찾을 수 없어요.');
+  try { DriveApp.getFileById(String(f.raw[2])).setTrashed(true); } catch (e) { /* 이미 없음 */ }
+  f.sh.deleteRow(f.row); return { places: loadingList_() };
+}
+/** 기사 링크에서 상차지 사진 보기: 그 호차의 상차지 사진만 */
+function drvPhoto_(req) {
+  var d = drvGet_(req.t), ok = d.place && (d.place.photos || []).some(function (x) { return x.id === String(req.id); });
+  if (!ok) throw new Error('사진을 찾을 수 없어요.');
+  return placePhoto_(req.id);
+}
 
 /* ───────────── 팀 공지 ───────────── */
 

@@ -1227,3 +1227,10 @@ main.wide { max-width: 1880px; }
 .dp-map { height: min(62vh, 560px); min-height: 320px; border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--panel-2); }
 .kpin { width: 28px; height: 28px; border-radius: 50%; background: #1E1C19; color: #fff; font: 800 14px/28px Pretendard, sans-serif; text-align: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); cursor: pointer; }
 .kpin.from { background: #F07A22; font-size: 15px; }
+/* 상차지 사진 */
+.pl-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.pl-ph { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.pl-ph.add { justify-content: center; border-style: dashed; }
+.pl-img { height: 140px; border-radius: 8px; overflow: hidden; display: grid; place-items: center; background: var(--panel); }
+.pl-img img { width: 100%; height: 100%; object-fit: cover; }
+label.btn.disabled { pointer-events: none; opacity: .6; }

@@ -32,6 +32,14 @@
     .spin { display: inline-block; width: 18px; height: 18px; border: 3px solid #ddd; border-top-color: var(--ink); border-radius: 50%; animation: s .8s linear infinite; vertical-align: -3px; }
     @keyframes s { to { transform: rotate(360deg); } }
     input[type=file] { display: none; }
+    .phs { display: grid; gap: 10px; margin-top: 10px; }
+    .ph { margin: 0; }
+    .phi { min-height: 120px; border-radius: 12px; overflow: hidden; background: #F1ECE3; display: grid; place-items: center; color: var(--muted); font-size: 14px; }
+    .phi img { width: 100%; display: block; cursor: zoom-in; }
+    .ph figcaption { margin-top: 4px; font-size: 15px; font-weight: 700; }
+    .zoom { position: fixed; inset: 0; background: rgba(0,0,0,.92); z-index: 50; display: flex; align-items: center; justify-content: center; }
+    .zoom img { max-width: 100%; max-height: 100%; }
+    .zoom b { position: absolute; top: 12px; right: 16px; color: #fff; font-size: 30px; }
     #map { height: 240px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); margin-top: 12px; background: #EDE6DA; }
     .kpin { width: 30px; height: 30px; border-radius: 50%; background: var(--ink); color: #fff; font: 800 15px/30px sans-serif; text-align: center; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
     .kpin.from { background: var(--orange); }
@@ -101,7 +109,8 @@
       app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.cust) + '</div><h1>' + d.no + '호차 · 착지 ' + d.stops.length + '곳</h1>' +
         '<div class="sub">총 ' + won(tb) + '번들 / ' + won(tk) + 'kg' + (d.car || d.driver ? ' · ' + esc([d.car, d.driver].filter(Boolean).join(' ')) : '') + '</div>' +
         '<div class="sub ' + (nGot === d.stops.length ? 'ok' : '') + '" style="margin-top:4px">인수증 ' + nGot + ' / ' + d.stops.length + (nGot === d.stops.length ? ' · 모두 올렸어요 👍' : '') + '</div>' +
-        '<div id="mapSlot"></div><div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from) + '</div>' + (p ? (p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') + (p.contact ? '<div class="row">' + tels(String(p.contact).split(/\n/)) + '</div>' : '') + (p.addr ? '<div class="btns">' + navLinks(p.name, p.addr) + '</div>' : '') : '') + '</div>' +
+        '<div id="mapSlot"></div><div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from) + '</div>' + (p ? (p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') + (p.contact ? '<div class="row">' + tels(String(p.contact).split(/\n/)) + '</div>' : '') + (p.addr ? '<div class="btns">' + navLinks(p.name, p.addr) + '</div>' : '') +
+          ((p.photos || []).length ? '<div class="phs">' + p.photos.map(function (ph) { return '<figure class="ph"><div class="phi" data-ph="' + esc(ph.id) + '">' + (photos[ph.id] ? '<img src="data:image/jpeg;base64,' + photos[ph.id] + '" alt="">' : '<span><span class="spin"></span> 사진 불러오는 중…</span>') + '</div>' + (ph.cap ? '<figcaption>📍 ' + esc(ph.cap) + '</figcaption>' : '') + '</figure>'; }).join('') + '</div>' : '') : '') + '</div>' +
         d.stops.map(function (s, i) {
           var g = got(s.fc), items = Object.keys(s.items).map(function (k) { return esc(k) + ' <b>' + won(s.items[k]) + '</b>번들'; }).join(' · ');
           return '<div class="card" id="st' + i + '"><div class="ttl"><span class="no">' + (i + 1) + '</span>' + esc(s.fc) + '</div>' +
@@ -113,8 +122,20 @@
             '<input type="file" accept="image/*" capture="environment" data-fc="' + esc(s.fc) + '"></label></div></div>';
         }).join('') +
         '<p class="note">이 페이지는 이 호차 기사님용이에요. 올린 사진은 배차 담당자만 볼 수 있어요.</p>';
+      loadPhotos();
       if (mapNode) { var slot = document.getElementById('mapSlot'); if (slot) slot.replaceWith(mapNode); if (mapNode._map) mapNode._map.relayout(); } else drawMap();
       Array.prototype.forEach.call(app.querySelectorAll('input[type=file]'), function (inp) { inp.onchange = function () { if (inp.files[0]) upload(inp.dataset.fc, inp.files[0]); inp.value = ''; }; });
+    }
+    var photos = {};
+    /** 상차지 사진: 한 번 받아 두고 다시 그릴 때 재사용 (누르면 크게) */
+    function loadPhotos() {
+      Array.prototype.forEach.call(app.querySelectorAll('[data-ph]'), function (box) {
+        var id = box.dataset.ph, show = function () { box.innerHTML = '<img src="data:image/jpeg;base64,' + photos[id] + '" alt="">'; box.firstChild.onclick = function () { var z = document.createElement('div'); z.className = 'zoom'; z.innerHTML = '<b>✕</b><img src="data:image/jpeg;base64,' + photos[id] + '" alt="">'; z.onclick = function () { z.remove(); }; document.body.appendChild(z); }; };
+        if (photos[id]) { show(); return; }
+        if (photos[id] === null) return; photos[id] = null;
+        api('drv.photo', { id: id }).then(function (r) { photos[id] = r.data; var b = app.querySelector('[data-ph="' + id + '"]'); if (b) { box = b; show(); } })
+          .catch(function () { delete photos[id]; box.innerHTML = '<span>사진을 불러오지 못했어요</span>'; });
+      });
     }
     function shrink(file) {
       return new Promise(function (resolve, reject) {

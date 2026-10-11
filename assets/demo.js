@@ -274,6 +274,7 @@
       return { token: token, user: { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u) }, settings: pubSettings() };
     }
     if (req.action === 'drv.get' || req.action === 'drv.upload') return demoDrv(req);
+    if (req.action === 'drv.photo') { var dd = demoDrv({ action: 'drv.get', t: req.t }); if (!(dd.place && (dd.place.photos || []).some(function (x) { return x.id === req.id; }))) fail('사진을 찾을 수 없어요.'); var pd = (store.phData || {})[req.id]; if (!pd) fail('사진을 찾을 수 없어요.'); return { data: pd, mime: 'image/jpeg' }; }
     var me = session(req.token);
     curMe = me;
     var s = store.settings;
@@ -490,6 +491,13 @@
         var lv = { name: ln, addr: lp.addr || '', time: lp.time || '', contact: lp.contact || '', memo: lp.memo || '', rateFrom: lp.rateFrom || '' };
         if (req.id) Object.assign(wk('places').filter(function (x) { return x.id === req.id; })[0] || fail('상차지를 찾을 수 없습니다.'), lv); else wk('places').push(Object.assign({ id: calId('L') }, lv));
         save(); return handle(Object.assign({}, req, { action: 'loading.list' }));
+      case 'loading.photo': if (!(store.phData || {})[req.id]) fail('사진을 찾을 수 없어요.'); return { data: store.phData[req.id], mime: 'image/jpeg' };
+      case 'loading.photoAdd':
+        var lp = wk('places').filter(function (x) { return x.id === req.placeId; })[0] || fail('상차지를 먼저 저장하세요.'); lp.photos = lp.photos || [];
+        if (lp.photos.length >= 2) fail('상차지 한 곳에 사진은 2장까지예요. 지우고 다시 올려 주세요.');
+        var pid = calId('P'); store.phData = store.phData || {}; store.phData[pid] = req.data; lp.photos.push({ id: pid, cap: String(req.cap || '').trim() }); save(); return handle(Object.assign({}, req, { action: 'loading.list' }));
+      case 'loading.photoCap': wk('places').forEach(function (x) { (x.photos || []).forEach(function (ph) { if (ph.id === req.id) ph.cap = String(req.cap || '').trim(); }); }); save(); return handle(Object.assign({}, req, { action: 'loading.list' }));
+      case 'loading.photoDelete': wk('places').forEach(function (x) { x.photos = (x.photos || []).filter(function (ph) { return ph.id !== req.id; }); }); if (store.phData) delete store.phData[req.id]; save(); return handle(Object.assign({}, req, { action: 'loading.list' }));
       case 'loading.delete': store.places = wk('places').filter(function (x) { return x.id !== req.id; }); save(); return { places: wk('places') };
       case 'manual.list': return { manuals: demoManuals() };
       case 'manual.save':

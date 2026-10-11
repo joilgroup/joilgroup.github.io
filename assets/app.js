@@ -6986,6 +6986,16 @@
         loadDispRates(true).then(function () { drawNow(); drawMap(); });
       } });
   }
+  /** 사진을 긴 변 1600px JPEG로 줄여 base64로 */
+  function shrinkPhoto(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file), img = new Image();
+      img.onload = function () { var k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight)), c = document.createElement('canvas'); c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', 0.8).split(',')[1]); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('사진을 읽지 못했어요.')); };
+      img.src = url;
+    });
+  }
+  var placePhotoCache = {};
   function openPlaces() {
     var st = dispState(), cur = null;
     modal({ wide: true, eyebrow: '배차시트', title: '상차지 설정',
@@ -6999,7 +7009,24 @@
             '<div class="field"><label>상차가능시간</label><input class="input" id="plT" value="' + esc(p.time || '') + '" placeholder="예) 9:00~11:30 // 13:00~17:30"></div>' +
             '<div class="field"><label>상차지연락처 <span class="muted">(줄마다 한 명)</span></label><textarea class="input memo" id="plC" placeholder="예) 담당자 이름 / 032-000-0000">' + esc(p.contact || '') + '</textarea></div>' +
             '<div class="field"><label>단가표 출발명 <span class="muted">(매입 단가표의 "출발" · 비우면 이름에서 "물류센터"를 뺀 것)</span></label><input class="input" id="plR" value="' + esc(p.rateFrom || '') + '" placeholder="예) 인천"></div>' +
-            '<div class="actions">' + (p.id ? '<button class="btn btn-danger btn-sm" id="plDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn btn-sm" id="plNew">새로 쓰기</button><button class="btn btn-sm btn-primary" id="plSave">저장</button></div>';
+            '<div class="actions">' + (p.id ? '<button class="btn btn-danger btn-sm" id="plDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn btn-sm" id="plNew">새로 쓰기</button><button class="btn btn-sm btn-primary" id="plSave">저장</button></div>' +
+            '<div class="field" style="margin-top:14px"><label>상차지 사진 <span class="muted">(2장까지 · 기사 링크의 상차지 카드에 보여요)</span></label>' +
+            (p.id ? '<div class="pl-photos">' + (p.photos || []).map(function (ph) { return '<div class="pl-ph"><div class="pl-img" data-phimg="' + esc(ph.id) + '"><span class="spinner dark"></span></div><input class="input input-sm" data-phcap="' + esc(ph.id) + '" value="' + esc(ph.cap) + '" placeholder="설명 (예: 정문 말고 2번 게이트로)"><button class="btn btn-sm btn-danger" data-phdel="' + esc(ph.id) + '">사진 지우기</button></div>'; }).join('') +
+              ((p.photos || []).length < 2 ? '<div class="pl-ph add"><input class="input input-sm" id="phCap" placeholder="설명 (예: 3번 도크 위치)"><label class="btn btn-sm">📷 사진 올리기<input type="file" accept="image/*" id="phFile" hidden></label></div>' : '') + '</div>'
+              : '<p class="muted small" style="margin:0">상차지를 먼저 저장하면 사진을 올릴 수 있어요.</p>') + '</div>';
+          var afterPhoto = function (r) { st.places = r.places; cur = r.places.filter(function (x) { return x.id === p.id; })[0] || null; drawList(); drawForm(); };
+          (p.photos || []).forEach(function (ph) {
+            var box = $('[data-phimg="' + ph.id + '"]', m), show = function (d) { if (box) box.innerHTML = '<img src="data:image/jpeg;base64,' + d + '" alt="">'; };
+            if (placePhotoCache[ph.id]) show(placePhotoCache[ph.id]);
+            else api('loading.photo', { id: ph.id }).then(function (r) { placePhotoCache[ph.id] = r.data; show(r.data); }).catch(function (err) { if (box) box.innerHTML = '<span class="err-text small">' + esc(err.message) + '</span>'; });
+          });
+          $$('[data-phcap]', m).forEach(function (inp) { inp.onchange = function () { api('loading.photoCap', { id: inp.dataset.phcap, cap: inp.value }).then(function (r) { st.places = r.places; toast('사진 설명을 저장했어요.'); }).catch(function (err) { toast(err.message, 'err'); }); }; });
+          $$('[data-phdel]', m).forEach(function (b) { b.onclick = function () { if (!confirm('이 사진을 지울까요?')) return; busy(b, true, '…'); api('loading.photoDelete', { id: b.dataset.phdel }).then(afterPhoto).catch(function (err) { busy(b, false); toast(err.message, 'err'); }); }; });
+          var pf = $('#phFile', m); if (pf) pf.onchange = function () {
+            var file = pf.files[0]; if (!file) return; var lb = pf.parentNode; lb.classList.add('disabled'); lb.firstChild.textContent = '올리는 중…';
+            shrinkPhoto(file).then(function (b64) { return api('loading.photoAdd', { placeId: p.id, data: b64, cap: $('#phCap', m).value }); })
+              .then(function (r) { afterPhoto(r); toast('사진을 올렸어요.'); }).catch(function (err) { toast(err.message, 'err'); drawForm(); });
+          };
           $('#plNew', m).onclick = function () { cur = null; drawForm(); };
           $('#plSave', m).onclick = function () {
             var btn = this; busy(btn, true, '…');
@@ -7011,7 +7038,7 @@
         };
         var drawList = function () {
           var l = st.places || [];
-          $('#plList', m).innerHTML = l.length ? l.map(function (p) { return '<button class="pl-it' + (cur && cur.id === p.id ? ' on' : '') + '" data-pl="' + esc(p.id) + '"><b>' + esc(p.name) + '</b><small>' + esc(p.addr || '주소 없음') + '</small></button>'; }).join('') : '<p class="muted small">아직 없어요. 오른쪽에서 추가하세요.</p>';
+          $('#plList', m).innerHTML = l.length ? l.map(function (p) { return '<button class="pl-it' + (cur && cur.id === p.id ? ' on' : '') + '" data-pl="' + esc(p.id) + '"><b>' + esc(p.name) + ((p.photos || []).length ? ' <span class="muted small">📷' + p.photos.length + '</span>' : '') + '</b><small>' + esc(p.addr || '주소 없음') + '</small></button>'; }).join('') : '<p class="muted small">아직 없어요. 오른쪽에서 추가하세요.</p>';
           $$('[data-pl]', m).forEach(function (b) { b.onclick = function () { cur = l.filter(function (x) { return x.id === b.dataset.pl; })[0]; drawList(); drawForm(); }; });
         };
         loadPlaces().then(function () { drawList(); drawForm(); }).catch(function (err) { $('#plList', m).innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
@@ -7957,7 +7984,7 @@
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',
       '<b>③ 문자</b>: 호차마다 총 번들·kg, 상차지(상차지 설정에서 찾음), 하차지, BL·품목이 자동으로 만들어져요. "문자 복사"로 바로 붙여넣으세요.',
       '<b>④ 차량정보</b>: 다온업체 구글시트에서 호차 순서대로 차량정보~톤수 5칸을 복사해 붙여넣어요. <b>⑤ 팀즈 회신용</b>은 원래 줄 순서대로 같은 5칸이라 팀즈 엑셀 M열에 그대로 붙여넣으면 돼요.',
-      '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나와요.',
+      '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나오고, 상차지 설정에서 올린 상차지 사진(2장까지, 설명 포함)도 상차지 카드에 보여요.',
       '<b>🗺 지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',
       '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게로 자동이에요. 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
