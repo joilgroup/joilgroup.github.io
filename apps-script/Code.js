@@ -1961,7 +1961,7 @@ function dispDay_(cust, date) {
   return { orders: dispOrders_(cust, eq), trucks: dispTrucks_(cust, eq), days: days, receipts: dispReceipts_(cust, date) };
 }
 /* ───────────── 협력사 계정: 배차시트만 (견적·분석·배차검색·관리자 등은 전부 막음) ───────────── */
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
 function partnerHandle_(session, action, req) {
   if (PARTNER_ACTIONS.indexOf(action) === -1) throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
   var ok = function (k) { if (session.dispTabs.indexOf(String(k)) === -1) throw new Error('볼 수 없는 탭이에요.'); return String(k); };
@@ -1977,6 +1977,7 @@ function partnerHandle_(session, action, req) {
     case 'dispatch.monthAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); }), session);
     case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
+    case 'dispatch.rates': return dispRatesRead_(); // 운송비를 보기만 (단가표 수정은 못 함)
     case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
     case 'loading.list': return { places: loadingList_() };
     case 'loading.photo': return placePhoto_(req.id);
@@ -1985,9 +1986,9 @@ function partnerHandle_(session, action, req) {
   }
   throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
 }
-/** 권한에 따라 빼고 보내기: 비용(분석 권한만) · 내부 공지(협력사 제외) */
+/** 권한에 따라 빼고 보내기: 비용(분석 권한·협력사는 보기만) · 내부 공지(협력사 제외) */
 function dispScrub_(out, session) {
-  var cost = canCost_(session), partner = session.role === 'partner';
+  var partner = session.role === 'partner', cost = canCost_(session) || partner;
   var one = function (r) {
     if (!r) return r;
     if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; });
@@ -2069,7 +2070,7 @@ function dispSave_(session, req) {
     if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = tv.length - 1; i >= 0; i--) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { var on = Number(tv[i][2]); if (tv[i][11]) tokens[on] = String(tv[i][11]); olds[on] = dispTrkRow_(tv[i]); ts.deleteRow(i + 2); } }
     var trucks = req.trucks || [];
     // 협력사: 이미 있는 호차의 차량정보 5칸·상태만 (호차 추가·메모·비용은 그대로)
-    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, status: g.status != null ? g.status : o.status }; }); }
+    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, status: g.status != null && (g.status !== '정보넘김' || o.status === '정보넘김') ? g.status : o.status }; }); }
     var money = function (v) { var n = Math.round(Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, ''))); return isFinite(n) && n > 0 ? Math.min(n, 100000000) : 0; };
     var add = trucks.map(function (t) {
       var no = Math.max(1, Math.round(Number(t.no)) || 1), tok = tokens[no] || Utilities.getUuid().replace(/-/g, '').slice(0, 20), o = olds[no] || {};
@@ -2103,8 +2104,8 @@ var SHEET_DISP_MAP = '센터도착';
 var DISP_MAP_HEADER = ['센터명', '도착', '수정자', '수정일시'];
 function dispNeedCost_(session) { if (!canCost_(session)) throw new Error('매입 단가는 분석 권한자만 볼 수 있습니다.'); }
 function dispMap_() { var o = {}; rowsOf_(SHEET_DISP_MAP, DISP_MAP_HEADER).forEach(function (r) { o[String(r[0])] = String(r[1] || ''); }); return o; }
-function dispRates_(session) {
-  dispNeedCost_(session);
+function dispRates_(session) { dispNeedCost_(session); return dispRatesRead_(); }
+function dispRatesRead_() {
   var rates = rowsOf_(SHEET_DISP_RATES, DISP_RATE_HEADER).map(function (r) { var p = {}; DISP_RATE_TONS.forEach(function (t, i) { var v = Number(r[3 + i]); if (v > 0) p[t] = v; }); return { from: String(r[0]), to: String(r[1]), dist: Number(r[2]) || 0, p: p }; });
   return { rates: rates, map: dispMap_(), tons: DISP_RATE_TONS };
 }

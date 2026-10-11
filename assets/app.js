@@ -3794,7 +3794,7 @@
           '<button type="button" class="chip on" data-p="quote">견적</button><button type="button" class="chip" data-p="analysis">분석</button><button type="button" class="chip" data-p="search">배차검색</button><button type="button" class="chip" data-p="admin">관리자</button></div></div>') +
       '<div class="field"><button class="btn btn-primary" type="submit" style="width:100%;padding:12px">발급하기</button></div>' +
       '</form><p class="hint" style="margin:0">임시 비밀번호가 한 번만 표시됩니다. 직원은 첫 로그인 때 비밀번호를 바꿉니다.<br>' +
-      '<b>견적</b> = 단건·대량 계산, 조회기록, 견적모음 · <b>분석</b> = 매출매입 분석 · <b>배차검색</b> = 지난 배차의 금액·차량 찾기 (금액 보임) · <b>관리자</b> = 모든 메뉴와 설정<br><b>협력사</b> = 배차시트만 (고른 탭만 보이고, 차량정보·상태 입력과 문자 복사만 · 견적·분석·배차검색·관리자·비용·내부 공지는 못 봐요)</p></div>' +
+      '<b>견적</b> = 단건·대량 계산, 조회기록, 견적모음 · <b>분석</b> = 매출매입 분석 · <b>배차검색</b> = 지난 배차의 금액·차량 찾기 (금액 보임) · <b>관리자</b> = 모든 메뉴와 설정<br><b>협력사</b> = 배차시트만 (고른 탭만 보이고, 차량정보·상태 입력과 문자 복사만 · 운송비는 보기만 · 정보넘김은 못 고름 · 견적·분석·배차검색·관리자·내부 공지는 못 봐요)</p></div>' +
       [['admin', '관리자'], ['user', '직원'], ['partner', '협력사']].map(function (sec, si) {
         var list = a.users.filter(function (u) { return sec[0] === 'user' ? (u.role !== 'admin' && u.role !== 'partner') : u.role === sec[0]; });
         if (!list.length && sec[0] === 'partner') return '';
@@ -6644,7 +6644,7 @@
   function loadDrivers(force) { var st = dispState(); if (st.drivers && !force) return Promise.resolve(st.drivers); return api('drivers.list').then(function (r) { st.drivers = r.drivers; return r.drivers; }); }
   function loadPlaces(force) { var st = dispState(); if (st.places && !force) return Promise.resolve(st.places); return api('loading.list').then(function (r) { st.places = r.places; return r.places; }); }
   function loadDispRates(force) {
-    var st = dispState(); if (!can('analysis')) return Promise.resolve(null);
+    var st = dispState(); if (!can('analysis') && !isPartner()) return Promise.resolve(null);
     if (st.rates && !force) return Promise.resolve(st.rates);
     return api('dispatch.rates').then(function (r) { st.rates = r; return r; }).catch(function () { return null; });
   }
@@ -6914,10 +6914,11 @@
   function dispMini(t) { return t.status === '정보넘김' || t.status === '회차'; }
   function statusSelect(D, no, t) {
     var v = t.status || '배차전';
-    return '<select class="input input-sm dp-stsel s' + DISP_STATUS.indexOf(v) + '" data-st="' + esc(D.tab) + '|' + no + '" title="호차 상태">' + DISP_STATUS.map(function (x) { return '<option' + (x === v ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select>';
+    // 협력사는 '정보넘김'을 고를 수 없어요 (이미 정보넘김이면 그대로 보여줌)
+    return '<select class="input input-sm dp-stsel s' + DISP_STATUS.indexOf(v) + '" data-st="' + esc(D.tab) + '|' + no + '" title="호차 상태">' + DISP_STATUS.filter(function (x) { return !(isPartner() && x === '정보넘김' && v !== '정보넘김'); }).map(function (x) { return '<option' + (x === v ? ' selected' : '') + (isPartner() && x === '정보넘김' ? ' disabled' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   }
   function truckCostHtml(D, no, t, cost) {
-    if (!can('analysis')) return '';
+    if (!can('analysis') && !isPartner()) return ''; // 협력사는 보기만 (운임 수정 버튼은 분석 권한만)
     var base = null, tip = [], head;
     if (t.status === '회차') { base = Number(t.retCost) || 0; head = '회차'; tip.push('회차 ' + won(base) + '원'); }
     else if (cost) { base = cost.total; head = cost.ton + ' 기준'; if (cost.max) tip.push('가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (cost.stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원 = 단가 ' + won(cost.total) + '원'); }
