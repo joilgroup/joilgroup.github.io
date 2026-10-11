@@ -38,7 +38,7 @@
     return out;
   })();
   function dieselStatus() { return { count: dieselRows.length, first: dieselRows[0][0], last: dieselRows[dieselRows.length - 1][0], lastPrice: dieselRows[dieselRows.length - 1][1], triggerOn: false, hasKey: !!store.keys.opinet }; } // 분석 데이터는 용량이 커서 메모리에만 (새로고침하면 사라짐)
-  function permsOf(u) { return u.role === 'admin' ? ['quote', 'analysis', 'search', 'admin'] : (u.perms || ['quote']); }
+  function permsOf(u) { return u.role === 'admin' ? ['quote', 'analysis', 'search', 'admin'] : u.role === 'partner' ? ['dispatch'] : (u.perms || ['quote']); }
   function needPerm(me, p) { if (me.perms.indexOf(p) === -1) fail(p === 'analysis' ? '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.' : '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.'); }
 
   function loadSessions() { try { return JSON.parse(sessionStorage.getItem('joil-demo-sessions') || '{}'); } catch (e) { return {}; } }
@@ -177,7 +177,7 @@
     if (!id) fail('로그인이 만료되었습니다. 다시 로그인하세요.');
     var u = store.users.filter(function (u) { return u.id === id; })[0];
     if (!u || !u.active) fail('사용이 중지된 계정입니다.');
-    return { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u) };
+    return { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u), dispTabs: u.dispTabs || [] };
   }
   function user(id) { var u = store.users.filter(function (u) { return u.id === id; })[0]; if (!u) fail('계정을 찾을 수 없습니다.'); return u; }
   function diesel() { var s = store.settings; return s.fuel.mode === 'auto' ? { price: 1520, source: '데모 경유가' } : { price: Number(s.fuel.manualPrice), source: '관리자 기본값' }; }
@@ -188,7 +188,7 @@
       specials: (s.specials || []).map(function (x) { return { id: x.id, name: x.name, mode: x.mode, set: Object.keys(x.values || {}).some(function (k) { return Number(x.values[k]); }) }; }) };
   }
   function userList() {
-    return store.users.map(function (u) { return { id: u.id, name: u.name, role: u.role, active: u.active, mustChange: u.mustChange, createdAt: u.createdAt, lastLogin: u.lastLogin, perms: permsOf(u) }; });
+    return store.users.map(function (u) { return { id: u.id, name: u.name, role: u.role, active: u.active, mustChange: u.mustChange, createdAt: u.createdAt, lastLogin: u.lastLogin, perms: permsOf(u), dispTabs: u.dispTabs || [] }; });
   }
   function addLog(me, from, to, km, note, recordId, type, count) {
     store.logs.unshift({ at: today(), id: me.id, name: me.name, from: from, to: to, km: km, note: note, recordId: recordId || '', type: type || '', count: count || '' });
@@ -249,6 +249,12 @@
   }
 
   function dKey(car, dr, ph) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(dr || '').replace(/\s/g, '') + '|' + String(ph || '').replace(/[^0-9]/g, ''); }
+  function demoTabs(cust) { return (store.dispTabs || {})[cust] || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
+  /** 권한에 따라 빼고 보내기 (서버 dispScrub_와 같음) */
+  function demoScrub(out, me) {
+    out = JSON.parse(JSON.stringify(out)); var cost = me.perms.indexOf('analysis') !== -1, one = function (r) { if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; }); if (me.role === 'partner') (r.orders || []).forEach(function (o) { o.noteIn = ''; }); };
+    if (out.byKey) Object.keys(out.byKey).forEach(function (k) { one(out.byKey[k]); }); else one(out); return out;
+  }
   function demoGeo(a) { try { var g = geocode(String(a)); return { lat: g.lat, lng: g.lng }; } catch (e) { return null; } }
   var rcptData = {};
   function demoDrv(req) {
@@ -273,7 +279,7 @@
       u.lastLogin = today(); save();
       var token = Math.random().toString(36).slice(2) + Date.now();
       sessions[token] = u.id; saveSessions();
-      return { token: token, user: { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u) }, settings: pubSettings() };
+      return { token: token, user: { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u), dispTabs: u.dispTabs || [] }, settings: pubSettings() };
     }
     if (req.action === 'drv.get' || req.action === 'drv.upload') return demoDrv(req);
     if (req.action === 'drv.photo') { var dd = demoDrv({ action: 'drv.get', t: req.t }); if (!(dd.place && (dd.place.photos || []).some(function (x) { return x.id === req.id; }))) fail('사진을 찾을 수 없어요.'); var pd = (store.phData || {})[req.id]; if (!pd) fail('사진을 찾을 수 없어요.'); return { data: pd, mime: 'image/jpeg' }; }
@@ -281,6 +287,11 @@
     curMe = me;
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
+    if (me.role === 'partner') {
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
+      if (req.action === 'dispatch.tabs') { return { tabs: demoTabs(req.cust).filter(function (t) { return !t.hidden && me.dispTabs.indexOf(req.cust + t.suf) !== -1; }) }; }
+    }
     if (['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
       'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials'].indexOf(req.action) !== -1) needPerm(me, 'quote');
     if (req.action === 'analysis.index' || req.action === 'analysis.load') { if (me.perms.indexOf('analysis') === -1 && me.perms.indexOf('search') === -1) needPerm(me, 'analysis'); }
@@ -457,12 +468,12 @@
       case 'dispatch.day':
         var dc = String(req.cust || ''), dd = String(req.date || ''), dday = {};
         wk('dispOrd').forEach(function (o) { if (o.cust === dc) dday[o.date] = (dday[o.date] || 0) + 1; });
-        return { orders: wk('dispOrd').filter(function (o) { return o.cust === dc && o.date === dd; }).sort(function (a, b) { return a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === dc && t.date === dd; }), days: dday, receipts: wk('rcpt').filter(function (x) { return x.cust === dc && x.date === dd; }) };
+        return demoScrub({ orders: wk('dispOrd').filter(function (o) { return o.cust === dc && o.date === dd; }).sort(function (a, b) { return a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === dc && t.date === dd; }), days: dday, receipts: wk('rcpt').filter(function (x) { return x.cust === dc && x.date === dd; }) }, me);
       case 'dispatch.month':
-        return { orders: wk('dispOrd').filter(function (o) { return o.cust === req.cust && o.date.slice(0, 7) === req.ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date.slice(0, 7) === req.ym; }) };
+        return demoScrub({ orders: wk('dispOrd').filter(function (o) { return o.cust === req.cust && o.date.slice(0, 7) === req.ym; }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }), trucks: wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date.slice(0, 7) === req.ym; }) }, me);
       case 'dispatch.dayAll': case 'dispatch.monthAll':
         var dmk = {}; (req.keys || []).forEach(function (k) { dmk[k] = handle(Object.assign({}, req, { action: req.action === 'dispatch.dayAll' ? 'dispatch.day' : 'dispatch.month', cust: k })); }); return { byKey: dmk };
-      case 'dispatch.tabs': return { tabs: (store.dispTabs || {})[req.cust] || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }] };
+      case 'dispatch.tabs': return { tabs: demoTabs(req.cust) };
       case 'dispatch.tabsSave':
         var dold = handle({ action: 'dispatch.tabs', cust: req.cust, token: req.token }).tabs, dnm = {}, dlist = (req.tabs || []).map(function (t) { var nm = String(t.name || '').trim(); if (!nm) fail('탭 이름을 넣으세요.'); if (dnm[nm]) fail('"' + nm + '" 탭이 두 개예요.'); dnm[nm] = 1; return { name: nm, suf: t.suf != null && dold.some(function (o) { return o.suf === t.suf; }) ? t.suf : '/' + nm, prefix: String(t.prefix || '').trim(), hidden: !!t.hidden }; });
         if (!dlist.some(function (t) { return !t.hidden; })) fail('보이는 탭이 하나는 있어야 해요.');
@@ -476,10 +487,13 @@
           wk('dispOrd').push({ id: calId('D') + i, cust: req.cust, date: x.date, key: x.key, d: x.d, truck: '', seq: dmax[x.date], by: me.name, at: dnow }); });
         save(); return dres;
       case 'dispatch.save':
-        var dw = {}; (req.orders || []).forEach(function (o) { dw[o.id] = o; });
+        var dw = {}; if (me.role !== 'partner') (req.orders || []).forEach(function (o) { dw[o.id] = o; });
         wk('dispOrd').forEach(function (o) { var w = dw[o.id]; if (w && o.cust === req.cust && o.date === req.date) { o.truck = w.truck === '' || w.truck == null ? '' : Number(w.truck); o.seq = Number(w.seq) || 0; } });
         var dtok = {}; wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date && t.token) dtok[t.no] = t.token; });
-        store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat((req.trucks || []).map(function (t) { var no = Number(t.no); return { cust: req.cust, date: req.date, no: no, car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '', token: dtok[no] || (Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2) + '00000000000000000000').slice(0, 20) }; }));
+        var dold = {}; wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date) dold[t.no] = t; });
+        var dcost = me.perms.indexOf('analysis') !== -1, dmoney = function (v) { var n = Math.round(Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, ''))); return isFinite(n) && n > 0 ? n : 0; };
+        var dtr = req.trucks || []; if (me.role === 'partner') { var dg = {}; dtr.forEach(function (t) { dg[Number(t.no)] = t; }); dtr = Object.keys(dold).map(function (n) { var o = dold[n], g = dg[n] || {}; return Object.assign({}, o, ['car', 'driver', 'phone', 'time', 'ton', 'status'].reduce(function (a, k) { if (g[k] != null) a[k] = g[k]; return a; }, {})); }); }
+        store.dispTrk = wk('dispTrk').filter(function (t) { return !(t.cust === req.cust && t.date === req.date); }).concat(dtr.map(function (t) { var no = Number(t.no), o = dold[no] || {}; return { cust: req.cust, date: req.date, no: no, car: t.car || '', driver: t.driver || '', phone: t.phone || '', time: t.time || '', ton: t.ton || '', memo: t.memo || '', status: ['배차전', '배차중', '배차완료', '정보넘김', '회차', '차량변경'].indexOf(t.status) !== -1 ? t.status : '', retCost: dcost ? dmoney(t.retCost) : (o.retCost || 0), wait: dcost ? dmoney(t.wait) : (o.wait || 0), support: dcost ? dmoney(t.support) : (o.support || 0), token: dtok[no] || (Math.random().toString(16).slice(2) + Math.random().toString(16).slice(2) + '00000000000000000000').slice(0, 20) }; }));
         (req.trucks || []).forEach(function (t) { var car = String(t.car || '').trim(), dr = String(t.driver || '').trim(), ph = String(t.phone || '').trim(); if (!car && !(dr && ph)) return; var k = dKey(car, dr, ph), x = wk('drivers').filter(function (v) { return dKey(v.car, v.driver, v.phone) === k; })[0];
           if (!x) { wk('drivers').push({ id: calId('V'), car: car, driver: dr, phone: ph, ton: String(t.ton || '').trim(), memo: '', pin: false, n: 1, last: req.date }); return; }
           if (dr) x.driver = dr; if (ph) x.phone = ph; if (t.ton) x.ton = String(t.ton).trim(); if (x.last !== req.date) { x.n++; if (req.date > x.last) x.last = req.date; } });
@@ -772,13 +786,14 @@
         if (!String(req.name || '').trim()) fail('이름을 입력하세요.');
         if (store.users.some(function (u) { return u.id === id; })) fail('이미 있는 아이디입니다.');
         var t = temp();
-        store.users.push({ id: id, name: String(req.name).trim(), role: req.role === 'admin' ? 'admin' : 'user', perms: req.perms || ['quote'], active: true, mustChange: true, pw: t, createdAt: today(), lastLogin: '' });
+        store.users.push({ id: id, name: String(req.name).trim(), role: req.role === 'admin' || req.role === 'partner' ? req.role : 'user', dispTabs: req.role === 'partner' ? (req.dispTabs || []) : [], perms: req.perms || ['quote'], active: true, mustChange: true, pw: t, createdAt: today(), lastLogin: '' });
         save(); return { tempPassword: t };
       case 'admin.updateUser':
         var uu = user(req.id), p = req.patch || {};
         if (uu.id === me.id && (p.active === false || p.role === 'user')) fail('본인 계정은 중지하거나 권한을 낮출 수 없습니다.');
         if (p.hasOwnProperty('active')) uu.active = !!p.active;
-        if (p.role) uu.role = p.role === 'admin' ? 'admin' : 'user';
+        if (p.role) uu.role = p.role === 'admin' || p.role === 'partner' ? p.role : 'user';
+        if (Array.isArray(p.dispTabs)) uu.dispTabs = p.dispTabs.slice();
         if (Array.isArray(p.perms)) uu.perms = p.perms.filter(function (x) { return x === 'quote' || x === 'analysis' || x === 'search'; });
         if (p.name != null) { var nn = String(p.name).trim().slice(0, 30); if (!nn) fail('이름을 넣으세요.'); uu.name = nn; calStore().staff.forEach(function (x) { if (x.account === uu.id) x.name = nn; }); }
         save(); return {};

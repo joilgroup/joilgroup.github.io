@@ -14,12 +14,13 @@ var LOGIN_MAX_FAIL = 5;
 var HASH_ROUNDS = 300;
 var TZ = 'Asia/Seoul';
 
-var USER_COLS = ['아이디', '이름', '권한', '사용여부', '비밀번호해시', '솔트', '비밀번호변경필요', '생성일', '마지막로그인', '메뉴권한'];
+var USER_COLS = ['아이디', '이름', '권한', '사용여부', '비밀번호해시', '솔트', '비밀번호변경필요', '생성일', '마지막로그인', '메뉴권한', '배차탭'];
 
 /* 메뉴 권한: quote(견적 계산·조회기록·견적모음), analysis(매출매입 분석). 관리자는 전부. */
 var PERMS = ['quote', 'analysis', 'search'];
 function permsOf_(role, raw) {
   if (role === 'admin') return ['quote', 'analysis', 'search', 'admin'];
+  if (role === 'partner') return ['dispatch']; // 협력사: 배차시트만
   if (raw == null || raw === '') return ['quote']; // 예전에 만든 계정은 견적만
   return String(raw).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return PERMS.indexOf(x) !== -1; });
 }
@@ -117,6 +118,7 @@ function handle_(req) {
   var session = requireSession_(req.token);
   var allowedBeforeChange = ['me', 'logout', 'changePassword', 'publicSettings'];
   if (session.mustChange && allowedBeforeChange.indexOf(action) === -1) throw new Error('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
+  if (session.role === 'partner') return partnerHandle_(session, action, req);
   switch (action) {
     case 'me': return { user: session, settings: publicSettings_() };
     case 'logout': CacheService.getScriptCache().remove('S_' + req.token); return {};
@@ -186,14 +188,14 @@ function handle_(req) {
     case 'inq.list': return inqList_();
     case 'inq.save': return inqSave_(session, req);
     case 'inq.delete': return inqDelete_(session, req.id);
-    case 'dispatch.day': return dispDay_(req.cust, req.date);
-    case 'dispatch.month': return dispMonth_(req.cust, req.ym);
-    case 'dispatch.dayAll': return dispMulti_(req.keys, function (k) { return dispDay_(k, req.date); });
-    case 'dispatch.monthAll': return dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); });
+    case 'dispatch.day': return dispScrub_(dispDay_(req.cust, req.date), session);
+    case 'dispatch.month': return dispScrub_(dispMonth_(req.cust, req.ym), session);
+    case 'dispatch.dayAll': return dispScrub_(dispMulti_(req.keys, function (k) { return dispDay_(k, req.date); }), session);
+    case 'dispatch.monthAll': return dispScrub_(dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); }), session);
     case 'dispatch.tabs': return { tabs: dispTabs_(req.cust) };
     case 'dispatch.tabsSave': return dispTabsSave_(req);
     case 'dispatch.import': return dispImport_(session, req);
-    case 'dispatch.save': return dispSave_(session, req);
+    case 'dispatch.save': return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.deleteOrders': return dispDeleteOrders_(session, req);
     case 'dispatch.note': return dispNote_(req);
     case 'dispatch.rates': return dispRates_(session);
@@ -251,7 +253,7 @@ function handle_(req) {
     case 'admin.getTariff': return { tariff: readTariff_() };
     case 'admin.saveTariff': return saveTariff_(req.tariff);
     case 'admin.listUsers': return { users: listUsers_() };
-    case 'admin.createUser': return createUser_(req.id, req.name, req.role, req.perms);
+    case 'admin.createUser': return createUser_(req.id, req.name, req.role, req.perms, req.dispTabs);
     case 'admin.updateUser': return updateUser_(session, req.id, req.patch || {});
     case 'admin.resetPassword': return resetPassword_(req.id);
     case 'admin.getLogs': return { logs: getLogs_(Number(req.limit) || 200) };
@@ -293,7 +295,7 @@ function login_(id, password) {
   setUserCell_(u.row, '마지막로그인', now_());
 
   var token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
-  var session = { id: id, name: u.data['이름'], role: u.data['권한'], mustChange: u.data['비밀번호변경필요'] === 'Y', perms: permsOf_(u.data['권한'], u.data['메뉴권한']) };
+  var session = { id: id, name: u.data['이름'], role: u.data['권한'], mustChange: u.data['비밀번호변경필요'] === 'Y', perms: permsOf_(u.data['권한'], u.data['메뉴권한']), dispTabs: tabsOf_(u.data['배차탭']) };
   cache.put('S_' + token, JSON.stringify({ id: id }), SESSION_SECONDS);
   return { token: token, user: session, settings: publicSettings_() };
 }
@@ -311,7 +313,7 @@ function requireSession_(token) {
     throw new Error('사용이 중지된 계정입니다.');
   }
   cache.put('S_' + token, raw, SESSION_SECONDS);
-  return { id: id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf_(u.role, u.perms) };
+  return { id: id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf_(u.role, u.perms), dispTabs: tabsOf_(u.tabs) };
 }
 
 /**
@@ -324,7 +326,7 @@ function cachedUser_(id) {
   if (hit) return JSON.parse(hit);
   var u = findUser_(id);
   if (!u) return null;
-  var v = { name: String(u.data['이름']), role: String(u.data['권한']), active: u.data['사용여부'] === '사용', mustChange: u.data['비밀번호변경필요'] === 'Y', perms: u.data['메뉴권한'] == null ? '' : String(u.data['메뉴권한']) };
+  var v = { name: String(u.data['이름']), role: String(u.data['권한']), active: u.data['사용여부'] === '사용', mustChange: u.data['비밀번호변경필요'] === 'Y', perms: u.data['메뉴권한'] == null ? '' : String(u.data['메뉴권한']), tabs: String(u.data['배차탭'] || '') };
   cache.put('U_' + id, JSON.stringify(v), 300);
   return v;
 }
@@ -389,6 +391,8 @@ function createUserRow_(id, name, role, pw, perms) {
   usersSheet_().appendRow([id, name, role, '사용', hash_(pw, salt), salt, 'Y', now_(), '', perms || 'quote']);
 }
 
+/** 협력사가 볼 배차 탭 (저장 키 목록, 줄바꿈으로 구분) */
+function tabsOf_(raw) { return String(raw || '').split('\n').map(function (x) { return x.trim(); }).filter(Boolean); }
 function permsToCell_(list) {
   var p = (list || []).filter(function (x) { return PERMS.indexOf(x) !== -1; });
   return p.length ? p.join(',') : 'none';
@@ -397,18 +401,20 @@ function permsToCell_(list) {
 function listUsers_() {
   var values = usersSheet_().getDataRange().getValues();
   return values.slice(1).map(function (r) {
-    return { id: r[0], name: r[1], role: r[2], active: r[3] === '사용', mustChange: r[6] === 'Y', createdAt: fmt_(r[7]), lastLogin: fmt_(r[8]), perms: permsOf_(r[2], r[9]) };
+    return { id: r[0], name: r[1], role: r[2], active: r[3] === '사용', mustChange: r[6] === 'Y', createdAt: fmt_(r[7]), lastLogin: fmt_(r[8]), perms: permsOf_(r[2], r[9]), dispTabs: tabsOf_(r[10]) };
   });
 }
 
-function createUser_(id, name, role, perms) {
+function createUser_(id, name, role, perms, dispTabs) {
   id = String(id || '').trim();
   name = String(name || '').trim();
   if (!/^[A-Za-z0-9_.-]{3,30}$/.test(id)) throw new Error('아이디는 영문/숫자 3~30자로 입력하세요.');
   if (!name) throw new Error('이름을 입력하세요.');
   if (findUser_(id)) throw new Error('이미 있는 아이디입니다.');
   var temp = randomPassword_();
-  createUserRow_(id, name, role === 'admin' ? 'admin' : 'user', temp, permsToCell_(perms || ['quote']));
+  role = role === 'admin' || role === 'partner' ? role : 'user';
+  createUserRow_(id, name, role, temp, role === 'partner' ? 'none' : permsToCell_(perms || ['quote']));
+  if (role === 'partner') { var nu = findUser_(id); setUserCell_(nu.row, '배차탭', (dispTabs || []).map(String).join('\n')); }
   return { tempPassword: temp };
 }
 
@@ -417,7 +423,8 @@ function updateUser_(session, id, patch) {
   if (!u) throw new Error('계정을 찾을 수 없습니다.');
   if (id === session.id && (patch.active === false || patch.role === 'user')) throw new Error('본인 계정은 중지하거나 권한을 낮출 수 없습니다.');
   if (patch.hasOwnProperty('active')) setUserCell_(u.row, '사용여부', patch.active ? '사용' : '중지');
-  if (patch.role) setUserCell_(u.row, '권한', patch.role === 'admin' ? 'admin' : 'user');
+  if (patch.role) setUserCell_(u.row, '권한', patch.role === 'admin' || patch.role === 'partner' ? patch.role : 'user');
+  if (Array.isArray(patch.dispTabs)) setUserCell_(u.row, '배차탭', patch.dispTabs.map(String).join('\n'));
   if (patch.name != null) {
     var nm = String(patch.name).trim().slice(0, 30); if (!nm) throw new Error('이름을 넣으세요.');
     var oldName = String(u.data['이름']);
@@ -1932,7 +1939,8 @@ function ownerCover_(cal, from, to) {
 var SHEET_DISP_ORD = '배차오더';
 var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시', '내부공지', '기사공지'];
 var SHEET_DISP_TRK = '배차호차';
-var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드'];
+var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원'];
+var DISP_STATUS = ['배차전', '배차중', '배차완료', '정보넘김', '회차', '차량변경'];
 var SHEET_LOADING = '상차지';
 var LOADING_HEADER = ['ID', '이름', '주소', '상차가능시간', '연락처', '메모', '수정자', '수정일시', '단가표출발'];
 var DISP_TRK_FIELDS = ['car', 'driver', 'phone', 'time', 'ton', 'memo'];
@@ -1940,7 +1948,7 @@ function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
 function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]), noteIn: dispTxt_(r[9]), noteDrv: dispTxt_(r[10]) }; }
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
-function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || '') }; }
+function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispTxt_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0 }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
 function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
 function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
@@ -1951,6 +1959,43 @@ function dispDay_(cust, date) {
   var since = ymd_(new Date(Date.now() - 120 * 86400000)), days = {};
   rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).forEach(function (r) { if (String(r[1]) === cust) { var d = textDate_(r[2]); if (d >= since) days[d] = (days[d] || 0) + 1; } });
   return { orders: dispOrders_(cust, eq), trucks: dispTrucks_(cust, eq), days: days, receipts: dispReceipts_(cust, date) };
+}
+/* ───────────── 협력사 계정: 배차시트만 (견적·분석·배차검색·관리자 등은 전부 막음) ───────────── */
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
+function partnerHandle_(session, action, req) {
+  if (PARTNER_ACTIONS.indexOf(action) === -1) throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
+  var ok = function (k) { if (session.dispTabs.indexOf(String(k)) === -1) throw new Error('볼 수 없는 탭이에요.'); return String(k); };
+  switch (action) {
+    case 'me': return { user: session, settings: publicSettings_() };
+    case 'logout': CacheService.getScriptCache().remove('S_' + req.token); return {};
+    case 'changePassword': return changePassword_(session, req.current, req.next);
+    case 'publicSettings': return { settings: publicSettings_() };
+    case 'dispatch.tabs': return { tabs: dispTabs_(req.cust).filter(function (t) { return !t.hidden && session.dispTabs.indexOf(dispCust_(req.cust) + t.suf) !== -1; }) };
+    case 'dispatch.day': return dispScrub_(dispDay_(ok(req.cust), req.date), session);
+    case 'dispatch.month': return dispScrub_(dispMonth_(ok(req.cust), req.ym), session);
+    case 'dispatch.dayAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispDay_(k, req.date); }), session);
+    case 'dispatch.monthAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); }), session);
+    case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
+    case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
+    case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
+    case 'loading.list': return { places: loadingList_() };
+    case 'loading.photo': return placePhoto_(req.id);
+    case 'drivers.list': return { drivers: driverList_() };
+    case 'drivers.save': return driverSave_(session, req);
+  }
+  throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
+}
+/** 권한에 따라 빼고 보내기: 비용(분석 권한만) · 내부 공지(협력사 제외) */
+function dispScrub_(out, session) {
+  var cost = canCost_(session), partner = session.role === 'partner';
+  var one = function (r) {
+    if (!r) return r;
+    if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; });
+    if (partner) (r.orders || []).forEach(function (o) { o.noteIn = ''; });
+    return r;
+  };
+  if (out && out.byKey) Object.keys(out.byKey).forEach(function (k) { one(out.byKey[k]); }); else one(out);
+  return out;
 }
 /** 여러 탭(업체 키)을 한 번에: 시트는 한 번만 읽어요 */
 function dispMulti_(keys, fn) {
@@ -2010,8 +2055,8 @@ function dispSave_(session, req) {
   var cust = dispCust_(req.cust), date = dispDate_(req.date), lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     var sh = cacheSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), want = {};
-    (req.orders || []).forEach(function (o) { want[String(o.id)] = o; });
-    if (sh.getLastRow() >= 2) {
+    if (session.role !== 'partner') (req.orders || []).forEach(function (o) { want[String(o.id)] = o; });
+    if (sh.getLastRow() >= 2 && Object.keys(want).length) {
       var rng = sh.getRange(2, 1, sh.getLastRow() - 1, 7), vals = rng.getValues(), ch = false;
       vals.forEach(function (r) {
         var o = want[String(r[0])]; if (!o || String(r[1]) !== cust || textDate_(r[2]) !== date) return;
@@ -2020,14 +2065,20 @@ function dispSave_(session, req) {
       });
       if (ch) sh.getRange(2, 6, vals.length, 2).setValues(vals.map(function (r) { return [r[5], r[6]]; }));
     }
-    var ts = dispTrkSheet_(), tokens = {};
-    if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = tv.length - 1; i >= 0; i--) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { if (tv[i][11]) tokens[Number(tv[i][2])] = String(tv[i][11]); ts.deleteRow(i + 2); } }
-    var add = (req.trucks || []).map(function (t) {
-      var no = Math.max(1, Math.round(Number(t.no)) || 1), tok = tokens[no] || Utilities.getUuid().replace(/-/g, '').slice(0, 20);
-      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok]);
+    var ts = dispTrkSheet_(), tokens = {}, olds = {}, cost = canCost_(session), partner = session.role === 'partner';
+    if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = tv.length - 1; i >= 0; i--) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { var on = Number(tv[i][2]); if (tv[i][11]) tokens[on] = String(tv[i][11]); olds[on] = dispTrkRow_(tv[i]); ts.deleteRow(i + 2); } }
+    var trucks = req.trucks || [];
+    // 협력사: 이미 있는 호차의 차량정보 5칸·상태만 (호차 추가·메모·비용은 그대로)
+    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, status: g.status != null ? g.status : o.status }; }); }
+    var money = function (v) { var n = Math.round(Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, ''))); return isFinite(n) && n > 0 ? Math.min(n, 100000000) : 0; };
+    var add = trucks.map(function (t) {
+      var no = Math.max(1, Math.round(Number(t.no)) || 1), tok = tokens[no] || Utilities.getUuid().replace(/-/g, '').slice(0, 20), o = olds[no] || {};
+      var stt = DISP_STATUS.indexOf(String(t.status || '')) !== -1 ? String(t.status) : '';
+      var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
+      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3);
     });
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
-    try { driverCollect_(session, date, req.trucks || []); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
+    try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
     var out = dispDay_(cust, date); out.drivers = driverList_(); return out;
   } finally { lock.releaseLock(); }
 }
