@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -199,6 +199,7 @@ function handle_(req) {
     case 'dispatch.deleteOrders': return dispDeleteOrders_(session, req);
     case 'dispatch.note': return dispNote_(req);
     case 'dispatch.copyOrders': return dispCopyOrders_(session, req);
+    case 'dispatch.editOrder': return dispEditOrder_(session, req);
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
     case 'dispatch.mapSave': return dispMapSave_(session, req);
@@ -2102,6 +2103,18 @@ function dispCopyOrders_(session, req) {
     sh.getRange(sh.getLastRow() + 1, 1, out.length, DISP_ORD_HEADER.length).setValues(out);
     return { copied: out.length, toDate: to };
   } finally { lock.releaseLock(); }
+}
+/** 오더 고치기: 정해진 칸만 (호차·순서·가져오기 키는 그대로) */
+var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock'];
+function dispEditOrder_(session, req) {
+  var cust = dispCust_(req.cust), date = dispDate_(req.date), patch = req.patch || {}, sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER);
+  var f = findRow_(SHEET_DISP_ORD, DISP_ORD_HEADER, req.id); if (!f || String(f.raw[1]) !== cust || textDate_(f.raw[2]) !== date) throw new Error('오더를 찾을 수 없어요.');
+  var d = parseJson_(f.raw[4], {});
+  DISP_EDIT_KEYS.forEach(function (k) { if (patch.hasOwnProperty(k)) d[k] = String(patch[k] == null ? '' : patch[k]).trim().slice(0, 300); });
+  if (!d.fc) throw new Error('센터명은 비울 수 없어요.');
+  d.editedBy = session.name; d.editedAt = now_();
+  sh.getRange(f.row, 5).setValue(JSON.stringify(d));
+  return { ok: true };
 }
 /** 오더 공지: 내부용(배차 담당만) · 기사용(문자·기사 링크에 표시) */
 function dispNote_(req) {

@@ -506,6 +506,9 @@
         if (req.id) Object.assign(wk('drivers').filter(function (v) { return v.id === req.id; })[0] || fail('기사를 찾을 수 없어요.'), dvals); else wk('drivers').push(Object.assign({ id: calId('V'), n: 0, last: '' }, dvals));
         save(); return handle({ action: 'drivers.list', token: req.token });
       case 'drivers.delete': store.drivers = wk('drivers').filter(function (v) { return v.id !== req.id; }); save(); return handle({ action: 'drivers.list', token: req.token });
+      case 'dispatch.editOrder':
+        var eo = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
+        ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock'].forEach(function (k) { if ((req.patch || {}).hasOwnProperty(k)) eo.d[k] = String(req.patch[k]).trim(); }); if (!eo.d.fc) fail('센터명은 비울 수 없어요.'); save(); return { ok: true };
       case 'dispatch.copyOrders':
         var cids = {}; (req.ids || []).forEach(function (x) { cids[x] = 1; });
         var csrc = wk('dispOrd').filter(function (o) { return cids[o.id] && o.cust === req.cust && o.date === req.date; }); if (!csrc.length) fail('복사할 오더를 찾을 수 없어요.');
