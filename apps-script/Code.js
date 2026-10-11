@@ -2167,8 +2167,8 @@ function drvGet_(t) {
   var orders = dispOrders_(tr.cust, function (d) { return d === tr.date; }).filter(function (o) { return o.truck === tr.no; });
   var stops = [], by = {};
   orders.forEach(function (o) {
-    var d = o.d || {}, k = d.fc || '-';
-    var s = by[k] || (by[k] = { fc: k, addr: d.addr || '', hours: d.hours || '', dock: d.dock || '', mgr: [d.m1, d.m2, d.m3].filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
+    var d = o.d || {}, k = d.fc || '-', v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
+    var s = by[k] || (by[k] = { fc: k, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
     if (!stops.some(function (x) { return x === s; })) stops.push(s);
     var n = Number(String(d.bundle || '').replace(/[,\s]/g, '')) || 0; s.bundle += n; s.kg += Number(String(d.kg || '').replace(/[,\s]/g, '')) || 0;
     s.items[d.item || '-'] = (s.items[d.item || '-'] || 0) + n; if (d.bl && s.bl.indexOf(d.bl) === -1) s.bl.push(d.bl);

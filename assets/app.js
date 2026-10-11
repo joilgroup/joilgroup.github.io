@@ -6615,6 +6615,7 @@
     rows.forEach(function (r) {
       var d = {}; DISP_COLS.forEach(function (c) { var j = idx[c[0]]; d[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); });
       var date = dispYmd(d.date); if (!date || !d.fc) { bad++; return; }
+      dispCleanD(d);
       d.date = date; d._n = items.length + bad;
       items.push({ date: date, key: dispOrderKey(date, d), d: d });
     });
@@ -6636,7 +6637,7 @@
       var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); });
       return api('dispatch.dayAll', { keys: keys, date: st.date }).then(function (res) {
         var o = { _date: st.date, _cust: st.cust };
-        DISP_TABS.forEach(function (t, i) { var r = res.byKey[keys[i]] || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = t[0]; r.date = st.date; r.key = keys[i]; o[t[0]] = r; });
+        DISP_TABS.forEach(function (t, i) { var r = res.byKey[keys[i]] || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = t[0]; r.date = st.date; r.key = keys[i]; r.orders.forEach(function (x) { dispCleanD(x.d); }); o[t[0]] = r; });
         st.tabs = o; st.sel = {}; return o;
       });
     });
@@ -6770,6 +6771,10 @@
     api('dispatch.geo', { addrs: miss }).then(function (r) { Object.keys(r.coords || {}).forEach(function (a) { st.geo[a] = r.coords[a]; }); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function () { });
   }
   /** 호차 하나의 문자 */
+  /** 동방 엑셀은 수식에 맞는 값이 없으면 0을 넣어요 → 글자 칸의 0은 빈 값으로 */
+  var DISP_TEXT0 = ['addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'dest'];
+  function dispCleanD(d) { DISP_TEXT0.forEach(function (k) { if (d && k in d) d[k] = dispVal(d[k]); }); return d; }
+  function dispVal(v) { v = String(v == null ? '' : v).trim(); return v && v !== '0' ? v : ''; }
   function truckMessage(D, no) {
     var st = dispState(), list = truckOrders(D, no); if (!list.length) return '';
     var b = 0, kg = 0; list.forEach(function (o) { b += dispNum(o.d.bundle); kg += dispNum(o.d.kg); });
@@ -6785,18 +6790,14 @@
       else out.push('(상차지 설정에 "' + f + '" 정보가 없어요)');
       out.push('');
     });
+    // 하차지마다: 이름 / 번들 / 품목 → 주소 · 하차시간 · 도크 · 담당자 (BL은 기사 링크에서 봐요)
     stops.forEach(function (s, i) {
-      var d = s.d; out.push(stops.length > 1 ? '하차지' + (i + 1) : '하차지'); out.push(s.fc);
-      [d.addr, d.hours, d.dock].forEach(function (x) { if (x) out.push(x); });
-      var mg = [d.m1, d.m2, d.m3].filter(Boolean); if (mg.length) out.push(mg.join(' / '));
-      out.push('');
-    });
-    stops.forEach(function (s) {
-      var items = {}, order = [], bls = [];
-      s.rows.forEach(function (o) { var n = dispNum(o.d.bundle); if (!(o.d.item in items)) { items[o.d.item] = 0; order.push(o.d.item); } items[o.d.item] += n; if (o.d.bl && bls.indexOf(o.d.bl) === -1) bls.push(o.d.bl); });
-      out.push(dispPrefix(D, s.d.from) + ' → ' + s.fc + ' → ' + won(s.b) + '번들');
-      if (bls.length) out.push('BL = ' + bls.join(', '));
-      out.push('품목 = ' + (order.length > 1 ? order.map(function (it) { return it + ' (' + won(items[it]) + '번들)'; }).join(' / ') : order[0]));
+      var d = s.d, items = {}, order = [];
+      s.rows.forEach(function (o) { var n = dispNum(o.d.bundle), it = o.d.item || '-'; if (!(it in items)) { items[it] = 0; order.push(it); } items[it] += n; });
+      out.push(stops.length > 1 ? '하차지' + (i + 1) : '하차지');
+      out.push(s.fc + ' / ' + won(s.b) + '번들 / 품목:' + (order.length > 1 ? order.map(function (it) { return it + '(' + won(items[it]) + '번들)'; }).join(', ') : order[0]));
+      [d.addr, d.hours, d.dock].forEach(function (x) { if (dispVal(x)) out.push(x); });
+      var mg = [d.m1, d.m2, d.m3].filter(dispVal); if (mg.length) out.push(mg.join(' / '));
       out.push('');
     });
     var t = D.trucks.filter(function (x) { return x.no === no; })[0];
