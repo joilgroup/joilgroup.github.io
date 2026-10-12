@@ -1401,3 +1401,14 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 /* 연락처는 끝자리까지 다 보이게 */
 .tt-input[data-tf="phone"] { min-width: 150px; font-variant-numeric: tabular-nums; letter-spacing: 0; }
 .tt-input[data-tf="car"] { min-width: 130px; }
+
+/* 차량정보~연락처 가운데 정렬 */
+.tt-input[data-tf="car"], .tt-input[data-tf="driver"], .tt-input[data-tf="phone"] { text-align: center; }
+/* 오늘 총배차현황 */
+.dp-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; margin-top: 12px; padding: 10px 12px; background: #F6F8FB; border: 1px solid #E1E6EE; border-radius: 8px; font-size: 14px; }
+.dp-sum-h { font-weight: 700; color: #333; margin-right: 4px; }
+.dp-sum-left { color: #C2410C; font-weight: 700; }
+.dp-sum-done { color: #15803D; font-weight: 700; }
+/* 문의하기 */
+.dp-ask-i { display: flex; align-items: center; gap: 8px; padding: 6px 0; cursor: pointer; }
+.dp-ask-pv { margin: 12px 0 0; padding: 10px; background: #F6F6F6; border-radius: 6px; font: inherit; font-size: 13px; white-space: pre-wrap; }
