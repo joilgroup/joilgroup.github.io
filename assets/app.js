@@ -7017,7 +7017,7 @@
       var costOf = function (ss) { return advCost(D, ss.reduce(function (a, s) { return a.concat(s.os); }, [])); };
       var aloneCost = {}; [seed].concat(others).forEach(function (s) { aloneCost[s.key] = costOf([s]); });
       combos.forEach(function (ss) {
-        var b = ss.reduce(function (a, s) { return a + s.b; }, 0), kg = ss.reduce(function (a, s) { return a + s.kg; }, 0); if (b > ADV_MIX || kg > ADV_KG || ss.length > ADV_STOPS) return;
+        var b = ss.reduce(function (a, s) { return a + s.b; }, 0), kg = ss.reduce(function (a, s) { return a + s.kg; }, 0); if (b > ADV_MIX || kg > ADV_KG || !advCapOk(ss)) return;
         var r = advRoute(ss); if (!r.fit) return;
         var h = 0; for (var i = 0; i < ss.length; i++) for (var j = i + 1; j < ss.length; j++) ss[i].fcs.forEach(function (x) { ss[j].fcs.forEach(function (y) { h += hist[[x, y].sort().join('|')] || 0; }); });
         var gap = 0; for (var i2 = 0; i2 < ss.length; i2++) for (var j2 = i2 + 1; j2 < ss.length; j2++) if (ss[i2].g && ss[j2].g) gap = Math.max(gap, hav(ss[i2].g, ss[j2].g));
@@ -7030,7 +7030,7 @@
         cands.push({ trucks: [{ stops: r.order, route: r }], why: why, score: (ss.length - 1) * 100000 + (save || 0) + b * 3000 + h * 5000 - extra * 1000 - gap * 8000 }); // 가까울수록 우선
       });
     }
-    return cands.sort(function (a, b) { return b.score - a.score; }).slice(0, 6);
+    var outL = cands.sort(function (a, b) { return b.score - a.score; }).slice(0, 6); outL.seed = seed; outL.why0 = why0; return outL;
   }
   function openAdvisor(D, apply) {
     var st = dispState(), stops0 = advStops(D);
@@ -7038,6 +7038,15 @@
     var addrs = []; stops0.forEach(function (s) { addrs.push(s.addr); var p = findPlace(s.from); if (p && p.addr) addrs.push(p.addr); });
     Promise.all([advEnsureGeo(addrs), advHistory(D).catch(function () { return {}; }), loadDispRates()]).then(function (z) {
       var hist = z[1] || {}, list = advSuggest(D, hist), at = 0; if (!list.length) return;
+      // 전체를 한 번에 짰을 때 이 착지가 들어가는 묶음을 1순위로 (하나씩 고르다 좋은 묶음이 깨지지 않게)
+      if (list.seed && list.seed.b <= ADV_MIX) {
+        var pc = advPlanAll(D, hist).filter(function (c) { return c.sites.some(function (x) { return x.key === list.seed.key; }); })[0];
+        if (pc && pc.sites.length > 1) {
+          var w0 = list.why0, keyOf = function (ss) { return ss.map(function (x) { return x.key; }).sort().join('&'); }, pr = advRoute(pc.sites);
+          list = list.filter(function (cd) { return keyOf(cd.trucks[0].stops) !== keyOf(pc.sites); });
+          list.unshift({ trucks: [{ stops: pc.sites, route: pr }], why: [w0 || '', '전체를 한 번에 짰을 때 이 착지가 들어가는 묶음이에요 · 합치면 ' + (pc.sites.length - 1) + '대 줄어요' + (pr.why ? ' · ' + pr.why : '')].concat(pc.cost ? ['예상 운임 ' + won(pc.cost.total) + '원'] : []).filter(Boolean) });
+        }
+      }
       var left = advStops(D).length;
       modal({ wide: true, eyebrow: D.tab + ' · ' + D.date + ' · 남은 착지 ' + left + '곳', title: 'AI 도움 · 배차 추천',
         body: '<div id="advBody"></div>',
@@ -7066,6 +7075,122 @@
           $('#advNext', m).onclick = function () { at = (at + 1) % list.length; mapT = 0; draw(); };
           $('#advOk', m).onclick = function () { accept(false); };
           $('#advOkNext', m).onclick = function () { accept(true); };
+          draw();
+        } });
+    }).catch(function (err) { toast(err.message, 'err'); });
+  }
+  /** 한 대에 착지 몇 곳까지: 기본 3곳, 모두 서로 가까우면(5km · 같은 구·시 10km) 4곳 */
+  function advCapOk(ss) {
+    if (ss.length <= ADV_STOPS) return true; if (ss.length > ADV_STOPS + 1 || !ss.every(function (s) { return s.g; })) return false;
+    var reg = ss.every(function (s) { return s.reg === ss[0].reg; }), mp = 0;
+    for (var i = 0; i < ss.length; i++) for (var j = i + 1; j < ss.length; j++) mp = Math.max(mp, hav(ss[i].g, ss[j].g));
+    return mp <= ADV_KM || (reg && mp <= ADV_KM_REG);
+  }
+  /** 18번들 넘는 착지 → 오더 단위로 여러 대 (큰 오더부터, 16 → 안 되면 18까지) */
+  function advSplitBig(site) {
+    var bins = [], os = site.os.slice().sort(function (a, b) { return dispOrderB(b) - dispOrderB(a); });
+    [ADV_MIX, ADV_ONE].some(function (cap) { bins = []; os.forEach(function (o) { var ob = dispOrderB(o), bin = bins.filter(function (x) { return x.b + ob <= cap; })[0]; if (!bin) { bin = { b: 0, os: [] }; bins.push(bin); } bin.b += ob; bin.os.push(o); }); return bins.length <= Math.ceil(site.b / ADV_ONE); });
+    return bins.map(function (x, i) { return Object.assign({}, site, { key: site.key + '#' + i, os: x.os, b: dispBundles(x.os), kg: x.os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0) }); });
+  }
+  var advCid = 0;
+  function advCluster(sites, extra) { return Object.assign({ id: 'c' + (++advCid), sites: sites, ban: {} }, extra || {}); }
+  /** 한 번에 짜기: 착지마다 한 대로 시작 → 합칠 수 있는 두 대 중 가장 좋은 쌍을 계속 합쳐요(가까울수록·운임 아낄수록·지난 기록 있을수록)
+      clusters: 시작 묶음 (locked끼리는 서로 안 합침 · fixed는 안 합침) */
+  function advPlan(D, clusters, hist) {
+    var costMemo = {}, costOf = function (c) { var k = c.sites.map(function (s) { return s.key; }).sort().join('&'); if (!(k in costMemo)) costMemo[k] = advCost(D, c.sites.reduce(function (a, s) { return a.concat(s.os); }, [])); return costMemo[k]; };
+    var sum = function (ss, f) { return ss.reduce(function (a, s) { return a + s[f]; }, 0); };
+    var routeKm = function (ss) { var r = advRoute(ss); return r.km; };
+    var evalMerge = function (A, B) {
+      if (A.fixed || B.fixed || (A.locked && B.locked)) return null;
+      if (A.sites[0].from !== B.sites[0].from) return null;
+      if (A.sites.some(function (s) { return s.ban && s.ban[B.id]; }) || B.sites.some(function (s) { return s.ban && s.ban[A.id]; })) return null;
+      var ss = A.sites.concat(B.sites); if (sum(ss, 'b') > ADV_MIX || sum(ss, 'kg') > ADV_KG || !advCapOk(ss)) return null;
+      var r = advRoute(ss); if (!r.fit) return null;
+      var gap = 0, allG = ss.every(function (s) { return s.g; });
+      if (allG) { for (var i = 0; i < ss.length; i++) for (var j = i + 1; j < ss.length; j++) gap = Math.max(gap, hav(ss[i].g, ss[j].g)); } else gap = 6;
+      var ka = routeKm(A.sites), kb = routeKm(B.sites), dsave = r.km != null && ka != null && kb != null ? ka + kb - r.km : 0;
+      var ca = costOf(A), cb = costOf(B), cab = costOf({ sites: ss }), csave = ca && cb && cab ? ca.total + cb.total - cab.total : null;
+      if (csave != null && csave <= 0) return null; // 합쳐서 비싸지면 안 합침
+      var h = 0; A.sites.forEach(function (x) { B.sites.forEach(function (y) { x.fcs.forEach(function (f) { y.fcs.forEach(function (g) { h += hist[[f, g].sort().join('|')] || 0; }); }); }); });
+      return { score: (csave || 0) + dsave * 1000 + h * 5000 - gap * 8000, sites: r.order };
+    };
+    var cs = clusters.slice();
+    for (var guard = 0; guard < 400; guard++) {
+      var best = null;
+      for (var i = 0; i < cs.length; i++) for (var j = i + 1; j < cs.length; j++) { var m = evalMerge(cs[i], cs[j]); if (m && (!best || m.score > best.m.score)) best = { i: i, j: j, m: m }; }
+      if (!best) break;
+      var A = cs[best.i], B = cs[best.j];
+      var M = advCluster(best.m.sites, { locked: A.locked || B.locked, keep: A.keep || B.keep });
+      if (A.locked) M.id = A.id; else if (B.locked) M.id = B.id; // 이미 있던 호차 이름 유지
+      cs.splice(best.j, 1); cs.splice(best.i, 1, M);
+    }
+    cs.forEach(function (c) { var r = advRoute(c.sites); if (!c.manual) c.sites = r.order; c.km = c.sites[0].o && c.sites.every(function (s) { return s.g; }) ? routeLen(c.sites[0].o, c.sites.map(function (s) { return s.g; })) : null; c.cost = costOf(c); c.b = sum(c.sites, 'b'); c.kg = sum(c.sites, 'kg'); });
+    // 보기 좋게: 상차지에서 먼 호차부터
+    var far = function (c) { return Math.max.apply(null, c.sites.map(function (s) { return s.g && s.o ? hav(s.o, s.g) : -1; })); };
+    return cs.sort(function (a, b) { return (a.order != null && b.order != null) ? a.order - b.order : far(b) - far(a); });
+  }
+  /** 처음 계획: 큰 착지는 나눠서 고정, 17~18번들은 혼자 고정, 나머지는 합치기 */
+  function advPlanAll(D, hist) {
+    var init = [];
+    advStops(D).forEach(function (s) {
+      if (s.b > ADV_ONE) advSplitBig(s).forEach(function (x) { init.push(advCluster([x], { fixed: true })); });
+      else init.push(advCluster([s], { fixed: s.b > ADV_MIX }));
+    });
+    return advPlan(D, init, hist);
+  }
+  function openPlanAll(D, apply) {
+    if (!advStops(D).length) { toast('호차가 안 정해진 오더가 없어요.'); return; }
+    var all = advStops(D), addrs = []; all.forEach(function (s) { addrs.push(s.addr); var p = findPlace(s.from); if (p && p.addr) addrs.push(p.addr); });
+    Promise.all([advEnsureGeo(addrs), advHistory(D).catch(function () { return {}; }), loadDispRates()]).then(function (z) {
+      var hist = z[1] || {}, plan = advPlanAll(D, hist), out = [], sel = 0, nSites = advStops(D).length;
+      plan.forEach(function (c, i) { c.order = i; });
+      modal({ wide: true, eyebrow: D.tab + ' · ' + D.date, title: 'AI 한번에 짜기',
+        body: '<div id="paBody"></div>',
+        foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="paApply">모두 적용</button>',
+        onMount: function (m, close) {
+          var label = function (i) { return '새 ' + (i + 1); };
+          var draw = function () {
+            var st2 = dispState(), money = !!st2.rates, tot = 0, totOk = true;
+            plan.forEach(function (c, i) { c.order = i; c.b = c.sites.reduce(function (a, s) { return a + s.b; }, 0); c.kg = c.sites.reduce(function (a, s) { return a + s.kg; }, 0); c.km = c.sites[0].o && c.sites.every(function (s) { return s.g; }) ? routeLen(c.sites[0].o, c.sites.map(function (s) { return s.g; })) : null; c.cost = advCost(D, c.sites.reduce(function (a, s) { return a.concat(s.os); }, [])); if (c.cost) tot += c.cost.total; else totOk = false; });
+            var nog = []; plan.forEach(function (c) { c.sites.forEach(function (s) { if (!s.g) nog.push(s.fc); }); });
+            var head = '<p class="pa-sum">미배정 착지 <b>' + nSites + '곳</b> → <b>' + plan.length + '대</b>' + (money && tot ? ' · 예상 운임 ' + won(tot) + '원' + (totOk ? '' : ' (단가 없는 호차 제외)') : '') + '</p>' +
+              (nog.length ? '<p class="err-text small" style="margin:0 0 8px">⚠ 지도 위치를 못 찾은 곳: ' + esc(nog.join(', ')) + ' — 거리 대신 같은 구·시로만 판단했어요.</p>' : '');
+            var cards = plan.map(function (c, i) {
+              var warn = (c.b > ADV_ONE ? ' <span class="err-text">' + ADV_ONE + '번들 넘음</span>' : c.b > ADV_MIX && c.sites.length > 1 ? ' <span class="err-text">16번들 넘음</span>' : '') + (c.kg > ADV_KG && c.sites.length > 1 ? ' <span class="err-text">10톤 넘음</span>' : '') + (!advCapOk(c.sites) ? ' <span class="err-text">착지 ' + c.sites.length + '곳</span>' : '');
+              return '<div class="adv-truck' + (i === sel ? ' on' : '') + '" data-pat="' + i + '"><div class="adv-h"><b>' + label(i) + '</b> · ' + won(c.b) + '번들 · ' + won(c.kg) + 'kg · ' + esc(autoTon(c.kg, c.b)) + (c.km != null ? ' · 직선 ' + Math.round(c.km) + 'km' : '') + (money ? ' · ' + (c.cost ? won(c.cost.total) + '원' : '단가 없음') : '') + warn + '</div>' +
+                '<table class="data adv-tb"><tbody>' + c.sites.map(function (s, k) { return '<tr><td><span class="dp-sn">' + (k + 1) + '</span></td><td class="left"><b>' + esc(s.fc) + '</b>' + (s.g ? '' : ' <span class="err-text small">⚠위치</span>') + '<div class="small muted">' + esc(s.addr) + '</div></td><td class="num">' + won(s.b) + '번들</td><td class="num">' + won(s.kg) + 'kg</td><td class="adv-mv">' + (c.sites.length > 1 ? '<button type="button" data-pup="' + i + '|' + k + '"' + (k ? '' : ' disabled') + '>▲</button><button type="button" data-pdn="' + i + '|' + k + '"' + (k < c.sites.length - 1 ? '' : ' disabled') + '>▼</button>' : '') + (c.fixed ? '' : '<button type="button" class="pa-x" data-px="' + i + '|' + k + '" title="이 호차에서 빼기">✕</button>') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            }).join('');
+            var opts = function (cur) { return '<option value="auto"' + (cur === 'auto' ? ' selected' : '') + '>자동 (가까운 호차 빈자리 또는 새 호차)</option><option value="new"' + (cur === 'new' ? ' selected' : '') + '>새 호차 혼자</option>' + plan.map(function (c, i) { return c.fixed ? '' : '<option value="' + c.id + '"' + (cur === c.id ? ' selected' : '') + '>' + label(i) + '에 넣기 (' + won(c.b) + '번들)</option>'; }).join(''); };
+            var outHtml = out.length ? '<div class="pa-out"><div class="adv-h"><b>빠진 착지 ' + out.length + '곳</b> <span class="muted small">어디로 보낼지 고르고 [빠진 착지 다시 짜기]</span></div>' + out.map(function (x, k) { return '<div class="pa-orow"><b>' + esc(x.s.fc) + '</b> <span class="muted small">' + won(x.s.b) + '번들</span><select class="input input-sm" data-po="' + k + '">' + opts(x.to) + '</select></div>'; }).join('') + '<button class="btn btn-sm btn-primary" id="paRe" style="margin-top:8px">빠진 착지 다시 짜기</button></div>' : '';
+            $('#paBody', m).innerHTML = head + '<div class="adv-grid"><div class="pa-list">' + outHtml + cards + '</div><div><div class="dp-map adv-map" id="paMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div></div></div>';
+            var c = plan[sel] || plan[0];
+            if (c) { var p = findPlace(c.sites[0].from); var pts = [p && p.addr ? Object.assign({ label: '🏭', from: 1, title: p.name }, st2.geo[geoKey(p.addr)] || {}) : null].concat(c.sites.map(function (s, k) { return Object.assign({ label: String(k + 1), title: s.fc }, s.g || {}); })); var el = $('#paMap', m); drawRouteMap(el, pts, '#6D28D9').catch(function (e) { el.innerHTML = '<div class="err-text small" style="padding:20px">' + esc(e.message) + '</div>'; }); }
+            var mv = function (attr, d) { $$('[' + attr + ']', m).forEach(function (bt) { bt.onclick = function () { var q = bt.getAttribute(attr).split('|'), cl = plan[+q[0]], k = +q[1], x = cl.sites[k]; cl.sites[k] = cl.sites[k + d]; cl.sites[k + d] = x; cl.manual = true; sel = +q[0]; draw(); }; }); };
+            mv('data-pup', -1); mv('data-pdn', 1);
+            $$('[data-px]', m).forEach(function (bt) { bt.onclick = function () { var q = bt.dataset.px.split('|'), cl = plan[+q[0]], s = cl.sites.splice(+q[1], 1)[0]; s.ban = s.ban || {}; s.ban[cl.id] = 1; out.push({ s: s, to: 'auto' }); if (!cl.sites.length) plan.splice(+q[0], 1); sel = Math.min(sel, plan.length - 1); draw(); }; });
+            $$('[data-po]', m).forEach(function (sl) { sl.onchange = function () { out[+sl.dataset.po].to = sl.value; }; });
+            $$('[data-pat]', m).forEach(function (el2) { el2.onclick = function (e) { if (e.target.closest('button')) return; var i = +el2.dataset.pat; if (i !== sel) { sel = i; draw(); } }; });
+            var re = $('#paRe', m); if (re) re.onclick = function () {
+              var fresh = [];
+              out.forEach(function (x) {
+                if (x.to === 'new') { plan.push(advCluster([x.s], { locked: true, fixed: false, order: plan.length })); return; }
+                var tgt = plan.filter(function (c) { return c.id === x.to; })[0];
+                if (tgt) { tgt.sites.push(x.s); tgt.manual = true; return; }
+                fresh.push(advCluster([x.s]));
+              });
+              if (fresh.length) {
+                plan.forEach(function (c) { c.locked = true; });
+                var res = advPlan(D, plan.concat(fresh), hist), keepOrder = plan.map(function (c) { return c.id; });
+                // 원래 호차 순서 유지, 새로 생긴 호차는 뒤에
+                plan = res.sort(function (a, b) { var ia = keepOrder.indexOf(a.id), ib = keepOrder.indexOf(b.id); return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib); });
+              }
+              out = []; draw();
+            };
+          };
+          $('#paApply', m).onclick = function () {
+            if (out.length && !confirm('빠진 착지 ' + out.length + '곳은 호차 없이 남겨요. 적용할까요?')) return;
+            apply(plan.map(function (c) { return c.sites.reduce(function (a, s) { return a.concat(s.os); }, []); })); close();
+          };
           draw();
         } });
     }).catch(function (err) { toast(err.message, 'err'); });
@@ -7464,7 +7589,7 @@
         (isPartner() ? '' : '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">동방 엑셀에서 C열(출발센터)부터 AF열까지 데이터만 복사해서 붙여넣으세요 (날짜별로 나눠 저장, 이미 있는 줄은 건너뜀)</span></summary>' +
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details>') + '</div>' +
       '<div class="card"' + (isPartner() ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
-        '<div class="actions"' + (isPartner() ? ' style="display:none"' : '') + '><button class="btn btn-sm btn-ai" id="dpAdvisor" title="호차 안 정해진 오더를 한 대씩 추천해요">✨ AI 도움</button><button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
+        '<div class="actions"' + (isPartner() ? ' style="display:none"' : '') + '><button class="btn btn-sm btn-ai" id="dpPlanAll" title="호차 안 정해진 오더 전체를 한 번에 짜요 (확인 후 적용)">✨ AI 한번에 짜기</button><button class="btn btn-sm btn-ai" id="dpAdvisor" title="호차 안 정해진 오더를 한 대씩 추천해요">✨ AI 도움</button><button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
         '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
         (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"' + (isPartner() ? ' disabled' : '') + '></th><th>호차</th><th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th><th class="left">공지</th></tr></thead><tbody>' +
           orders.map(function (o) {
@@ -7505,6 +7630,11 @@
     var all = $('#dpAll'); if (all) all.onchange = function () { var on = this.checked; st.sel = {}; if (on) orders.forEach(function (o) { st.sel[o.id] = 1; }); drawDispDay(); };
     $$('[data-t]', box).forEach(function (inp) { inp.onchange = function () { var o = orders.filter(function (x) { return x.id === inp.dataset.t; })[0], v = inp.value.replace(/\D/g, ''); o.truck = v ? Number(v) : ''; redraw(); }; });
     var picked = function () { var l = orders.filter(function (o) { return st.sel[o.id]; }); if (!l.length) toast('먼저 오더를 체크하세요.', 'err'); return l; };
+    var applyGroups = function (groups) { // 수락: 추천한 묶음마다 새 호차 (하차 순서대로 순번)
+      groups.forEach(function (os) { var n = Math.max.apply(null, [0].concat(dispTrucks(D))) + 1, slots = os.map(function (o) { return o.seq; }).sort(function (a, b) { return a - b; }); os.forEach(function (o, i) { o.truck = n; o.seq = slots[i]; }); });
+      D.orders.sort(function (a, b) { return a.seq - b.seq; }); st.sel = {}; redraw(); toast(groups.length + '대를 새 호차로 묶었어요.');
+    };
+    $('#dpPlanAll').onclick = function () { openPlanAll(D, applyGroups); };
     $('#dpAdvisor').onclick = function () {
       openAdvisor(D, function (groups) { // 수락: 추천한 묶음마다 새 호차
         groups.forEach(function (os) { // os는 하차 순서대로 → 그 순서로 순번도 맞춰요
@@ -8740,6 +8870,7 @@
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
+      '<b>✨ AI 한번에 짜기</b>: 호차가 안 정해진 오더 전체를 한 번에 짜서 보여줘요(가까운 착지끼리 차례로 합치기). 하차지가 서로 가까우면(5km, 같은 구·시 10km) 한 대에 4곳까지 묶어요. 호차마다 지도를 보고 ▲▼로 순서를 바꾸거나 ✕로 착지를 뺄 수 있어요. 뺀 착지는 [자동 / 새 호차 혼자 / 새 N에 넣기] 중 골라 [빠진 착지 다시 짜기]를 누르면 반영돼요(뺀 호차로는 다시 안 들어가요). [모두 적용]을 눌러야 실제 호차가 생겨요.',
       '<b>✨ AI 도움</b>: 호차가 안 정해진 오더를 한 대씩 추천해요. 상차지가 같은 착지끼리, 한 대에 3곳까지, 합칠 때는 16번들(11톤)까지(17~18번들 착지는 혼자 한 대, 18번들 넘으면 오더 단위로 나눠 여러 대), 착지끼리 직선 5km(같은 시·군이면 10km) 이내이거나 가는 길 위에 있는 곳만 묶어요. 같이 묶을 곳이 없는 착지(혼자 가야 하는 곳)를 먼저 추천하고, 추천 창의 지도를 보며 ▲▼로 하차 순서를 바꿀 수 있어요. 차량 대수가 줄고 운임이 싼 쪽(단가표 기준)과 지난 2달 같이 보낸 조합을 먼저 추천해요. [수락]하면 새 호차로 묶이고, [다른 추천]으로 다음 후보를 볼 수 있어요.',
       '<b>탭</b>(예: 부자재-인천, 컬리-평택, 부자재-평택(보스턴))마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 탭별로 나뉘어 모두 보여요. 그날 오더가 있는 탭만 보이고, 나머지는 "다른 탭 열기"에서 골라요. <b>탭 관리</b>에서 탭 추가·이름·문자 머리말·순서·숨기기를 해요.',
       '<b>① 오더 붙여넣기</b>: 동방 엑셀(팀즈)에서 C열(출발센터)부터 AF열까지 데이터 줄만 복사해 붙여넣으면 납품일자별로 나눠 저장돼요. 빈 칸이 있어도 괜찮고, 제목 줄을 같이 복사해도 알아서 맞춰요. 이미 가져온 줄은 건너뛰어요.',

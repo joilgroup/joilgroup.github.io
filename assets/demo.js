@@ -255,7 +255,7 @@
     out = JSON.parse(JSON.stringify(out)); var cost = me.perms.indexOf('analysis') !== -1 || me.role === 'partner', one = function (r) { if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; }); if (me.role === 'partner') (r.orders || []).forEach(function (o) { o.noteIn = ''; }); };
     if (out.byKey) Object.keys(out.byKey).forEach(function (k) { one(out.byKey[k]); }); else one(out); return out;
   }
-  function demoGeo(a) { try { var g = geocode(String(a)); return { lat: g.lat, lng: g.lng, approx: true }; } catch (e) { return null; } }
+  function demoGeo(a) { if (window.__demoGeo && window.__demoGeo[a]) return window.__demoGeo[a]; /* 테스트용 좌표 */ try { var g = geocode(String(a)); return { lat: g.lat, lng: g.lng, approx: true }; } catch (e) { return null; } }
   var rcptData = {};
   function demoDrv(req) {
     var tr = wk('dispTrk').filter(function (t) { return t.token && t.token === req.t; })[0]; if (!tr) fail('링크를 찾을 수 없어요. 배차 담당자에게 문의하세요.');
