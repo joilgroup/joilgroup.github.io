@@ -109,7 +109,7 @@
       var got = function (fc) { return d.receipts.filter(function (r) { return r.fc === fc; }); };
       var nGot = d.stops.filter(function (s) { return got(s.fc).length; }).length;
       var p = d.place;
-      app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.cust) + '</div><h1>' + d.no + '호차 · 착지 ' + d.stops.length + '곳</h1>' +
+      app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.cust) + '</div><h1>착지 ' + d.stops.length + '곳</h1>' +
         '<div class="sub">총 ' + won(tb) + '번들 / ' + won(tk) + 'kg' + (d.car || d.driver ? ' · ' + esc([d.car, d.driver].filter(Boolean).join(' ')) : '') + '</div>' +
         '<div class="sub ' + (nGot === d.stops.length ? 'ok' : '') + '" style="margin-top:4px">인수증 ' + nGot + ' / ' + d.stops.length + (nGot === d.stops.length ? ' · 모두 올렸어요 👍' : '') + '</div>' +
         ((d.notes || []).length ? '<div class="card notice">' + d.notes.map(function (n) { return '<div>⚠️ ' + (d.stops.length > 1 && n.fc ? esc(n.fc) + ': ' : '') + esc(n.text) + '</div>'; }).join('') + '</div>' : '') +

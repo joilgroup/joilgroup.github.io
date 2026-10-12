@@ -2076,9 +2076,15 @@ function dispSave_(session, req) {
     var trucks = req.trucks || [];
     // 협력사: 이미 있는 호차의 차량정보 5칸·상태만 (호차 추가·메모·비용은 그대로)
     if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, status: g.status != null && (g.status !== '정보넘김' || o.status === '정보넘김') ? g.status : o.status }; }); }
+    // 호차 번호가 바뀌어도(끼워넣기로 밀림) 기사링크·비용·인수증은 그 호차를 따라가게: 화면이 보낸 링크 코드로 예전 호차를 찾아요
+    var byTok = {}; Object.keys(olds).forEach(function (n) { if (olds[n].token) byTok[olds[n].token] = olds[n]; });
+    var claimed = {}; trucks.forEach(function (t) { if (t.token && byTok[t.token]) claimed[t.token] = 1; });
+    var moved = {};
     var money = function (v) { var n = Math.round(Number(String(v == null ? '' : v).replace(/[^0-9.-]/g, ''))); return isFinite(n) && n > 0 ? Math.min(n, 100000000) : 0; };
     var add = trucks.map(function (t) {
-      var no = Math.max(1, Math.round(Number(t.no)) || 1), tok = tokens[no] || Utilities.getUuid().replace(/-/g, '').slice(0, 20), o = olds[no] || {};
+      var no = Math.max(1, Math.round(Number(t.no)) || 1), mine = t.token && byTok[t.token] ? byTok[t.token] : null;
+      var tok = mine ? t.token : tokens[no] && !claimed[tokens[no]] ? tokens[no] : Utilities.getUuid().replace(/-/g, '').slice(0, 20), o = mine || (byTok[tok] || {});
+      claimed[tok] = 1; if (mine && mine.no !== no) moved[mine.no] = no;
       var stt = DISP_STATUS.indexOf(dispStatus_(t.status)) !== -1 ? dispStatus_(t.status) : ''; if (stt === '배차전') stt = '';
       var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
       return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3);
@@ -2090,6 +2096,7 @@ function dispSave_(session, req) {
       add = add.slice(k);
     } else for (var h = hit.length - 1; h >= 0; h--) ts.deleteRow(hit[h] + 2);
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
+    if (Object.keys(moved).length) dispReceiptsMove_(cust, date, moved);
     try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
     var out = dispDay_(cust, date); out.drivers = driverList_(); return out;
   } finally { lock.releaseLock(); }
@@ -2205,6 +2212,13 @@ function receiptFolder_() {
   var props = PropertiesService.getScriptProperties(), id = props.getProperty('RECEIPT_FOLDER');
   if (id) { try { return DriveApp.getFolderById(id); } catch (e) { /* 새로 */ } }
   var f = docsFolder_().createFolder('인수증'); props.setProperty('RECEIPT_FOLDER', f.getId()); return f;
+}
+/** 호차 번호가 바뀌면 그날 인수증 사진의 호차 번호도 같이 옮겨요 (moved: 예전 번호 → 새 번호) */
+function dispReceiptsMove_(cust, date, moved) {
+  var sh = cacheSheet_(SHEET_RECEIPTS, RECEIPT_HEADER); if (sh.getLastRow() < 2) return;
+  var rng = sh.getRange(2, 4, sh.getLastRow() - 1, 1), no = rng.getValues(), meta = sh.getRange(2, 2, sh.getLastRow() - 1, 2).getValues(), ch = false;
+  meta.forEach(function (m, i) { if (String(m[0]) === cust && textDate_(m[1]) === date && moved[Number(no[i][0])] != null) { no[i][0] = moved[Number(no[i][0])]; ch = true; } });
+  if (ch) rng.setValues(no);
 }
 function dispReceipts_(cust, date) {
   return rowsOf_(SHEET_RECEIPTS, RECEIPT_HEADER).filter(function (r) { return String(r[1]) === cust && textDate_(r[2]) === date; })

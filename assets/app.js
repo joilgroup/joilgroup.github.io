@@ -7180,7 +7180,19 @@
     var all = $('#dpAll'); if (all) all.onchange = function () { var on = this.checked; st.sel = {}; if (on) orders.forEach(function (o) { st.sel[o.id] = 1; }); drawDispDay(); };
     $$('[data-t]', box).forEach(function (inp) { inp.onchange = function () { var o = orders.filter(function (x) { return x.id === inp.dataset.t; })[0], v = inp.value.replace(/\D/g, ''); o.truck = v ? Number(v) : ''; redraw(); }; });
     var picked = function () { var l = orders.filter(function (o) { return st.sel[o.id]; }); if (!l.length) toast('먼저 오더를 체크하세요.', 'err'); return l; };
-    $('#dpGroup').onclick = function () { var l = picked(); if (!l.length) return; var n = Math.max.apply(null, [0].concat(trucks)) + 1; l.forEach(function (o) { o.truck = n; }); st.sel = {}; redraw(); };
+    $('#dpGroup').onclick = function () {
+      var l = picked(); if (!l.length) return; var n = Math.max.apply(null, [0].concat(trucks)) + 1;
+      // 한 호차에서 일부만 떼어내면 바로 뒤 번호로 끼워넣고, 뒤 호차들은 하나씩 밀어요 (차량정보·상태·기사링크는 각 호차를 따라감)
+      var src = l[0].truck, same = src !== '' && src != null && l.every(function (o) { return o.truck === src; }), rest = same && orders.some(function (o) { return o.truck === src && !st.sel[o.id]; });
+      if (rest && trucks.some(function (x) { return x > src; })) {
+        var sent = D.trucks.filter(function (t) { return t.no > src && trucks.indexOf(t.no) !== -1 && t.status === '정보넘김'; }).map(function (t) { return t.no + '호차'; });
+        if (sent.length && !confirm('정보넘김인 ' + sent.join(', ') + '도 번호가 하나씩 밀려요. 계속할까요?\n(기사 링크는 그대로 작동해요)')) return;
+        orders.forEach(function (o) { if (o.truck !== '' && o.truck != null && o.truck > src) o.truck += 1; });
+        D.trucks.forEach(function (t) { if (t.no > src) t.no += 1; });
+        n = src + 1;
+      }
+      l.forEach(function (o) { o.truck = n; }); st.sel = {}; redraw();
+    };
     $('#dpTo').onchange = function () { var v = Number(this.value); if (!v) return; var l = picked(); if (!l.length) { this.value = ''; return; } l.forEach(function (o) { o.truck = v; }); st.sel = {}; redraw(); };
     $('#dpUngroup').onclick = function () { var l = picked(); if (!l.length) return; l.forEach(function (o) { o.truck = ''; }); st.sel = {}; redraw(); };
     $('#dpDel').onclick = function () {
