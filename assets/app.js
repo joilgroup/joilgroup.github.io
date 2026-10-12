@@ -6606,8 +6606,13 @@
   /** 무게 칸: 패키지가 있으면 '16패키지' (무게도 있으면 같이) */
   function dispKgText(kg, pkg) { return pkg ? (kg ? won(kg) + ' · ' : '') + won(pkg) + '패키지' : won(kg); }
   /** 이미 가져온 줄인지 가리는 키 (순번 제외: 날짜·발주번호·BL·센터·품목·출고수량·번들) */
+  var DISP_COLS_BASE = DISP_COLS;
   function dispOrderKey(date, d) { return [date, d.po, d.bl, d.fc, d.item, d.outQty, d.bundle].join('|'); }
-  function dispParse(text) {
+  // 컬리 양식: 입고수량 칸이 없고(그 뒤 칸이 하나씩 당겨짐), 발주번호·컬리담당자 이름이 달라요
+  var DISP_COLS_KURLY = DISP_COLS.filter(function (c) { return c[0] !== 'inQty'; }).map(function (c) { return c[0] === 'po' ? ['po', '발주번호'] : /^m\d$/.test(c[0]) ? [c[0], '컬리담당자' + c[0].slice(1)] : c; });
+  function dispIsKurly(tab) { return /컬리/.test(String(tab || '')); }
+  function dispParse(text, kurly) {
+    var DISP_COLS = kurly ? DISP_COLS_KURLY : DISP_COLS_BASE;
     var rows = parseTsv(text); if (!rows.length) return { items: [], warn: '붙여넣은 내용이 없어요.' };
     var norm = function (h) { return String(h || '').replace(/\s/g, '').toLowerCase(); };
     var head = rows[0].map(norm), hasHead = head.indexOf('출발센터') !== -1 || head.indexOf('납품일자') !== -1, idx = {};
@@ -6615,7 +6620,7 @@
       var used = {};
       DISP_COLS.forEach(function (c) {
         var want = norm(c[1]), isMgr = /^m\d$/.test(c[0]);
-        for (var j = 0; j < head.length; j++) { if (used[j]) continue; if (isMgr ? head[j].indexOf('쿠팡담당자') === 0 : head[j] === want) { idx[c[0]] = j; used[j] = 1; return; } }
+        for (var j = 0; j < head.length; j++) { if (used[j]) continue; if (isMgr ? /^(쿠팡|컬리)담당자/.test(head[j]) : head[j] === want || (c[0] === 'po' && /^(cp)?발주번호$/.test(head[j]))) { idx[c[0]] = j; used[j] = 1; return; } }
       });
       rows = rows.slice(1);
     } else {
@@ -7156,7 +7161,7 @@
     var tmg = $('#dpTabMgr'); if (tmg) tmg.onclick = openDispTabs;
     var parsed = null;
     if ($('#dpPasteIn')) $('#dpPasteIn').oninput = function () {
-      parsed = dispParse(this.value); var by = {}, fr = {}; parsed.items.forEach(function (x) { by[x.date] = (by[x.date] || 0) + 1; fr[x.d.from] = 1; });
+      parsed = dispParse(this.value, dispIsKurly(st.tab)); var by = {}, fr = {}; parsed.items.forEach(function (x) { by[x.date] = (by[x.date] || 0) + 1; fr[x.d.from] = 1; });
       var region = (String(st.tab).split('-').slice(1).join('-') || st.tab).replace(/\(.*?\)/g, '').trim(), other = Object.keys(fr).filter(function (f) { return f && region && f.indexOf(region) === -1; });
       $('#dpPasteInfo').innerHTML = parsed.items.length ? '<b>' + parsed.items.length + '줄</b> · ' + Object.keys(by).sort().map(function (d) { return d.slice(5) + ' ' + by[d] + '줄'; }).join(', ') + (other.length ? ' · <span style="color:var(--orange)">출발센터 ' + esc(other.join(', ')) + ' — ' + esc(st.tab) + ' 탭이 맞나요?</span>' : '') + (parsed.warn ? ' · <span style="color:var(--orange)">' + esc(parsed.warn) + '</span>' : '') : '<span class="err-text">' + esc(parsed.warn || '읽을 줄이 없어요.') + '</span>';
       $('#dpImport').disabled = !parsed.items.length;
