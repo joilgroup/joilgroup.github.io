@@ -2210,13 +2210,13 @@ function dispGeo_(addrs) {
   var g = geocodeMany_(list), out = {};
   list.forEach(function (a) { var x = g[a]; if (x && !x.error) out[a] = { lat: x.lat, lng: x.lng }; });
   // 카카오 '주소 검색'은 엄격해서 지도 앱에선 나오는 주소도 못 찾을 때가 있어요 → 배차 지도에서만 덜 엄격하게 다시 찾기
-  // (괄호·쉼표 뒤 설명 빼기 → 번지 뒤 '층·동' 빼기 → 부번지(-1) 빼기 → 동·읍·면까지만: 대략 위치)
+  // (괄호·쉼표 뒤 설명 빼기 → '대로 165 20'을 '대로165번길 20'으로 → 번지 뒤 '층·동' 빼기 → 부번지(-1) 빼기 → 동·읍·면까지만: 대략 위치)
   var left = list.filter(function (a) { return !out[a]; });
-  for (var round = 0; round < 4 && left.length; round++) {
+  for (var round = 0; round < 5 && left.length; round++) {
     var ask = {}; left.forEach(function (a) { var alt = dispGeoAlts_(a)[round]; if (alt) ask[a] = alt; });
     var qs = Object.keys(ask).map(function (a) { return ask[a]; }); if (!qs.length) continue;
     var g2 = geocodeMany_(qs);
-    Object.keys(ask).forEach(function (a) { var x = g2[ask[a]]; if (x && !x.error) out[a] = { lat: x.lat, lng: x.lng, approx: round === 3 }; });
+    Object.keys(ask).forEach(function (a) { var x = g2[ask[a]]; if (x && !x.error) out[a] = { lat: x.lat, lng: x.lng, approx: round === 4 }; });
     left = left.filter(function (a) { return !out[a]; });
   }
   return out;
@@ -2227,7 +2227,9 @@ function dispGeoAlts_(a) {
   var noSub = (lot || s).replace(/(\d+)-\d+$/, '$1');
   var toks = s.split(' '), dong = '';
   for (var i = 1; i < toks.length; i++) if (/(동|읍|면|리|가)$/.test(toks[i])) { dong = toks.slice(0, i + 1).join(' '); break; }
-  return [s !== a ? s : '', lot && lot !== s ? lot : '', noSub !== (lot || s) ? noSub : '', dong];
+  // '축항대로 165 20' 처럼 번길이 띄어 적힌 주소 → '축항대로165번길 20'
+  var bun = (s.match(/^(.*?\S(?:로|길))\s+(\d+)\s+(\d+(?:-\d+)?)(?=\s|$)/) || []); bun = bun[0] ? bun[1] + bun[2] + '번길 ' + bun[3] : '';
+  return [s !== a ? s : '', bun, lot && lot !== s ? lot : '', noSub !== (lot || s) ? noSub : '', dong];
 }
 
 /* 인수증 (거래명세서 사진) · 기사용 링크 */

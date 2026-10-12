@@ -6896,10 +6896,22 @@
   function needGeo() {
     var st = dispState(), want = {};
     DISP_TABS.forEach(function (t) { var D = st.tabs && st.tabs[t[0]]; if (!D) return; D.orders.forEach(function (o) { if (o.d.addr) want[geoKey(o.d.addr)] = 1; var p = findPlace(o.d.from); if (p && p.addr) want[geoKey(p.addr)] = 1; }); });
-    var miss = Object.keys(want).filter(function (a) { return !(a in st.geo); });
+    st.geoWait = st.geoWait || {};
+    var miss = Object.keys(want).filter(function (a) { return !(a in st.geo) && !st.geoWait[a]; });
     if (!miss.length) return;
-    miss.forEach(function (a) { st.geo[a] = null; });
-    api('dispatch.geo', { addrs: miss }).then(function (r) { Object.keys(r.coords || {}).forEach(function (a) { st.geo[a] = r.coords[a]; }); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function () { });
+    miss.forEach(function (a) { st.geoWait[a] = 1; });
+    // 서버는 한 번에 60곳까지 → 40곳씩 나눠서 (못 찾은 곳은 null = '위치 못 찾음' 표시)
+    var chunks = []; for (var i = 0; i < miss.length; i += 40) chunks.push(miss.slice(i, i + 40));
+    Promise.all(chunks.map(function (c) { return api('dispatch.geo', { addrs: c }).then(function (r) { c.forEach(function (a) { st.geo[a] = (r.coords || {})[a] || null; delete st.geoWait[a]; }); }).catch(function () { c.forEach(function (a) { delete st.geoWait[a]; }); }); }))
+      .then(function () { if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); });
+  }
+  /** 오더 표 주소 옆: 지도 위치를 못 찾았거나 대략 위치면 표시 (눌러서 주소 고치기) */
+  function geoFlag(o) {
+    var st = dispState(), k = geoKey(o.d.addr); if (!k || !(k in st.geo)) return '';
+    var g = st.geo[k];
+    if (!g) return '<button type="button" class="geo-bad" data-oedit="' + esc(o.id) + '" title="이 주소로 지도 위치를 못 찾았어요. 눌러서 주소를 고쳐 주세요 (AI 도움 거리 계산·지도에 필요)">⚠ 위치 못 찾음</button>';
+    if (g.approx) return '<button type="button" class="geo-approx" data-oedit="' + esc(o.id) + '" title="정확한 번지를 못 찾아 동·읍·면 위치로 대략 잡았어요. 눌러서 주소를 고칠 수 있어요">≈ 대략 위치</button>';
+    return '';
   }
   /** 호차 하나의 문자 */
   /** 동방 엑셀은 수식에 맞는 값이 없으면 0을 넣어요 → 글자 칸의 0은 빈 값으로 */
@@ -6919,9 +6931,10 @@
     return sd + ' ' + (t[1] || '');
   }
   function advEnsureGeo(addrs) {
-    var st = dispState(), miss = addrs.map(geoKey).filter(function (a) { return a && !(a in st.geo); });
+    var st = dispState(), miss = addrs.map(geoKey).filter(function (a, i, arr) { return a && !(a in st.geo) && arr.indexOf(a) === i; });
     if (!miss.length) return Promise.resolve();
-    return api('dispatch.geo', { addrs: miss }).then(function (r) { miss.forEach(function (a) { st.geo[a] = (r.coords || {})[a] || null; }); }).catch(function () { });
+    var chunks = []; for (var i = 0; i < miss.length; i += 40) chunks.push(miss.slice(i, i + 40));
+    return Promise.all(chunks.map(function (c) { return api('dispatch.geo', { addrs: c }).then(function (r) { c.forEach(function (a) { st.geo[a] = (r.coords || {})[a] || null; }); }).catch(function () { }); }));
   }
   /** 지난 2달 이 탭에서 같은 호차로 간 착지 쌍 횟수 */
   function advHistory(D) {
@@ -7038,7 +7051,8 @@
               var b = t.stops.reduce(function (a, s) { return a + s.b; }, 0), kg = t.stops.reduce(function (a, s) { return a + s.kg; }, 0);
               return '<div class="adv-truck' + (i === mapT ? ' on' : '') + '" data-advt="' + i + '"><div class="adv-h"><b>' + (c.trucks.length > 1 ? '새 호차 ' + (i + 1) : '새 호차') + '</b> · ' + won(b) + '번들 · ' + won(kg) + 'kg · ' + esc(autoTon(kg, b)) + (t.route.km != null ? ' · 직선 ' + Math.round(t.route.km) + 'km' : '') + '</div>' +
                 '<table class="data adv-tb"><tbody>' + t.stops.map(function (s, k) { return '<tr><td><span class="dp-sn">' + (k + 1) + '</span></td><td class="left"><b>' + esc(s.fc) + '</b><div class="small muted">' + esc(s.addr) + '</div>' + (s.hours ? '<div class="small" style="color:#8A5A00">' + esc(s.hours) + '</div>' : '') + '</td><td class="num">' + won(s.b) + '번들</td><td class="num">' + won(s.kg) + 'kg</td><td class="adv-mv">' + (t.stops.length > 1 ? '<button type="button" data-up="' + i + '|' + k + '"' + (k ? '' : ' disabled') + ' title="앞으로">▲</button><button type="button" data-dn="' + i + '|' + k + '"' + (k < t.stops.length - 1 ? '' : ' disabled') + ' title="뒤로">▼</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
-            }).join('') + '<ul class="adv-why">' + c.why.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + (c.trucks[0].stops.length > 1 ? '<li class="muted">하차 순서는 ▲▼로 바꿀 수 있어요. 하차 가능시간은 직접 확인해 주세요.</li>' : '') + '</ul></div>' +
+            }).join('') + '<ul class="adv-why">' + c.why.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') +
+              (function () { var nog = []; c.trucks.forEach(function (t) { t.stops.forEach(function (s) { if (!s.g) nog.push(s.fc); }); }); return nog.length ? '<li class="err-text">⚠ 지도 위치를 못 찾은 곳: ' + esc(nog.join(', ')) + ' — 거리 대신 같은 구·시로만 판단했어요. 오더 표의 "위치 못 찾음"을 눌러 주소를 고치면 더 정확해져요.</li>' : ''; })() + (c.trucks[0].stops.length > 1 ? '<li class="muted">하차 순서는 ▲▼로 바꿀 수 있어요. 하차 가능시간은 직접 확인해 주세요.</li>' : '') + '</ul></div>' +
               '<div><div class="dp-map adv-map" id="advMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div></div></div>';
             var t = c.trucks[mapT] || c.trucks[0], p = findPlace(t.stops[0].from);
             var pts = [p && p.addr ? Object.assign({ label: '🏭', from: 1, title: p.name }, st2.geo[geoKey(p.addr)] || {}) : null].concat(t.stops.map(function (s, k) { return Object.assign({ label: String(k + 1), title: s.fc }, s.g || {}); }));
@@ -7240,7 +7254,7 @@
           if (!Object.keys(patch).length) return close();
           if (patch.fc === '' ) return toast('센터명은 비울 수 없어요.', 'err');
           busy(btn, true, '저장 중'); dispSaveNow();
-          api('dispatch.editOrder', { cust: D.key, date: D.date, id: o.id, patch: patch }).then(function () { Object.keys(patch).forEach(function (k) { o.d[k] = patch[k]; }); dispCleanD(o.d); close(); toast('오더를 고쳤어요.'); drawDispDay(true); })
+          api('dispatch.editOrder', { cust: D.key, date: D.date, id: o.id, patch: patch }).then(function () { Object.keys(patch).forEach(function (k) { o.d[k] = patch[k]; }); dispCleanD(o.d); close(); toast('오더를 고쳤어요.'); needGeo(); drawDispDay(true); })
             .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
         };
       } });
@@ -7457,7 +7471,7 @@
             var on = !!st.sel[o.id], t = o.truck;
             return '<tr data-o="' + esc(o.id) + '" class="' + (t === '' || t == null ? 'un' : '') + (on ? ' on' : '') + '"' + (t === '' || t == null ? '' : ' style="background:' + TRUCK_SHADES[(Number(t) - 1) % TRUCK_SHADES.length] + '"') + '><td class="dp-drag" title="끌어서 순서 바꾸기">⠿</td><td><input type="checkbox" data-sel="' + esc(o.id) + '"' + (on ? ' checked' : '') + (isPartner() ? ' disabled' : '') + '></td>' +
               '<td><input class="input input-sm num dp-tno" data-t="' + esc(o.id) + '" value="' + (t === '' || t == null ? '' : t) + '" inputmode="numeric"' + (isPartner() ? ' disabled' : '') + '></td><td class="left"><b>' + esc(o.d.fc) + '</b>' + (isPartner() ? '' : ' <button type="button" class="dp-edit" data-oedit="' + esc(o.id) + '" title="오더 고치기 (번들·무게 등)">고치기</button>') + (o.d.reFrom ? ' <span class="tt-re">재배차 ' + esc(o.d.reFrom) + '</span>' : '') + '</td><td class="left small">' + esc(o.d.dest) + '</td><td class="left small">' + esc(o.d.item) + '</td>' +
-              '<td class="num"' + (dispPkg(o.d.bundle) ? ' title="' + esc(o.d.bundle) + '"' : '') + '>' + won(dispOrderB(o)) + '</td><td class="num">' + dispKgText(dispNum(o.d.kg), dispPkg(o.d.bundle)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div></td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td><td class="left dp-note">' + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
+              '<td class="num"' + (dispPkg(o.d.bundle) ? ' title="' + esc(o.d.bundle) + '"' : '') + '>' + won(dispOrderB(o)) + '</td><td class="num">' + dispKgText(dispNum(o.d.kg), dispPkg(o.d.bundle)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div>' + geoFlag(o) + '</td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td><td class="left dp-note">' + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
       (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">Trucks · ③ 호차별 문자</div>' +
