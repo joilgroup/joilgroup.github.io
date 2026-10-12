@@ -6632,6 +6632,7 @@
     var items = [], bad = 0;
     rows.forEach(function (r) {
       var d = {}; DISP_COLS.forEach(function (c) { var j = idx[c[0]]; d[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); });
+      if (!d.fc && d.dest) d.fc = d.dest; // 컬리처럼 센터명이 비어 있으면 도착지(MK_GMP 등)를 센터명으로
       var date = dispYmd(d.date); if (!date || !d.fc) { bad++; return; }
       dispCleanD(d);
       d.date = date; d._n = items.length + bad;
