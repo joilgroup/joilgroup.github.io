@@ -6903,9 +6903,16 @@
   var DISP_TEXT0 = ['addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'dest'];
   function dispCleanD(d) { DISP_TEXT0.forEach(function (k) { if (d && k in d) d[k] = dispVal(d[k]); }); return d; }
   function dispVal(v) { v = String(v == null ? '' : v).trim(); return v && v !== '0' ? v : ''; }
+  /** 호차 목록 순서: 지역별로 묶어서 (부자재 탭이 있는 지역 순서대로) 지역 안에서는 부자재 탭 먼저, 그다음 같은 지역 다른 탭 */
+  function dispRegion(name) { return (String(name).split('-').slice(1).join('-') || String(name)).replace(/\(.*?\)/g, '').trim(); }
+  function dispTabsByRegion() {
+    var isB = function (t) { return /^부자재/.test(t[0]); }, regs = [];
+    DISP_TABS.filter(isB).concat(DISP_TABS).forEach(function (t) { var r = dispRegion(t[0]); if (regs.indexOf(r) === -1) regs.push(r); });
+    return DISP_TABS.slice().sort(function (a, b) { return regs.indexOf(dispRegion(a[0])) - regs.indexOf(dispRegion(b[0])) || (isB(a) ? 0 : 1) - (isB(b) ? 0 : 1) || DISP_TABS.indexOf(a) - DISP_TABS.indexOf(b); });
+  }
   /** 오늘 총배차현황: 탭마다 호차 수와 차량정보가 아직 빈 호차(남은 배차) */
   function dispSummaryHtml(st) {
-    var parts = DISP_TABS.map(function (t) {
+    var parts = dispTabsByRegion().map(function (t) {
       var D = st.tabs[t[0]]; if (!D) return ''; var nos = dispTrucks(D); if (!nos.length) return '';
       var left = nos.filter(function (n) { return !String(truckInfo(D, n).car || '').trim(); }).length;
       return '<span class="dp-sum-i"><b>' + esc(t[0]) + '</b> 총 ' + nos.length + '대 · ' + (left ? '<span class="dp-sum-left">남은 배차 ' + left + '대</span>' : '<span class="dp-sum-done">배차 끝</span>') + '</span>';
@@ -7278,7 +7285,7 @@
     var near = Object.keys(days).sort().filter(function (d) { return d >= dAdd(st.date, -7) && d <= dAdd(st.date, 14); });
     var tb = dispBundles(orders), tk = 0; orders.forEach(function (o) { tk += dispNum(o.d.kg); });
     var unassigned = orders.filter(function (o) { return o.truck === '' || o.truck == null; }).length;
-    var allTrucks = DISP_TABS.filter(function (t) { return dispTrucks(st.tabs[t[0]]).length; });
+    var allTrucks = dispTabsByRegion().filter(function (t) { return dispTrucks(st.tabs[t[0]]).length; });
     box.innerHTML =
       '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div class="cal-nav"><button class="btn btn-sm" id="dpPrev">◀</button><input class="input input-sm" type="date" id="dpDate" value="' + esc(st.date) + '" style="width:auto"><button class="btn btn-sm" id="dpNext">▶</button>' +
         (near.length ? '<span class="chips" style="margin-left:6px">' + near.map(function (d) { return '<button type="button" class="chip' + (d === st.date ? ' on' : '') + '" data-day="' + d + '" title="오더 ' + days[d] + '줄">' + (+d.slice(5, 7)) + '/' + (+d.slice(8)) + '</button>'; }).join('') + '</span>' : '') + '</div>' +
@@ -7300,7 +7307,7 @@
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
       (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">Trucks · ③ 호차별 문자</div>' +
-        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3><button class="btn btn-sm" data-copyall="' + t[0] + '">' + esc(t[0]) + ' 문자 전체 복사</button></div>' + truckTableHtml(X, ns) + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
+        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3></div>' + truckTableHtml(X, ns) + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
     var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; renderDispatch(); };
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
@@ -7408,7 +7415,6 @@
     $$('[data-open]', box).forEach(function (b) { b.onclick = function () { var k = b.dataset.open; if (st.open[k]) delete st.open[k]; else st.open[k] = 1; drawDispDay(); }; });
     $$('[data-map]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.map); openTruckMap(x.D, x.no); }; });
     $$('[data-link]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.link), t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; window.open(driverUrl(t.token), '_blank'); }; });
-    $$('[data-copyall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.copyall], ns = dispTrucks(X); copyText(ns.map(function (n) { return '[' + X.tab + ' ' + n + '호차]\n' + truckMessage(X, n); }).join('\n\n────────\n\n'), X.tab + ' ' + ns.length + '대 문자를 복사했어요.'); }; });
     $$('[data-rcv]', box).forEach(function (b) {
       b.onclick = function () {
         modal({ wide: true, eyebrow: '인수증', title: '거래명세서 사진', body: '<div class="doc-view" id="rcV"><p class="muted"><span class="spinner dark"></span></p></div>', foot: '<button class="btn" data-close>닫기</button>',
