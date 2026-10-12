@@ -6911,7 +6911,7 @@
      · 고르는 기준: 차량 대수 최소 → 운임 최소(단가표 있으면) → 지난 2달 같이 보낸 조합 */
   var ADV_MIX = 16, ADV_ONE = 18, ADV_KG = 10000, ADV_STOPS = 3, ADV_KM = 5, ADV_KM_REG = 10;
   function advRegion(addr) {
-    var t = String(addr || '').replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean), sd = (t[0] || '').replace(/(특별자치시|특별자치도|특별시|광역시|도)$/, '');
+    var t = String(addr || '').replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean), sd = (t[0] || '').replace(/(특별자치시|특별자치도|특별시|광역시|시|도)$/, ''); // 인천광역시·인천시 → 인천
     sd = { 충청남: '충남', 충청북: '충북', 전라남: '전남', 전라북: '전북', 경상남: '경남', 경상북: '경북' }[sd] || sd;
     return sd + ' ' + (t[1] || '');
   }
@@ -6932,11 +6932,27 @@
       st.advHist[hk] = pair; return pair;
     });
   }
+  /** 같은 곳인지 비교용 주소: 시도 표기·띄어쓰기·층·괄호 무시 (인천광역시 서구 오류동 1545-2 = 인천시 서구 오류동 1545-2, 3층) */
+  function advAddrKey(addr) {
+    var t = String(addr || '').replace(/\(.*?\)/g, ' ').replace(/,/g, ' ').split(/\s+/).filter(Boolean);
+    return advRegion(addr) + '|' + t.slice(2).filter(function (x) { return !/(층|호)$|^\d+F$|^B\d+$/i.test(x); }).join('');
+  }
+  /** 호차 안 정해진 오더 → 착지(같은 상차지 · 같은 주소면 센터 이름이 달라도 한 곳으로) */
   function advStops(D) {
-    var by = {}, list = [];
-    D.orders.forEach(function (o) { if (o.truck !== '' && o.truck != null) return; var k = (o.d.from || '') + '|' + (o.d.fc || '-'), s = by[k]; if (!s) { s = by[k] = { from: o.d.from || '', fc: o.d.fc || '-', addr: o.d.addr || '', hours: o.d.hours || '', os: [] }; list.push(s); } s.os.push(o); });
-    var st = dispState();
-    list.forEach(function (s) { s.b = dispBundles(s.os); s.kg = s.os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0); s.g = st.geo[geoKey(s.addr)] || null; var p = findPlace(s.from); s.o = p && p.addr ? st.geo[geoKey(p.addr)] || null : null; s.reg = advRegion(s.addr); });
+    var st = dispState(), by = {}, list = [];
+    D.orders.forEach(function (o) {
+      if (o.truck !== '' && o.truck != null) return;
+      var k = (o.d.from || '') + '|' + advAddrKey(o.d.addr || o.d.fc), s = by[k];
+      if (!s) { s = by[k] = { key: k, from: o.d.from || '', fcs: [], addr: o.d.addr || '', hrs: [], os: [] }; list.push(s); }
+      s.os.push(o); if (s.fcs.indexOf(o.d.fc || '-') === -1) s.fcs.push(o.d.fc || '-'); if (o.d.hours && s.hrs.indexOf(o.d.hours) === -1) s.hrs.push(o.d.hours);
+    });
+    list.forEach(function (s) { s.g = st.geo[geoKey(s.addr)] || null; var p = findPlace(s.from); s.o = p && p.addr ? st.geo[geoKey(p.addr)] || null : null; s.reg = advRegion(s.addr); });
+    // 주소 글자가 달라도 정확한 좌표가 거의 같으면(150m) 같은 곳
+    for (var i = 0; i < list.length; i++) for (var j = list.length - 1; j > i; j--) {
+      var a = list[i], b = list[j];
+      if (a.from === b.from && a.g && b.g && !a.g.approx && !b.g.approx && hav(a.g, b.g) < 0.15) { b.os.forEach(function (o) { a.os.push(o); }); b.fcs.forEach(function (f) { if (a.fcs.indexOf(f) === -1) a.fcs.push(f); }); b.hrs.forEach(function (h) { if (a.hrs.indexOf(h) === -1) a.hrs.push(h); }); list.splice(j, 1); }
+    }
+    list.forEach(function (s) { s.fc = s.fcs.join(' · '); s.hours = s.hrs.join(' / '); s.b = dispBundles(s.os); s.kg = s.os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0); });
     return list;
   }
   /** 이 착지들을 한 대에 실을 때: 경로(상차지에서 가까운 순 → 가장 짧게), 직선 km, 합쳐도 되는지 */
@@ -6983,18 +6999,19 @@
       var others = all.filter(function (s) { return s !== seed && s.from === seed.from && s.b <= ADV_MIX; }), combos = [];
       others.forEach(function (a, i) { combos.push([seed, a]); others.slice(i + 1).forEach(function (b) { combos.push([seed, a, b]); }); });
       var costOf = function (ss) { return advCost(D, ss.reduce(function (a, s) { return a.concat(s.os); }, [])); };
-      var aloneCost = {}; [seed].concat(others).forEach(function (s) { aloneCost[s.fc] = costOf([s]); });
+      var aloneCost = {}; [seed].concat(others).forEach(function (s) { aloneCost[s.key] = costOf([s]); });
       combos.forEach(function (ss) {
         var b = ss.reduce(function (a, s) { return a + s.b; }, 0), kg = ss.reduce(function (a, s) { return a + s.kg; }, 0); if (b > ADV_MIX || kg > ADV_KG || ss.length > ADV_STOPS) return;
         var r = advRoute(ss); if (!r.fit) return;
-        var h = 0; for (var i = 0; i < ss.length; i++) for (var j = i + 1; j < ss.length; j++) h += hist[[ss[i].fc, ss[j].fc].sort().join('|')] || 0;
-        var c = costOf(ss), sep = ss.reduce(function (a, s) { return a == null || !aloneCost[s.fc] ? null : a + aloneCost[s.fc].total; }, 0), save = c && sep != null ? sep - c.total : null;
+        var h = 0; for (var i = 0; i < ss.length; i++) for (var j = i + 1; j < ss.length; j++) ss[i].fcs.forEach(function (x) { ss[j].fcs.forEach(function (y) { h += hist[[x, y].sort().join('|')] || 0; }); });
+        var gap = 0; for (var i2 = 0; i2 < ss.length; i2++) for (var j2 = i2 + 1; j2 < ss.length; j2++) if (ss[i2].g && ss[j2].g) gap = Math.max(gap, hav(ss[i2].g, ss[j2].g));
+        var c = costOf(ss), sep = ss.reduce(function (a, s) { return a == null || !aloneCost[s.key] ? null : a + aloneCost[s.key].total; }, 0), save = c && sep != null ? sep - c.total : null;
         if (save != null && save <= 0) return; // 합쳐서 더 비싸면 추천 안 함
         var extra = r.km != null ? r.km - Math.max.apply(null, ss.map(function (s) { return hav(s.o, s.g); })) : 10;
         var why = [why0, '합치면 ' + (ss.length - 1) + '대 줄어요 · ' + r.why];
         if (h) why.push('지난 2달 같이 보낸 적 ' + h + '번');
         if (save != null) why.push('예상 운임 ' + won(c.total) + '원 (따로 보내면 ' + won(sep) + '원 → ' + won(save) + '원 아낌)');
-        cands.push({ trucks: [{ stops: r.order, route: r }], why: why, score: (ss.length - 1) * 100000 + (save || 0) + b * 3000 + h * 5000 - extra * 1000 });
+        cands.push({ trucks: [{ stops: r.order, route: r }], why: why, score: (ss.length - 1) * 100000 + (save || 0) + b * 3000 + h * 5000 - extra * 1000 - gap * 8000 }); // 가까울수록 우선
       });
     }
     return cands.sort(function (a, b) { return b.score - a.score; }).slice(0, 6);
