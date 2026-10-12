@@ -1422,3 +1422,9 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .dp-mtab tr.dp-msum td { background: #F3F4F6; border-top: 2px solid #999; }
 .tr-kpis .dp-mtot { background: #1F2937; color: #fff; } .tr-kpis .dp-mtot small, .tr-kpis .dp-mtot .muted { color: #D1D5DB; }
 .dp-mtab th, .dp-mtab td { text-align: center; } .dp-mtab th.left, .dp-mtab td.left { text-align: left; } .dp-mtab td.num, .dp-mtab th:nth-last-child(-n+3) { text-align: right; }
+
+/* AI 도움 */
+.btn-ai { background: linear-gradient(135deg, #6D28D9, #2563EB); color: #fff; border-color: transparent; }
+.adv-truck { border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.adv-h { margin-bottom: 6px; } .adv-tb { width: 100%; font-size: 13px; } .adv-tb td { padding: 5px 8px; }
+.adv-why { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
