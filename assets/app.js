@@ -6829,7 +6829,14 @@
     var st = dispState(); st.dirty[tab] = 1; var el = $('#dpSaveSt'); if (el) el.innerHTML = '<span class="muted">저장 대기…</span>';
     clearTimeout(dispSaveTimer); dispSaveTimer = setTimeout(dispSaveNow, 900);
   }
+  // 저장은 한 번에 하나만: 저장 중에 또 고치면 끝난 뒤 이어서 저장 (겹치면 서버 잠금 대기가 길어져 시간초과가 나요)
+  var dispSaving = null, dispSaveAgain = false;
   function dispSaveNow() {
+    if (dispSaving) { dispSaveAgain = true; return dispSaving; }
+    dispSaving = dispSaveRun(0).then(function () { dispSaving = null; if (dispSaveAgain) { dispSaveAgain = false; return dispSaveNow(); } });
+    return dispSaving;
+  }
+  function dispSaveRun(tries) {
     var st = dispState(), tabs = Object.keys(st.dirty); if (!st.tabs || !tabs.length) return Promise.resolve();
     st.dirty = {}; var el = $('#dpSaveSt'); if (el) el.innerHTML = '<span class="spinner dark"></span> 저장 중';
     var fresh = false;
@@ -6839,8 +6846,27 @@
         .then(function (r) { r.trucks.forEach(function (t) { var x = D.trucks.filter(function (y) { return y.no === t.no; })[0]; if (x) { if (t.token && !x.token) fresh = true; x.token = t.token; } }); D.receipts = r.receipts || D.receipts; if (r.drivers) st.drivers = r.drivers; })
         .catch(function (err) { st.dirty[tab] = 1; throw err; });
     })).then(function () { var pin = $('#dpPasteIn'); if (fresh && state.view === 'dispatch' && st.view === 'day' && !(pin && pin.value.trim())) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
-      .catch(function (err) { toast('저장하지 못했어요: ' + err.message, 'err'); var e = $('#dpSaveSt'); if (e) e.innerHTML = '<span class="err-text">저장 안 됨</span>'; });
+      .catch(function (err) {
+        // 다른 사람 저장과 겹쳐 잠금 대기가 끝난 경우: 잠깐 뒤 조용히 다시 저장 (최대 3번)
+        if (/잠금|lock/i.test(err.message || '') && tries < 3) { var e0 = $('#dpSaveSt'); if (e0) e0.innerHTML = '<span class="spinner dark"></span> 다시 저장 중'; return new Promise(function (ok) { setTimeout(ok, 1500 + tries * 1500); }).then(function () { return dispSaveRun(tries + 1); }); }
+        toast('저장하지 못했어요: ' + err.message, 'err'); var e = $('#dpSaveSt'); if (e) e.innerHTML = '<span class="err-text">저장 안 됨</span>';
+      });
   }
+  // 하차 가능시간 말풍선: 화면에 고정해 띄워요 (표 안에 그리면 마지막 줄에서 세로 스크롤이 생겨요)
+  (function () {
+    var tip = null, cur = null;
+    var hide = function () { cur = null; if (tip) tip.style.display = 'none'; };
+    document.addEventListener('mouseover', function (e) {
+      var tr = e.target.closest && e.target.closest('.dp-tt tbody tr'), td = tr && tr.querySelector('td.tt-fc[data-hrs]');
+      if (!td) { hide(); return; } if (td === cur) return; cur = td;
+      if (!tip) { tip = document.createElement('div'); tip.className = 'dp-hrs-tip'; document.body.appendChild(tip); }
+      tip.textContent = td.dataset.hrs; tip.style.display = 'block';
+      var r = td.getBoundingClientRect(), h = tip.offsetHeight, w = tip.offsetWidth;
+      tip.style.left = Math.max(4, Math.min(r.left, window.innerWidth - w - 4)) + 'px';
+      tip.style.top = (r.bottom + h + 4 > window.innerHeight ? r.top - h - 2 : r.bottom + 2) + 'px';
+    });
+    window.addEventListener('scroll', hide, true);
+  })();
   function renderDispatch() {
     var st = dispState();
     syncRoute();

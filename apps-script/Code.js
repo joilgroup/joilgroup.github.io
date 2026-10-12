@@ -2071,7 +2071,8 @@ function dispSave_(session, req) {
       if (ch) sh.getRange(2, 6, vals.length, 2).setValues(vals.map(function (r) { return [r[5], r[6]]; }));
     }
     var ts = dispTrkSheet_(), tokens = {}, olds = {}, cost = canCost_(session), partner = session.role === 'partner';
-    if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = tv.length - 1; i >= 0; i--) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { var on = Number(tv[i][2]); if (tv[i][11]) tokens[on] = String(tv[i][11]); olds[on] = dispTrkRow_(tv[i]); ts.deleteRow(i + 2); } }
+    var hit = []; // 이 업체·날짜의 기존 호차 줄 (지우지 않고 그 자리에 덮어써서 빠르게)
+    if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = 0; i < tv.length; i++) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { var on = Number(tv[i][2]); if (tv[i][11]) tokens[on] = String(tv[i][11]); olds[on] = dispTrkRow_(tv[i]); hit.push(i); } }
     var trucks = req.trucks || [];
     // 협력사: 이미 있는 호차의 차량정보 5칸·상태만 (호차 추가·메모·비용은 그대로)
     if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, status: g.status != null && (g.status !== '정보넘김' || o.status === '정보넘김') ? g.status : o.status }; }); }
@@ -2082,6 +2083,12 @@ function dispSave_(session, req) {
       var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
       return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3);
     });
+    if (hit.length && hit[hit.length - 1] - hit[0] === hit.length - 1) {
+      var top = hit[0] + 2, k = Math.min(hit.length, add.length);
+      if (k) ts.getRange(top, 1, k, DISP_TRK_HEADER.length).setValues(add.slice(0, k));
+      if (hit.length > k) ts.deleteRows(top + k, hit.length - k);
+      add = add.slice(k);
+    } else for (var h = hit.length - 1; h >= 0; h--) ts.deleteRow(hit[h] + 2);
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
     try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
     var out = dispDay_(cust, date); out.drivers = driverList_(); return out;
@@ -2274,13 +2281,14 @@ function driverCollect_(session, date, trucks) {
     if (!car && !(drv && ph)) return;
     var k = driverKey_(car, drv, ph), i = idx[k];
     if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_()]); idx[k] = rows.length; rows.push([]); return; }
-    var r = sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length), v = r.getValues()[0], n = Number(v[7]) || 0, last = textDate_(v[8]);
+    var r = sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length), v = (rows[i].length ? rows[i] : r.getValues()[0]).slice(), n = Number(v[7]) || 0, last = textDate_(v[8]);
+    var sig = function (x) { return [1, 2, 3, 4, 5].map(function (j) { return dispTxt_(x[j]); }).concat([Number(x[7]) || 0, textDate_(x[8])]).join('|'); }, was = sig(v);
     // 잘린 값(예: '홍길동' → '홍')이 기존 값을 덮지 않게: 새 값이 기존 값의 앞부분이면 기존 값 유지
     var keep = function (oldV, newV) { oldV = dispTxt_(oldV); return newV && !(oldV.length > newV.length && oldV.indexOf(newV) === 0) ? newV : oldV; };
     v[2] = q(keep(v[2], drv)); v[3] = q(keep(v[3], ph)); if (ton) v[4] = q(ton); else v[4] = q(dispTxt_(v[4]));
     v[1] = q(dispTxt_(v[1]) || car); v[5] = q(dispTxt_(v[5]));
     if (last !== date) { v[7] = n + 1; if (!last || date > last) v[8] = "'" + date; else v[8] = "'" + last; }
-    r.setValues([v]);
+    if (sig(v) !== was) { r.setValues([v]); rows[i] = v; } // 바뀐 게 없으면 쓰지 않음 (저장 시간 줄이기)
   });
 }
 function driverSave_(session, req) {
