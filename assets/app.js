@@ -146,7 +146,7 @@
     var wrap = document.createElement('div');
     wrap.className = 'backdrop';
     wrap.innerHTML =
-      '<div class="modal ' + (opts.wide ? 'wide' : '') + '" role="dialog" aria-modal="true">' +
+      '<div class="modal ' + (opts.wide ? 'wide' : '') + (opts.cls ? ' ' + opts.cls : '') + '" role="dialog" aria-modal="true">' +
       '<div class="head"><div class="eyebrow">' + esc(opts.eyebrow || '안내') + '</div><h2>' + esc(opts.title) + '</h2></div>' +
       '<div class="body">' + opts.body + '</div>' +
       '<div class="foot">' + (opts.foot || '<button class="btn btn-primary" data-close>확인</button>') + '</div></div>';
@@ -7048,7 +7048,7 @@
         }
       }
       var left = advStops(D).length;
-      modal({ wide: true, eyebrow: D.tab + ' · ' + D.date + ' · 남은 착지 ' + left + '곳', title: 'AI 도움 · 배차 추천',
+      modal({ wide: true, cls: 'modal-xl', eyebrow: D.tab + ' · ' + D.date + ' · 남은 착지 ' + left + '곳', title: 'AI 도움 · 배차 추천',
         body: '<div id="advBody"></div>',
         foot: '<button class="btn" data-close>닫기</button><button class="btn" id="advNext">다른 추천</button><button class="btn" id="advOk">수락</button><button class="btn btn-primary" id="advOkNext">수락하고 다음 추천</button>',
         onMount: function (m, close) {
@@ -7144,7 +7144,7 @@
     Promise.all([advEnsureGeo(addrs), advHistory(D).catch(function () { return {}; }), loadDispRates()]).then(function (z) {
       var hist = z[1] || {}, plan = advPlanAll(D, hist), out = [], sel = 0, nSites = advStops(D).length;
       plan.forEach(function (c, i) { c.order = i; });
-      modal({ wide: true, eyebrow: D.tab + ' · ' + D.date, title: 'AI 한번에 짜기',
+      modal({ wide: true, cls: 'modal-xl', eyebrow: D.tab + ' · ' + D.date, title: 'AI 한번에 짜기',
         body: '<div id="paBody"></div>',
         foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="paApply">모두 적용</button>',
         onMount: function (m, close) {

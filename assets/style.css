@@ -1446,3 +1446,13 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .pa-list { max-height: 62vh; overflow: auto; padding-right: 4px; }
 .pa-x { color: #C0392B; } .pa-out { border: 1px dashed #C0392B; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: #FFF7F5; }
 .pa-orow { display: flex; align-items: center; gap: 8px; margin: 4px 0; } .pa-orow select { width: auto; max-width: 280px; }
+
+/* AI 창: 크게 (가로 스크롤 없이) */
+.modal.wide.modal-xl { max-width: min(1760px, 97vw); width: 97vw; max-height: 95vh; }
+.modal-xl .adv-grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; }
+.modal-xl .pa-list { max-height: calc(95vh - 250px); overflow-y: auto; overflow-x: hidden; }
+.modal-xl .adv-map { height: calc(95vh - 250px); min-height: 420px; }
+.modal-xl .adv-tb { table-layout: fixed; }
+.modal-xl .adv-tb td { overflow-wrap: anywhere; vertical-align: middle; }
+.modal-xl .adv-tb td:first-child { width: 34px; } .modal-xl .adv-tb td.num { width: 88px; } .modal-xl .adv-tb td.adv-mv { width: 104px; }
+@media (max-width: 900px) { .modal-xl .adv-map { height: 360px; } .modal-xl .pa-list { max-height: none; } }
