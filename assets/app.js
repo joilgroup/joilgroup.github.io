@@ -6823,7 +6823,10 @@
       s.price = p || null;
       if (!p) miss.push(s.fc); else if (!best || p > best.p) best = { p: p, s: s };
     });
-    return { ton: ton, origin: origin, stops: stops, miss: miss, max: best, total: best ? best.p + STOP_FEE * (stops.length - 1) : null };
+    // 경유비는 하차지(주소)가 다른 곳만: 주소가 같으면 센터 이름·띄어쓰기가 달라도 한 곳
+    var places = []; stops.forEach(function (s) { var k = advAddrKey(s.d.addr || s.fc); if (places.indexOf(k) === -1) places.push(k); });
+    var vias = Math.max(0, places.length - 1);
+    return { ton: ton, origin: origin, stops: stops, miss: miss, max: best, vias: vias, total: best ? best.p + STOP_FEE * vias : null };
   }
   /* 추천 순서 (직선거리 기준) */
   function hav(a, b) { var R = 6371, t = Math.PI / 180, dLa = (b.lat - a.lat) * t, dLo = (b.lng - a.lng) * t, x = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(dLo / 2) * Math.sin(dLo / 2); return 2 * R * Math.asin(Math.sqrt(x)); }
@@ -7345,12 +7348,13 @@
   /** 운송비 칸: 두 줄 (톤수 또는 회차 / 금액) */
   function truckCostCell(D, no, t, cost) {
     var base = null, tip = [], top;
-    if (t.status === '회차') { base = Number(t.retCost) || 0; top = '회차'; tip.push('회차 ' + won(base) + '원'); }
-    else if (cost) { base = cost.total; top = cost.ton; if (cost.max) tip.push('가장 비싼 구간 ' + cost.max.s.fc + ' ' + won(cost.max.p) + '원 + 경유 ' + (cost.stops.length - 1) + '곳 × ' + won(STOP_FEE) + '원 = 단가 ' + won(cost.total) + '원'); }
-    var ex = DISP_EXTRA.filter(function (x) { return Number(t[x[0]]); }); ex.forEach(function (x) { tip.push(x[1] + ' ' + won(t[x[0]]) + '원'); });
+    if (t.status === '회차') { base = Number(t.retCost) || 0; top = '회차'; tip.push('회차 ' + won(base)); }
+    else if (cost) { base = cost.total; top = cost.ton; if (cost.max) { tip.push(won(cost.max.p)); if (cost.vias) tip.push('경유 ' + cost.vias + '곳 ' + won(STOP_FEE * cost.vias)); } }
+    var ex = DISP_EXTRA.filter(function (x) { return Number(t[x[0]]); }); ex.forEach(function (x) { tip.push({ wait: '대기', support: '운임지원' }[x[0]] + ' ' + won(t[x[0]])); });
     if (top == null && !ex.length) return '–';
     var sum = (base || 0) + ex.reduce(function (a, x) { return a + Number(t[x[0]]); }, 0), miss = cost && t.status !== '회차' && cost.miss.length;
-    return '<div class="tt-cv" title="' + esc(tip.join('\n')) + '"><div class="tt-ton">' + esc(top || '') + (ex.length ? ' <small>(' + ex.map(function (x) { return x[1]; }).join('·') + ' 포함)</small>' : '') + '</div>' +
+    if (tip.length > 1) tip = [tip.join(' + ') + ' = ' + won(sum)];
+    return '<div class="tt-cv" title="' + esc(tip.join('')) + '"><div class="tt-ton">' + esc(top || '') + (ex.length ? ' <small>(' + ex.map(function (x) { return x[1]; }).join('·') + ' 포함)</small>' : '') + '</div>' +
       '<div class="tt-amt">' + (t.status === '회차' && !base ? '<span class="err-text">금액 입력</span>' : base == null && !ex.length ? '–' : won(sum)) + '</div>' +
       (miss ? '<div class="err-text small">단가 없음: ' + esc(cost.miss.join(', ')) + '</div>' : '') + '</div>';
   }
@@ -7640,7 +7644,7 @@
     var st = dispState(), parsed = null;
     var head = ['출발', '도착', '매칭', '거리'].concat(RATE_TONS.map(function (t) { return t[0]; }));
     modal({ wide: true, eyebrow: '배차시트 · 분석 권한자만', title: '매입 단가표',
-      body: '<p class="muted small" style="margin:0 0 8px">매입 = 착지 중 가장 비싼 구간 단가 + 경유지마다 ' + won(STOP_FEE) + '원 · 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동 (예: 2파렛이라도 1,100kg이면 2.5톤)</p>' +
+      body: '<p class="muted small" style="margin:0 0 8px">매입 = 착지 중 가장 비싼 구간 단가 + 경유지마다 ' + won(STOP_FEE) + '원(주소가 같은 하차지는 한 곳) · 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동 (예: 2파렛이라도 1,100kg이면 2.5톤)</p>' +
         '<div class="actions" style="margin-bottom:8px"><button class="btn btn-sm" id="drTpl">양식 받기</button><label class="btn btn-sm">엑셀 올리기<input type="file" id="drFile" accept=".xlsx,.xls" hidden></label><span class="small muted" id="drNow"></span></div>' +
         '<textarea class="input" id="drIn" rows="4" placeholder="또는 구글시트 단가표에서 제목 줄(출발·도착·매칭·거리·1톤…14톤)까지 복사해 붙여넣기"></textarea>' +
         '<div class="actions" style="margin-top:6px"><span class="small" id="drInfo"></span><button class="btn btn-sm btn-primary" id="drSave" disabled>단가표 바꾸기</button></div>' +
@@ -8733,7 +8737,7 @@
       '<b>기사 링크</b>: 문자 끝에 링크가 붙어요. 기사님은 로그인 없이 착지 순서·주소·하차시간·품목·연락처(바로 전화)·카카오맵/티맵 길안내를 보고, 착지마다 <b>싸인 받은 거래명세서 사진</b>을 올려요. 사무실에서는 호차마다 "인수증 n/착지 수"와 ✅를 눌러 사진을 봐요. 링크는 기한 없이 열리고, 사진 올리기는 배차일 60일까지 돼요. 기사 화면 맨 위에 경로 지도가 나오고, 상차지 설정에서 올린 상차지 사진(2장까지, 설명 포함)도 상차지 카드에 보여요.',
       '<b>지도</b>: 호차 카드의 지도 버튼을 누르면 상차지(🏭)와 착지 ①②③ 핀을 하차 순서대로 직선으로 이어 보여 줘요.',
       '<b>추천 순서</b>: 착지가 2곳 이상이면 상차지에서 출발하는 직선거리로 더 짧은 하차 순서를 찾아 보여줘요. 하차 가능시간도 확인하고 "이 순서로"를 누르세요.',
-      '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원, 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동이에요 (무게: 1,000kg 1톤 · 2,500kg 2.5톤 · 3,500kg 3.5톤 · 5,000kg 5톤 · 10,000kg 11톤 · 그 이상 14톤 / 파렛: 2개 1톤 · 3개 2.5톤 · 4개 3.5톤 · 10개 5톤 · 16개 11톤 · 그 이상 14톤). 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
+      '<b>매입 단가표</b>(분석 권한자만): 양식을 받아 구글시트 단가표를 붙여넣거나 엑셀로 올려요. 매입 = 착지 중 가장 비싼 구간 + 경유지마다 3만원(주소가 같은 하차지는 한 곳으로 세요), 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동이에요 (무게: 1,000kg 1톤 · 2,500kg 2.5톤 · 3,500kg 3.5톤 · 5,000kg 5톤 · 10,000kg 11톤 · 그 이상 14톤 / 파렛: 2개 1톤 · 3개 2.5톤 · 4개 3.5톤 · 10개 5톤 · 16개 11톤 · 그 이상 14톤). 센터별 도착지는 주소로 자동 연결되고, 안 맞으면 단가표 창에서 고쳐 두면 기억해요.',
       '모든 배정은 자동 저장되고, <b>월별 기록</b>에서 날짜별 운행 대수·번들·kg·차량/기사별 횟수를 보고 엑셀로 받을 수 있어요.'
     ]]);
     if (hq) sec.push(['work', '업무 매뉴얼 · 담당표 · 문의 기록', [
