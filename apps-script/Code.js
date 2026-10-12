@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -194,12 +194,13 @@ function handle_(req) {
     case 'dispatch.monthAll': return dispScrub_(dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); }), session);
     case 'dispatch.tabs': return { tabs: dispTabs_(req.cust) };
     case 'dispatch.tabsSave': return dispTabsSave_(req);
-    case 'dispatch.import': return dispImport_(session, req);
+    case 'dispatch.import': var imr = dispImport_(session, req); Object.keys(imr.dates || {}).forEach(function (d) { dispTouch_(req.cust, d); }); return imr;
     case 'dispatch.save': return dispScrub_(dispSave_(session, req), session);
-    case 'dispatch.deleteOrders': return dispDeleteOrders_(session, req);
-    case 'dispatch.note': return dispNote_(req);
-    case 'dispatch.copyOrders': return dispCopyOrders_(session, req);
-    case 'dispatch.editOrder': return dispEditOrder_(session, req);
+    case 'dispatch.stamp': return { stamps: dispStamps_(req.keys, req.date) };
+    case 'dispatch.deleteOrders': return dispTouched_(req, dispDeleteOrders_(session, req));
+    case 'dispatch.note': return dispTouched_(req, dispNote_(req));
+    case 'dispatch.copyOrders': var cpr = dispCopyOrders_(session, req); dispTouch_(req.cust, req.toDate); return dispTouched_(req, cpr);
+    case 'dispatch.editOrder': return dispTouched_(req, dispEditOrder_(session, req));
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
     case 'dispatch.mapSave': return dispMapSave_(session, req);
@@ -1965,7 +1966,7 @@ function dispDay_(cust, date) {
   return { orders: dispOrders_(cust, eq), trucks: dispTrucks_(cust, eq), days: days, receipts: dispReceipts_(cust, date) };
 }
 /* ───────────── 협력사 계정: 배차시트만 (견적·분석·배차검색·관리자 등은 전부 막음) ───────────── */
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
 function partnerHandle_(session, action, req) {
   if (PARTNER_ACTIONS.indexOf(action) === -1) throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
   var ok = function (k) { if (session.dispTabs.indexOf(String(k)) === -1) throw new Error('볼 수 없는 탭이에요.'); return String(k); };
@@ -1980,6 +1981,7 @@ function partnerHandle_(session, action, req) {
     case 'dispatch.dayAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispDay_(k, req.date); }), session);
     case 'dispatch.monthAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); }), session);
     case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
+    case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: dispStamps_(req.keys, req.date) };
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
     case 'dispatch.rates': return dispRatesRead_(); // 운송비를 보기만 (단가표 수정은 못 함)
     case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
@@ -2056,9 +2058,32 @@ function dispImport_(session, req) {
   } finally { lock.releaseLock(); }
 }
 /** 하루치 호차 배정·순서·차량정보 저장 */
+/* 여러 사람이 같이 볼 때: 바뀐 시각(업체·날짜별)을 남겨 두고, 화면은 15초마다 이것만 물어봐요 */
+function dispStampKey_(cust, date) { return 'DST|' + cust + '|' + date; }
+function dispTouch_(cust, date) { try { var n = String(Date.now()); PropertiesService.getScriptProperties().setProperty(dispStampKey_(String(cust || ''), String(date || '')), n); return Number(n); } catch (e) { return 0; } }
+function dispTouched_(req, out) { dispTouch_(req.cust, req.date); return out; }
+function dispStamps_(keys, date) { date = dispDate_(date); var pr = PropertiesService.getScriptProperties(), o = {}; (keys || []).slice(0, 20).forEach(function (k) { o[k] = Number(pr.getProperty(dispStampKey_(String(k), date))) || 0; }); return o; }
+/** 바뀐 칸만 보낸 저장(patch)을 지금 서버에 있는 호차들과 합쳐서 전체 목록으로 만들어요 (다른 사람이 바꾼 칸은 그대로 둠) */
+var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support']);
+function dispMerge_(cust, date, req) {
+  var ts = dispTrkSheet_(), cv = ts.getLastRow() >= 2 ? ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues() : [];
+  var list = cv.filter(function (r) { return String(r[0]) === cust && textDate_(r[1]) === date; }).map(dispTrkRow_), used = [];
+  var byTok = function (tok) { return tok ? list.filter(function (t) { return t.token === tok; })[0] : null; };
+  var byNo = function (no) { return list.filter(function (t) { return t.no === no && used.indexOf(t) === -1; })[0]; };
+  (req.drop || []).forEach(function (d) { var x = byTok(d.token) || (d.token ? null : byNo(Number(d.no))); if (x) list.splice(list.indexOf(x), 1); });
+  var pt = (req.trucks || []).slice().sort(function (a, b) { return (a.token ? 0 : 1) - (b.token ? 0 : 1); }); // 링크 코드 있는 호차부터 (번호가 밀린 경우)
+  pt.forEach(function (p) {
+    var x = byTok(p.token) || byNo(Number(p.from != null ? p.from : p.no));
+    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0 }; list.push(x); }
+    used.push(x); x.no = Math.max(1, Math.round(Number(p.no)) || 1);
+    var set = p.set || {}; DISP_PATCH_KEYS.forEach(function (k) { if (set[k] !== undefined) x[k] = set[k]; });
+  });
+  return list;
+}
 function dispSave_(session, req) {
   var cust = dispCust_(req.cust), date = dispDate_(req.date), lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
+    if (req.patch) req = { orders: req.orders, trucks: dispMerge_(cust, date, req) };
     var sh = cacheSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), want = {};
     if (session.role !== 'partner') (req.orders || []).forEach(function (o) { want[String(o.id)] = o; });
     if (sh.getLastRow() >= 2 && Object.keys(want).length) {
@@ -2098,7 +2123,7 @@ function dispSave_(session, req) {
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
     if (Object.keys(moved).length) dispReceiptsMove_(cust, date, moved);
     try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
-    var out = dispDay_(cust, date); out.drivers = driverList_(); return out;
+    var out = dispDay_(cust, date); out.drivers = driverList_(); out.stamp = dispTouch_(cust, date); return out;
   } finally { lock.releaseLock(); }
 }
 /** 회차 오더 다시 배차: 고른 오더를 다른(또는 같은) 날짜에 호차 미배정으로 복사 (공지는 빼고, 어디서 왔는지 표시) */
@@ -2266,6 +2291,7 @@ function drvUpload_(req) {
   var name = (tr.date + '_' + tr.cust.replace(/\//g, '-') + '_' + tr.no + '호차_' + fc + '_' + Utilities.formatDate(new Date(), TZ, 'HHmmss')).replace(/[\\/:*?"<>|]/g, '_') + '.jpg';
   var file = receiptFolder_().createFile(Utilities.newBlob(bytes, 'image/jpeg', name));
   cacheSheet_(SHEET_RECEIPTS, RECEIPT_HEADER).appendRow([newId_('R'), tr.cust, "'" + tr.date, tr.no, fc, file.getId(), now_(), bytes.length]);
+  dispTouch_(tr.cust, tr.date); // 사무실 화면에 인수증이 바로 보이게
   return drvGet_(req.t);
 }
 function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); var ph = placePhotos_(); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { var id = String(r[0]); return { id: id, name: String(r[1]), addr: String(r[2] || ''), time: String(r[3] || ''), contact: String(r[4] || ''), memo: String(r[5] || ''), rateFrom: String(r[8] || ''), photos: ph.filter(function (x) { return x.place === id; }).map(function (x) { return { id: x.id, cap: x.cap }; }) }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }

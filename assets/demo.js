@@ -273,6 +273,10 @@
     return { notes: dn, date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: pl, stops: stops, receipts: wk('rcpt').filter(function (x) { return x.cust === tr.cust && x.date === tr.date && x.no === tr.no; }).map(function (x) { return { fc: x.fc, at: x.at }; }) };
   }
   function handle(req) {
+    if (/^dispatch\./.test(req.action || '')) { var fr = load(); if (fr) store = fr; } // 다른 창(다른 계정)에서 바꾼 것도 보이게
+    if (/^dispatch\.(save|import|deleteOrders|copyOrders|editOrder|note)$/.test(req.action) && req.cust) { // 바뀐 시각 (15초 확인용)
+      var dsn = Date.now(), dsk = store.dstamp || (store.dstamp = {}); [req.date, req.toDate].concat((req.rows || []).map(function (r) { return r.date; })).forEach(function (d) { if (d) dsk[req.cust + '|' + d] = dsn; });
+    }
     if (req.action === 'login') {
       var u = store.users.filter(function (u) { return u.id === String(req.id || '').trim(); })[0];
       if (!u || !u.active || u.pw !== req.password) fail('아이디 또는 비밀번호가 올바르지 않습니다.');
@@ -288,7 +292,7 @@
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
       if (req.action === 'dispatch.tabs') { return { tabs: demoTabs(req.cust).filter(function (t) { return !t.hidden && me.dispTabs.indexOf(req.cust + t.suf) !== -1; }) }; }
     }
@@ -486,7 +490,19 @@
         (req.rows || []).forEach(function (x, i) { if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date)) fail('날짜 형식은 YYYY-MM-DD 입니다: ' + x.date); if (dh[dkn(x.key)]) { dres.skipped++; return; } dh[dkn(x.key)] = 1; dmax[x.date] = (dmax[x.date] || 0) + 1; dres.dates[x.date] = (dres.dates[x.date] || 0) + 1; dres.added++;
           wk('dispOrd').push({ id: calId('D') + i, cust: req.cust, date: x.date, key: x.key, d: x.d, truck: '', seq: dmax[x.date], by: me.name, at: dnow }); });
         save(); return dres;
+      case 'dispatch.stamp':
+        var dst = store.dstamp || {}, dso = {}; (req.keys || []).forEach(function (k) { dso[k] = dst[k + '|' + req.date] || 0; }); return { stamps: dso };
       case 'dispatch.save':
+        if (req.patch) { // 화면이 바뀐 칸만 보냄 → 지금 저장된 호차와 합쳐서 전체 목록으로 (서버 dispMerge_와 같은 규칙)
+          var pl = wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date === req.date; }).map(function (t) { return Object.assign({}, t); }), pu = [];
+          var pTok = function (k) { return k ? pl.filter(function (t) { return t.token === k; })[0] : null; }, pNo = function (n) { return pl.filter(function (t) { return t.no === n && pu.indexOf(t) === -1; })[0]; };
+          (req.drop || []).forEach(function (d) { var x = pTok(d.token) || (d.token ? null : pNo(Number(d.no))); if (x) pl.splice(pl.indexOf(x), 1); });
+          (req.trucks || []).slice().sort(function (a, b) { return (a.token ? 0 : 1) - (b.token ? 0 : 1); }).forEach(function (p) {
+            var x = pTok(p.token) || pNo(Number(p.from != null ? p.from : p.no)); if (!x) { x = { no: Number(p.no), token: '' }; pl.push(x); }
+            pu.push(x); x.no = Number(p.no); Object.keys(p.set || {}).forEach(function (k) { x[k] = p.set[k]; });
+          });
+          req = Object.assign({}, req, { patch: 0, trucks: pl });
+        }
         var dw = {}; if (me.role !== 'partner') (req.orders || []).forEach(function (o) { dw[o.id] = o; });
         wk('dispOrd').forEach(function (o) { var w = dw[o.id]; if (w && o.cust === req.cust && o.date === req.date) { o.truck = w.truck === '' || w.truck == null ? '' : Number(w.truck); o.seq = Number(w.seq) || 0; } });
         var dtok = {}; wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date && t.token) dtok[t.no] = t.token; });
@@ -498,7 +514,7 @@
         (req.trucks || []).forEach(function (t) { var car = String(t.car || '').trim(), dr = String(t.driver || '').trim(), ph = String(t.phone || '').trim(); if (!car && !(dr && ph)) return; var k = dKey(car, dr, ph), x = wk('drivers').filter(function (v) { return dKey(v.car, v.driver, v.phone) === k; })[0];
           if (!x) { wk('drivers').push({ id: calId('V'), car: car, driver: dr, phone: ph, ton: String(t.ton || '').trim(), memo: '', pin: false, n: 1, last: req.date }); return; }
           if (dr) x.driver = dr; if (ph) x.phone = ph; if (t.ton) x.ton = String(t.ton).trim(); if (x.last !== req.date) { x.n++; if (req.date > x.last) x.last = req.date; } });
-        save(); var dsv = handle(Object.assign({}, req, { action: 'dispatch.day' })); dsv.drivers = handle({ action: 'drivers.list', token: req.token }).drivers; return dsv;
+        save(); var dsv = handle(Object.assign({}, req, { action: 'dispatch.day' })); dsv.stamp = (store.dstamp || {})[req.cust + '|' + req.date] || 0; dsv.drivers = handle({ action: 'drivers.list', token: req.token }).drivers; return dsv;
       case 'drivers.list': return { drivers: wk('drivers').slice().sort(function (a, b) { return (b.pin - a.pin) || (b.n - a.n) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); }) };
       case 'drivers.save':
         var dv = req.driver || {}; if (!String(dv.car || '').trim() && !String(dv.driver || '').trim()) fail('차량정보나 운전원을 넣으세요.');

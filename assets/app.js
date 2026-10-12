@@ -6649,14 +6649,121 @@
     DISP_TABS = list.filter(function (t) { return !t.hidden; }).map(function (t) { return [t.name, t.suf, t.prefix]; });
     if (!DISP_TABS.some(function (t) { return t[0] === st.tab; })) st.tab = DISP_TABS[0][0];
   }
+  /* ── 여러 사람이 같이 볼 때: 바뀐 칸만 저장 + 15초마다 조용히 확인해서 다른 사람 변경을 그 칸만 반영 ── */
+  var DISP_SYNC_KEYS = ['car', 'driver', 'phone', 'time', 'ton', 'memo', 'status', 'retCost', 'wait', 'support'];
+  function dispNv(v) { return v == null ? '' : String(v); }
+  function dispPrep(r, tab, date, key) {
+    r = r || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = tab; r.date = date; r.key = key;
+    r.orders.forEach(function (x) { dispCleanD(x.d); }); r.trucks.forEach(function (x) { x.status = dispStatusFix(x.status); }); return r;
+  }
+  /** 서버에서 마지막으로 받은 상태(이것과 다른 칸 = 내가 고쳤는데 아직 저장 안 된 칸) */
+  function dispSnap(S) {
+    var b = { o: {}, t: [] };
+    S.orders.forEach(function (o) { b.o[o.id] = { truck: o.truck, seq: o.seq }; });
+    S.trucks.forEach(function (t) { var c = { no: t.no, token: t.token || '' }; DISP_SYNC_KEYS.forEach(function (k) { c[k] = t[k]; }); b.t.push(c); });
+    return b;
+  }
+  /** 저장할 것: 바뀐 오더(호차·순서), 바뀐 호차 칸, 없어진 호차 */
+  function dispPatch(D) {
+    var b = D.base || { o: {}, t: [] }, used = dispTrucks(D), orders = [], trucks = [], drop = [], seen = [];
+    D.orders.forEach(function (o) { var x = b.o[o.id]; if (!x || dispNv(x.truck) !== dispNv(o.truck) || dispNv(x.seq) !== dispNv(o.seq)) orders.push({ id: o.id, truck: o.truck, seq: o.seq }); });
+    D.trucks.forEach(function (t) {
+      if (used.indexOf(t.no) === -1) return;
+      var bt = t.token ? b.t.filter(function (x) { return x.token === t.token; })[0] : null, set = {}, n = 0;
+      DISP_SYNC_KEYS.forEach(function (k) { if (t[k] === undefined) return; if (!bt || dispNv(bt[k]) !== dispNv(t[k])) { set[k] = t[k]; n++; } });
+      if (bt) seen.push(bt);
+      if (!bt || n || bt.no !== t.no) trucks.push({ no: t.no, from: bt ? bt.no : null, token: t.token || '', set: set });
+    });
+    b.t.forEach(function (bt) { if (seen.indexOf(bt) === -1) drop.push({ no: bt.no, token: bt.token }); });
+    return { orders: orders, trucks: trucks, drop: drop };
+  }
+  /** 서버 최신 상태 S를 화면 데이터 D에 합치기: 내가 고치고 아직 저장 안 된 칸은 그대로, 나머지는 서버 값으로 (바뀐 칸은 fl에 모아 반짝) */
+  function dispMergeTab(D, S, fl) {
+    var b = D.base || { o: {}, t: [] }, loc = {};
+    D.orders.forEach(function (o) { loc[o.id] = o; });
+    // 화면의 오더 객체는 그대로 두고 값만 고쳐요 (열려 있는 버튼들이 같은 객체를 쓰고 있어서)
+    var next = S.orders.map(function (so) {
+      var lo = loc[so.id], bo = b.o[so.id]; if (!lo) return so;
+      Object.keys(so).forEach(function (k) { if ((k === 'truck' || k === 'seq') && bo && dispNv(bo[k]) !== dispNv(lo[k])) return; lo[k] = so[k]; });
+      return lo;
+    });
+    D.orders.length = 0; next.forEach(function (o) { D.orders.push(o); });
+    var res = [], took = [];
+    S.trucks.forEach(function (sv) {
+      var lt = D.trucks.filter(function (t) { return sv.token && t.token === sv.token; })[0] || D.trucks.filter(function (t) { return !t.token && t.no === sv.no && took.indexOf(t) === -1; })[0];
+      if (!lt) { res.push(sv); return; }
+      took.push(lt); var bt = sv.token ? b.t.filter(function (x) { return x.token === sv.token; })[0] : null;
+      DISP_SYNC_KEYS.concat(['no']).forEach(function (k) {
+        var mine = bt ? dispNv(bt[k]) !== dispNv(lt[k]) : (!lt.token && dispNv(lt[k]) !== '' && k !== 'no');
+        if (mine || dispNv(lt[k]) === dispNv(sv[k])) return;
+        if (fl && lt.token && k !== 'no') fl.push(D.tab + '|' + sv.no + '|' + k);
+        lt[k] = sv[k];
+      });
+      lt.token = sv.token; lt.by = sv.by; lt.at = sv.at; res.push(lt);
+    });
+    D.trucks.forEach(function (t) { if (took.indexOf(t) === -1 && !t.token) res.push(t); });
+    D.trucks = res; D.receipts = S.receipts || D.receipts; D.days = S.days || D.days; D.base = dispSnap(S);
+  }
+  function dispStampInit(keys, date) {
+    var st = dispState();
+    api('dispatch.stamp', { keys: keys, date: date }).then(function (r) { st.patchOk = true; st.stamps = r.stamps; st.stampDate = date; dispPollStart(); }).catch(function () { st.patchOk = false; });
+  }
+  var dispPollT = null;
+  function dispPollStart() {
+    if (dispPollT) return;
+    dispPollT = setInterval(dispPoll, 15000);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') dispPoll(); });
+    window.addEventListener('focus', dispPoll);
+  }
+  function dispPoll() {
+    var st = dispState();
+    if (state.view !== 'dispatch' || st.view !== 'day' || !st.tabs || !st.patchOk || document.visibilityState === 'hidden' || dispSaving || st.polling || Object.keys(st.dirty || {}).length) return;
+    var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); }), date = st.date, cust = st.cust, tabs = st.tabs;
+    st.polling = 1;
+    api('dispatch.stamp', { keys: keys, date: date }).then(function (r) {
+      var old = st.stampDate === date ? st.stamps || {} : {}, ch = keys.some(function (k) { return (r.stamps[k] || 0) > (old[k] || 0); });
+      if (!ch) return;
+      return api('dispatch.dayAll', { keys: keys, date: date }).then(function (res) {
+        if (st.tabs !== tabs || st.date !== date || st.cust !== cust || dispSaving || Object.keys(st.dirty || {}).length) return; // 그사이 바뀌면 다음 번에
+        var fl = [];
+        DISP_TABS.forEach(function (t, i) { var D = st.tabs[t[0]]; if (D) dispMergeTab(D, dispPrep(res.byKey[keys[i]], t[0], date, keys[i]), fl); });
+        st.stamps = r.stamps; st.stampDate = date;
+        var pin = $('#dpPasteIn'); if (pin && pin.value.trim()) return;
+        st.flash = fl; drawDispDay(); if (!st.drawLater) dispFlash(); else dispSoftApply(fl); // 입력 중이면 다른 칸 값만 바꿔요
+      });
+    }).catch(function () { /* 다음 번에 다시 */ }).then(function () { st.polling = 0; });
+  }
+  /** 입력 중이라 표를 다시 그릴 수 없을 때: 바뀐 칸(내가 치고 있는 칸 빼고)만 값을 바꾸고 반짝 (전체는 입력이 끝나면 다시 그려요) */
+  function dispSoftApply(fl) {
+    var st = dispState(), ae = document.activeElement;
+    (fl || []).forEach(function (k) {
+      var p = k.split('|'), D = st.tabs && st.tabs[p[0]], t = D && D.trucks.filter(function (x) { return String(x.no) === p[1]; })[0]; if (!t) return;
+      var key = p[0] + '|' + p[1], el = p[2] === 'status' ? $('select[data-st="' + key + '"]') : $('input[data-tf="' + p[2] + '"][data-tn="' + key + '"]');
+      if (!el || el === ae) return;
+      if (p[2] === 'status') { var v = t.status || '배차전', i = DISP_STATUS.indexOf(v); el.value = v; el.className = el.className.replace(/\bs\d\b/, 's' + i); var tb = el.closest('tbody'); if (tb) tb.className = tb.className.replace(/\bst-\d\b/, 'st-' + i); }
+      else el.value = t[p[2]] == null ? '' : t[p[2]];
+      var td = el.closest('td'); if (td) { td.classList.remove('dp-flash'); void td.offsetWidth; td.classList.add('dp-flash'); }
+    });
+    var sm = $('.dp-sum'); if (sm && st.tabs) sm.outerHTML = dispSummaryHtml(st);
+  }
+  /** 다른 사람이 바꾼 칸을 잠깐 노랗게 */
+  function dispFlash() {
+    var st = dispState(), fl = st.flash; st.flash = null; if (!fl || !fl.length) return;
+    fl.forEach(function (k) {
+      var p = k.split('|'), key = p[0] + '|' + p[1], f = p[2], el = f === 'status' ? $('select[data-st="' + key + '"]') : $('input[data-tf="' + f + '"][data-tn="' + key + '"]');
+      var td = el && el.closest('td'); if (td) { td.classList.remove('dp-flash'); void td.offsetWidth; td.classList.add('dp-flash'); }
+    });
+  }
   function loadDispDay(force) {
     var st = dispState();
     return loadDispTabs().then(function () {
       if (st.tabs && st.tabs._date === st.date && st.tabs._cust === st.cust && !force) return st.tabs;
       var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); });
-      return api('dispatch.dayAll', { keys: keys, date: st.date }).then(function (res) {
-        var o = { _date: st.date, _cust: st.cust };
-        DISP_TABS.forEach(function (t, i) { var r = res.byKey[keys[i]] || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = t[0]; r.date = st.date; r.key = keys[i]; r.orders.forEach(function (x) { dispCleanD(x.d); }); r.trucks.forEach(function (x) { x.status = dispStatusFix(x.status); }); o[t[0]] = r; });
+      var date = st.date;
+      dispStampInit(keys, date);
+      return api('dispatch.dayAll', { keys: keys, date: date }).then(function (res) {
+        var o = { _date: date, _cust: st.cust };
+        DISP_TABS.forEach(function (t, i) { var r = dispPrep(res.byKey[keys[i]], t[0], date, keys[i]); r.base = dispSnap(r); o[t[0]] = r; });
         st.tabs = o; st.sel = {}; return o;
       });
     });
@@ -6877,10 +6984,21 @@
     var fresh = false;
     return Promise.all(tabs.map(function (tab) {
       var D = st.tabs[tab]; if (!D) return null; var used = dispTrucks(D);
+      if (st.patchOk) { // 바뀐 칸만 보내요 (다른 사람이 바꾼 칸을 덮어쓰지 않게)
+        var P = dispPatch(D); if (!P.orders.length && !P.trucks.length && !P.drop.length) return null;
+        return api('dispatch.save', { cust: D.key, date: D.date, patch: 1, orders: P.orders, trucks: P.trucks, drop: P.drop })
+          .then(function (r) {
+            var hadTok = D.trucks.filter(function (t) { return t.token; }).length, fl = [];
+            dispMergeTab(D, dispPrep(r, D.tab, D.date, D.key), fl); if (r.drivers) st.drivers = r.drivers;
+            if (r.stamp && st.stamps && st.stampDate === D.date) st.stamps[D.key] = r.stamp;
+            if (fl.length) { st.flash = fl; fresh = true; } if (D.trucks.filter(function (t) { return t.token; }).length !== hadTok) fresh = true;
+          })
+          .catch(function (err) { st.dirty[tab] = 1; throw err; });
+      }
       return api('dispatch.save', { cust: D.key, date: D.date, orders: D.orders.map(function (o) { return { id: o.id, truck: o.truck, seq: o.seq }; }), trucks: D.trucks.filter(function (t) { return used.indexOf(t.no) !== -1; }) })
         .then(function (r) { r.trucks.forEach(function (t) { var x = D.trucks.filter(function (y) { return y.no === t.no; })[0]; if (x) { if (t.token && !x.token) fresh = true; x.token = t.token; } }); D.receipts = r.receipts || D.receipts; if (r.drivers) st.drivers = r.drivers; })
         .catch(function (err) { st.dirty[tab] = 1; throw err; });
-    })).then(function () { var pin = $('#dpPasteIn'); if (fresh && state.view === 'dispatch' && st.view === 'day' && !(pin && pin.value.trim())) drawDispDay(); var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
+    })).then(function () { var pin = $('#dpPasteIn'); if (fresh && state.view === 'dispatch' && st.view === 'day' && !(pin && pin.value.trim())) { drawDispDay(); if (!st.drawLater) dispFlash(); } var e = $('#dpSaveSt'); if (e && !Object.keys(st.dirty).length) e.innerHTML = '<span style="color:var(--green)">✓ 저장됨</span>'; })
       .catch(function (err) {
         // 다른 사람 저장과 겹쳐 잠금 대기가 끝난 경우: 잠깐 뒤 조용히 다시 저장 (최대 3번)
         if (/잠금|lock/i.test(err.message || '') && tries < 3) { var e0 = $('#dpSaveSt'); if (e0) e0.innerHTML = '<span class="spinner dark"></span> 다시 저장 중'; return new Promise(function (ok) { setTimeout(ok, 1500 + tries * 1500); }).then(function () { return dispSaveRun(tries + 1); }); }
@@ -6910,7 +7028,7 @@
       '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>' +
       (isPartner() ? '' : '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpPool">기사 풀</button>') + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
     $('#dpBody').addEventListener('focusout', function () {
-      setTimeout(function () { var s2 = dispState(), ae = document.activeElement; if (!s2.drawLater || dispTyping() || (ae && ae.tagName === 'SELECT' && ae.closest('#dpBody'))) return; s2.drawLater = false; if (state.view === 'dispatch' && s2.view === 'day') drawDispDay(); }, 250);
+      setTimeout(function () { var s2 = dispState(), ae = document.activeElement; if (!s2.drawLater || dispTyping() || (ae && ae.tagName === 'SELECT' && ae.closest('#dpBody'))) return; s2.drawLater = false; if (state.view === 'dispatch' && s2.view === 'day') { drawDispDay(); dispFlash(); } }, 250);
     });
     $('#dpCust').onchange = function () { dispSaveNow(); st.cust = this.value; st.tabs = null; st.tabList = null; renderDispatch(); };
     $$('#dpView button').forEach(function (b) { b.onclick = function () { dispSaveNow(); st.view = b.dataset.v; renderDispatch(); }; });
@@ -7152,6 +7270,7 @@
     var st0 = dispState();
     if (st0.dragging) return; // 끄는 중엔 다시 그리지 않기
     if (!force && dispTyping()) { st0.drawLater = true; return; } // 다 치고 나가면 그려요
+    st0.drawLater = false;
     var st = dispState(), box = $('#dpBody'); if (!box || !st.tabs) return;
     syncRoute();
     var D = st.tabs[st.tab], orders = D.orders, trucks = dispTrucks(D), days = {};
@@ -7229,7 +7348,7 @@
     $('#dpDel').onclick = function () {
       var l = picked(); if (!l.length) return; if (!confirm('체크한 오더 ' + l.length + '줄을 지울까요? (다시 붙여넣으면 다시 들어와요)')) return;
       dispSaveNow().then(function () { return api('dispatch.deleteOrders', { cust: D.key, date: st.date, ids: l.map(function (o) { return o.id; }) }); })
-        .then(function (r) { r.tab = st.tab; r.date = st.date; r.key = D.key; st.tabs[st.tab] = r; st.sel = {}; drawDispDay(); }).catch(function (err) { toast(err.message, 'err'); });
+        .then(function (r) { r = dispPrep(r, st.tab, st.date, D.key); r.base = dispSnap(r); st.tabs[st.tab] = r; st.sel = {}; drawDispDay(); }).catch(function (err) { toast(err.message, 'err'); });
     };
     /* 줄 끌어서 하차 순서 바꾸기: 누른 채로 위아래로 → 다른 줄이 부드럽게 비켜나고, 놓으면 그 자리에 */
     if (!isPartner()) dispRowDrag($('.dp-table tbody', box), function (from, to) {
