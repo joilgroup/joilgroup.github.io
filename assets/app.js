@@ -6906,10 +6906,15 @@
   /* ── AI 도움: 호차 안 정해진 오더를 한 대씩 추천 (규칙 + 지난 배차 기록, 데이터는 밖으로 안 나가요) ──
      · 상차지(출발센터)가 같은 착지끼리만, 한 대에 착지 3곳까지
      · 합칠 때는 16번들(11톤)까지 · 한 착지가 17~18번들이면 그 착지만 한 대 · 18번들 넘는 착지는 오더 단위로 여러 대
-     · 가까움: 직선 20km 이내, 같은 시·군, 또는 경로가 거의 같음(돌아가는 거리 25% 이내)
+     · 가까움: 착지끼리 직선 5km 이내, 같은 시·군이면 10km 이내, 또는 가는 길 위(돌아가는 거리 3km·5% 이내)
+     · 먼저: 누가 봐도 혼자 가야 하는 착지(18번들 초과 → 17~18번들 → 같이 묶을 착지가 없는 곳) → 그다음 상차지에서 먼 곳
      · 고르는 기준: 차량 대수 최소 → 운임 최소(단가표 있으면) → 지난 2달 같이 보낸 조합 */
-  var ADV_MIX = 16, ADV_ONE = 18, ADV_KG = 10000, ADV_STOPS = 3, ADV_KM = 20;
-  function advRegion(addr) { var t = String(addr || '').replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean); return (t[0] || '') + ' ' + (t[1] || ''); }
+  var ADV_MIX = 16, ADV_ONE = 18, ADV_KG = 10000, ADV_STOPS = 3, ADV_KM = 5, ADV_KM_REG = 10;
+  function advRegion(addr) {
+    var t = String(addr || '').replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean), sd = (t[0] || '').replace(/(특별자치시|특별자치도|특별시|광역시|도)$/, '');
+    sd = { 충청남: '충남', 충청북: '충북', 전라남: '전남', 전라북: '전북', 경상남: '경남', 경상북: '경북' }[sd] || sd;
+    return sd + ' ' + (t[1] || '');
+  }
   function advEnsureGeo(addrs) {
     var st = dispState(), miss = addrs.map(geoKey).filter(function (a) { return a && !(a in st.geo); });
     if (!miss.length) return Promise.resolve();
@@ -6940,16 +6945,16 @@
     if (!ok) {
       var sameReg = ss.every(function (s) { return s.reg === ss[0].reg; }), mp = 0, allG = ss.every(function (s) { return s.g; });
       if (allG) for (var a = 0; a < ss.length; a++) for (var c = a + 1; c < ss.length; c++) mp = Math.max(mp, hav(ss[a].g, ss[c].g));
-      var near = allG && mp <= ADV_KM;
-      return { order: ss, km: null, fit: ss.length < 2 || sameReg || near, why: near ? '착지끼리 ' + Math.round(mp) + 'km' : sameReg ? '같은 지역 ' + ss[0].reg : '' };
+      var near = allG && (mp <= ADV_KM || (sameReg && mp <= ADV_KM_REG));
+      return { order: ss, km: null, fit: ss.length < 2 || near || (!allG && sameReg), why: near ? (sameReg ? '같은 지역 ' + ss[0].reg + ' · ' : '') + '착지끼리 ' + Math.round(mp) + 'km' : sameReg ? '같은 지역 ' + ss[0].reg + ' (거리 확인 못 함)' : '' };
     }
     var best = null, perm = function (arr, k) { if (k === arr.length) { var d = 0, cur = o; arr.forEach(function (s) { d += hav(cur, s.g); cur = s.g; }); if (!best || d < best.km) best = { order: arr.slice(), km: d }; return; } for (var i = k; i < arr.length; i++) { var t = arr[k]; arr[k] = arr[i]; arr[i] = t; perm(arr, k + 1); arr[i] = arr[k]; arr[k] = t; } };
     perm(ss.slice(), 0);
     if (ss.length < 2) return { order: best.order, km: best.km, fit: true, why: '' };
     var far = Math.max.apply(null, ss.map(function (s) { return hav(o, s.g); })), maxPair = 0;
     for (var i = 0; i < ss.length; i++) for (var j = i + 1; j < ss.length; j++) maxPair = Math.max(maxPair, hav(ss[i].g, ss[j].g));
-    var sameReg = ss.every(function (s) { return s.reg === ss[0].reg; }), aligned = best.km <= far * 1.25 + 5;
-    var why = maxPair <= ADV_KM ? '착지끼리 ' + Math.round(maxPair) + 'km' : sameReg ? '같은 지역 ' + ss[0].reg : aligned ? '가는 길이 거의 같음 (돌아가는 거리 ' + Math.round(best.km - far) + 'km)' : '';
+    var sameReg = ss.every(function (s) { return s.reg === ss[0].reg; }), aligned = best.km - far <= Math.max(3, far * 0.05);
+    var why = maxPair <= ADV_KM ? '착지끼리 ' + Math.round(maxPair) + 'km' : sameReg && maxPair <= ADV_KM_REG ? '같은 지역 ' + ss[0].reg + ' · 착지끼리 ' + Math.round(maxPair) + 'km' : aligned ? '가는 길 위에 있음 (돌아가는 거리 ' + Math.round(best.km - far) + 'km)' : '';
     return { order: best.order, km: best.km, fit: !!why, why: why };
   }
   function advCost(D, os) {
@@ -6962,8 +6967,11 @@
     var all = advStops(D); if (!all.length) return [];
     // 먼저 할 것: 18번들 넘는 착지 → 17~18번들 착지 → 상차지에서 가장 먼 착지(좌표 없으면 번들 많은 순)
     var far = function (s) { return s.g && s.o ? hav(s.o, s.g) : -1; };
-    var seed = all.slice().sort(function (a, b) { return (b.b > ADV_ONE) - (a.b > ADV_ONE) || (b.b > ADV_MIX) - (a.b > ADV_MIX) || far(b) - far(a) || b.b - a.b; })[0];
-    var why0 = seed.b > ADV_ONE ? seed.fc + ' ' + won(seed.b) + '번들 → 한 대(최대 ' + ADV_ONE + ')에 안 들어가서 오더 단위로 나눠요' : seed.b > ADV_MIX ? seed.fc + ' ' + won(seed.b) + '번들 → 이 착지만 한 대' : far(seed) >= 0 ? '상차지에서 가장 먼 착지(' + seed.fc + ', 직선 ' + Math.round(far(seed)) + 'km)부터' : '번들이 가장 많은 착지(' + seed.fc + ')부터';
+    // 같이 묶을 수 있는 착지가 하나라도 있는지 (없으면 누가 봐도 혼자)
+    var pairOk = function (a, b) { return a.from === b.from && a.b + b.b <= ADV_MIX && a.kg + b.kg <= ADV_KG && advRoute([a, b]).fit; };
+    all.forEach(function (s) { s.solo = s.b > ADV_MIX || !all.some(function (x) { return x !== s && pairOk(s, x); }); });
+    var seed = all.slice().sort(function (a, b) { return (b.b > ADV_ONE) - (a.b > ADV_ONE) || (b.b > ADV_MIX) - (a.b > ADV_MIX) || b.solo - a.solo || far(b) - far(a) || b.b - a.b; })[0];
+    var why0 = seed.b > ADV_ONE ? seed.fc + ' ' + won(seed.b) + '번들 → 한 대(최대 ' + ADV_ONE + ')에 안 들어가서 오더 단위로 나눠요' : seed.b > ADV_MIX ? seed.fc + ' ' + won(seed.b) + '번들 → 이 착지만 한 대' : seed.solo ? seed.fc + ' → 같이 묶을 착지가 없어요 (5km, 같은 지역 10km 안에 16번들까지 실을 곳 없음)' : far(seed) >= 0 ? '상차지에서 가장 먼 착지(' + seed.fc + ', 직선 ' + Math.round(far(seed)) + 'km)부터' : '번들이 가장 많은 착지(' + seed.fc + ')부터';
     if (seed.b > ADV_ONE) {
       // 오더는 나누지 않고, 오더 단위로 여러 대에 나눠 담기 (큰 오더부터)
       var bins = [], os = seed.os.slice().sort(function (a, b) { return dispOrderB(b) - dispOrderB(a); });
@@ -6971,7 +6979,7 @@
       return [{ trucks: bins.map(function (x) { var s = Object.assign({}, seed, { os: x.os, b: dispBundles(x.os), kg: x.os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0) }); return { stops: [s], route: advRoute([s]) }; }), why: [why0].concat(bins.some(function (x) { return x.b > ADV_ONE; }) ? ['⚠️ 한 오더가 ' + ADV_ONE + '번들을 넘어요. 오더 내용을 확인하세요.'] : []) }];
     }
     var alone = { trucks: [{ stops: [seed], route: advRoute([seed]) }], why: [why0], score: 0 }, cands = [alone];
-    if (seed.b <= ADV_MIX) {
+    if (seed.b <= ADV_MIX && !seed.solo) {
       var others = all.filter(function (s) { return s !== seed && s.from === seed.from && s.b <= ADV_MIX; }), combos = [];
       others.forEach(function (a, i) { combos.push([seed, a]); others.slice(i + 1).forEach(function (b) { combos.push([seed, a, b]); }); });
       var costOf = function (ss) { return advCost(D, ss.reduce(function (a, s) { return a.concat(s.os); }, [])); };
@@ -6995,7 +7003,6 @@
     var st = dispState(), stops0 = advStops(D);
     if (!stops0.length) { toast('호차가 안 정해진 오더가 없어요.'); return; }
     var addrs = []; stops0.forEach(function (s) { addrs.push(s.addr); var p = findPlace(s.from); if (p && p.addr) addrs.push(p.addr); });
-    toast('추천을 계산하는 중이에요…');
     Promise.all([advEnsureGeo(addrs), advHistory(D).catch(function () { return {}; }), loadDispRates()]).then(function (z) {
       var hist = z[1] || {}, list = advSuggest(D, hist), at = 0; if (!list.length) return;
       var left = advStops(D).length;
@@ -7003,17 +7010,26 @@
         body: '<div id="advBody"></div>',
         foot: '<button class="btn" data-close>닫기</button><button class="btn" id="advNext">다른 추천</button><button class="btn" id="advOk">수락</button><button class="btn btn-primary" id="advOkNext">수락하고 다음 추천</button>',
         onMount: function (m, close) {
+          var hue = '#6D28D9', mapT = 0;
           var draw = function () {
-            var c = list[at];
-            $('#advBody', m).innerHTML = '<p class="muted small" style="margin:0 0 8px">추천 ' + (at + 1) + ' / ' + list.length + '</p>' + c.trucks.map(function (t, i) {
+            var c = list[at], st2 = dispState();
+            c.trucks.forEach(function (t) { t.route = Object.assign({}, t.route, { km: t.stops[0].o && t.stops.every(function (s) { return s.g; }) ? routeLen(t.stops[0].o, t.stops.map(function (s) { return s.g; })) : t.route.km }); });
+            $('#advBody', m).innerHTML = '<p class="muted small" style="margin:0 0 8px">추천 ' + (at + 1) + ' / ' + list.length + '</p><div class="adv-grid"><div>' + c.trucks.map(function (t, i) {
               var b = t.stops.reduce(function (a, s) { return a + s.b; }, 0), kg = t.stops.reduce(function (a, s) { return a + s.kg; }, 0);
-              return '<div class="adv-truck"><div class="adv-h"><b>' + (c.trucks.length > 1 ? '새 호차 ' + (i + 1) : '새 호차') + '</b> · ' + won(b) + '번들 · ' + won(kg) + 'kg · ' + esc(autoTon(kg, b)) + (t.route.km != null ? ' · 직선 ' + Math.round(t.route.km) + 'km' : '') + '</div>' +
-                '<table class="data adv-tb"><tbody>' + t.stops.map(function (s) { return '<tr><td class="left"><b>' + esc(s.fc) + '</b></td><td class="num">' + won(s.b) + '번들</td><td class="num">' + won(s.kg) + 'kg</td><td class="left small">' + esc(s.addr) + '</td><td class="left small muted">' + esc(s.hours) + '</td></tr>'; }).join('') + '</tbody></table></div>';
-            }).join('') + '<ul class="adv-why">' + c.why.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + (c.trucks[0].stops.length > 1 ? '<li class="muted">하차 가능시간은 직접 확인해 주세요.</li>' : '') + '</ul>';
+              return '<div class="adv-truck' + (i === mapT ? ' on' : '') + '" data-advt="' + i + '"><div class="adv-h"><b>' + (c.trucks.length > 1 ? '새 호차 ' + (i + 1) : '새 호차') + '</b> · ' + won(b) + '번들 · ' + won(kg) + 'kg · ' + esc(autoTon(kg, b)) + (t.route.km != null ? ' · 직선 ' + Math.round(t.route.km) + 'km' : '') + '</div>' +
+                '<table class="data adv-tb"><tbody>' + t.stops.map(function (s, k) { return '<tr><td><span class="dp-sn">' + (k + 1) + '</span></td><td class="left"><b>' + esc(s.fc) + '</b><div class="small muted">' + esc(s.addr) + '</div>' + (s.hours ? '<div class="small" style="color:#8A5A00">' + esc(s.hours) + '</div>' : '') + '</td><td class="num">' + won(s.b) + '번들</td><td class="num">' + won(s.kg) + 'kg</td><td class="adv-mv">' + (t.stops.length > 1 ? '<button type="button" data-up="' + i + '|' + k + '"' + (k ? '' : ' disabled') + ' title="앞으로">▲</button><button type="button" data-dn="' + i + '|' + k + '"' + (k < t.stops.length - 1 ? '' : ' disabled') + ' title="뒤로">▼</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+            }).join('') + '<ul class="adv-why">' + c.why.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + (c.trucks[0].stops.length > 1 ? '<li class="muted">하차 순서는 ▲▼로 바꿀 수 있어요. 하차 가능시간은 직접 확인해 주세요.</li>' : '') + '</ul></div>' +
+              '<div><div class="dp-map adv-map" id="advMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div></div></div>';
+            var t = c.trucks[mapT] || c.trucks[0], p = findPlace(t.stops[0].from);
+            var pts = [p && p.addr ? Object.assign({ label: '🏭', from: 1, title: p.name }, st2.geo[geoKey(p.addr)] || {}) : null].concat(t.stops.map(function (s, k) { return Object.assign({ label: String(k + 1), title: s.fc }, s.g || {}); }));
+            var el = $('#advMap', m); drawRouteMap(el, pts, hue).catch(function (e) { el.innerHTML = '<div class="err-text small" style="padding:20px">' + esc(e.message) + '</div>'; });
+            var mv = function (attr, d) { $$('[' + attr + ']', m).forEach(function (bt) { bt.onclick = function () { var q = bt.getAttribute(attr).split('|'), tr = c.trucks[+q[0]], k = +q[1], x = tr.stops[k]; tr.stops[k] = tr.stops[k + d]; tr.stops[k + d] = x; mapT = +q[0]; draw(); }; }); };
+            mv('data-up', -1); mv('data-dn', 1);
+            $$('[data-advt]', m).forEach(function (el2) { el2.onclick = function (e) { if (e.target.closest('button')) return; var i = +el2.dataset.advt; if (i !== mapT) { mapT = i; draw(); } }; });
             $('#advNext', m).disabled = list.length < 2;
           };
           var accept = function (more) { apply(list[at].trucks.map(function (t) { return t.stops.reduce(function (a, s) { return a.concat(s.os); }, []); })); close(); if (more) setTimeout(function () { openAdvisor(D, apply); }, 300); };
-          $('#advNext', m).onclick = function () { at = (at + 1) % list.length; draw(); };
+          $('#advNext', m).onclick = function () { at = (at + 1) % list.length; mapT = 0; draw(); };
           $('#advOk', m).onclick = function () { accept(false); };
           $('#advOkNext', m).onclick = function () { accept(true); };
           draw();
@@ -7456,7 +7472,11 @@
     var picked = function () { var l = orders.filter(function (o) { return st.sel[o.id]; }); if (!l.length) toast('먼저 오더를 체크하세요.', 'err'); return l; };
     $('#dpAdvisor').onclick = function () {
       openAdvisor(D, function (groups) { // 수락: 추천한 묶음마다 새 호차
-        groups.forEach(function (os) { var n = Math.max.apply(null, [0].concat(dispTrucks(D))) + 1; os.forEach(function (o) { o.truck = n; }); });
+        groups.forEach(function (os) { // os는 하차 순서대로 → 그 순서로 순번도 맞춰요
+          var n = Math.max.apply(null, [0].concat(dispTrucks(D))) + 1, slots = os.map(function (o) { return o.seq; }).sort(function (a, b) { return a - b; });
+          os.forEach(function (o, i) { o.truck = n; o.seq = slots[i]; });
+        });
+        D.orders.sort(function (a, b) { return a.seq - b.seq; });
         st.sel = {}; redraw(); toast(groups.length + '대를 새 호차로 묶었어요.');
       });
     };
@@ -8685,7 +8705,7 @@
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
-      '<b>✨ AI 도움</b>: 호차가 안 정해진 오더를 한 대씩 추천해요. 상차지가 같은 착지끼리, 한 대에 3곳까지, 합칠 때는 16번들(11톤)까지(17~18번들 착지는 혼자 한 대, 18번들 넘으면 오더 단위로 나눠 여러 대), 직선 20km 이내·같은 시군·가는 길이 거의 같은 곳만 묶어요. 차량 대수가 줄고 운임이 싼 쪽(단가표 기준)과 지난 2달 같이 보낸 조합을 먼저 추천해요. [수락]하면 새 호차로 묶이고, [다른 추천]으로 다음 후보를 볼 수 있어요.',
+      '<b>✨ AI 도움</b>: 호차가 안 정해진 오더를 한 대씩 추천해요. 상차지가 같은 착지끼리, 한 대에 3곳까지, 합칠 때는 16번들(11톤)까지(17~18번들 착지는 혼자 한 대, 18번들 넘으면 오더 단위로 나눠 여러 대), 착지끼리 직선 5km(같은 시·군이면 10km) 이내이거나 가는 길 위에 있는 곳만 묶어요. 같이 묶을 곳이 없는 착지(혼자 가야 하는 곳)를 먼저 추천하고, 추천 창의 지도를 보며 ▲▼로 하차 순서를 바꿀 수 있어요. 차량 대수가 줄고 운임이 싼 쪽(단가표 기준)과 지난 2달 같이 보낸 조합을 먼저 추천해요. [수락]하면 새 호차로 묶이고, [다른 추천]으로 다음 후보를 볼 수 있어요.',
       '<b>탭</b>(예: 부자재-인천, 컬리-평택, 부자재-평택(보스턴))마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 탭별로 나뉘어 모두 보여요. 그날 오더가 있는 탭만 보이고, 나머지는 "다른 탭 열기"에서 골라요. <b>탭 관리</b>에서 탭 추가·이름·문자 머리말·순서·숨기기를 해요.',
       '<b>① 오더 붙여넣기</b>: 동방 엑셀(팀즈)에서 C열(출발센터)부터 AF열까지 데이터 줄만 복사해 붙여넣으면 납품일자별로 나눠 저장돼요. 빈 칸이 있어도 괜찮고, 제목 줄을 같이 복사해도 알아서 맞춰요. 이미 가져온 줄은 건너뛰어요.',
       '<b>② 호차 묶기</b>: 같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나 호차 칸에 번호를 넣어요. 다른 지역도 같은 호차면 하차지1·2로 나뉘고, 줄을 끌어서 하차 순서를 바꿀 수 있어요.',

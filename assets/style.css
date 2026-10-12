@@ -1428,3 +1428,11 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .adv-truck { border: 1px solid #E5E7EB; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
 .adv-h { margin-bottom: 6px; } .adv-tb { width: 100%; font-size: 13px; } .adv-tb td { padding: 5px 8px; }
 .adv-why { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
+
+.adv-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 900px) { .adv-grid { grid-template-columns: 1fr; } }
+.adv-map { height: 420px; }
+.adv-truck { cursor: pointer; } .adv-truck.on { border-color: #6D28D9; box-shadow: 0 0 0 1px #6D28D9 inset; }
+.adv-mv { white-space: nowrap; } .adv-mv button { border: 1px solid #D1D5DB; background: #fff; border-radius: 4px; padding: 1px 6px; margin-left: 2px; cursor: pointer; font-size: 11px; }
+.adv-mv button:disabled { opacity: .3; cursor: default; }
+.adv-tb td.left { text-align: left; } .adv-tb td.num { text-align: right; white-space: nowrap; }
