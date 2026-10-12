@@ -6673,8 +6673,8 @@
     var stops = [], by = {};
     truckOrders(D, no).forEach(function (o) {
       var k = o.d.fc || '-', s = by[k];
-      if (!s) { s = by[k] = { fc: k, d: o.d, rows: [], b: 0, b0: 0, pkg: 0, kg: 0 }; stops.push(s); }
-      var p = dispPkg(o.d.bundle); s.rows.push(o); if (p) s.pkg += p; else s.b0 += dispNum(o.d.bundle); s.kg += dispNum(o.d.kg);
+      if (!s) { s = by[k] = { fc: k, d: o.d, rows: [], b: 0, b0: 0, pkg: 0, kg: 0, kg0: 0, n0: 0 }; stops.push(s); }
+      var p = dispPkg(o.d.bundle); s.rows.push(o); if (p) s.pkg += p; else { s.b0 += dispNum(o.d.bundle); s.kg0 += dispNum(o.d.kg); s.n0++; } s.kg += dispNum(o.d.kg);
     });
     stops.forEach(function (s) { s.b = s.b0 + Math.ceil(s.pkg / PKG_PER_BUNDLE); });
     return stops;
@@ -7002,7 +7002,7 @@
   function dispKind(D) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0]; return (t && t[2]) || String(D.tab || '').split('-')[0]; }
   function truckTableHtml(D, ns) {
     var showCost = can('analysis') || isPartner();
-    var head = ['구분', '출발센터', '도착지', '도착지 주소', '번들', '무게(kg)', '하차 가능시간 · 공지'].concat(TRK_FIELDS.map(function (f) { return f[1]; })).concat(['상태', '문자']).concat(showCost ? ['운송비'] : []).concat(['호차']);
+    var head = ['구분', '출발센터', '도착지', '도착지 주소', '번들', '무게(kg)'].concat(TRK_FIELDS.map(function (f) { return f[1]; })).concat(['상태', '문자']).concat(showCost ? ['운송비'] : []).concat(['호차']);
     return '<div class="table-wrap dp-tt-wrap"><table class="dp-tt"><thead><tr>' + head.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead>' +
       ns.map(function (no) { return truckRowsHtml(D, no, showCost); }).join('') + '</table></div>';
   }
@@ -7025,15 +7025,18 @@
     var rec = bestOrder(D, no), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
     var sti = Math.max(0, DISP_STATUS.indexOf(t.status || '배차전')), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', shade = kindShade(kind);
-    return '<tbody class="tt-g st-' + sti + '">' + stops.map(function (s, i) {
-      var g = got(s.fc);
-      return '<tr>' +
+    // 착지마다 한 줄, 패키지가 있으면 그 착지에 패키지 줄을 따로 (예: 천안2 4번들 2,660 / 천안2 1번들 10패키지)
+    var lines = []; stops.forEach(function (s) { if (s.n0 || !s.pkg) lines.push({ s: s, b: s.b0, kg: won(s.kg0) }); if (s.pkg) lines.push({ s: s, b: Math.ceil(s.pkg / PKG_PER_BUNDLE), kg: won(s.pkg) + '패키지', pk: 1 }); });
+    if (!lines.length) lines.push({ s: { fc: '', d: {}, rows: [] }, b: 0, kg: '0' });
+    n = lines.length; rs = ' rowspan="' + n + '"';
+    return '<tbody class="tt-g st-' + sti + '">' + lines.map(function (ln, i) {
+      var s = ln.s, g = got(s.fc), hrs = s.d.hours || '';
+      return '<tr' + (hrs ? ' title="하차 가능시간: ' + esc(hrs) + '"' : '') + '>' +
         '<td class="tt-kind"' + (shade ? ' style="background:' + shade + '"' : '') + '>' + esc(kind) + '</td>' +
         '<td>' + esc((findPlace(s.d.from) || {}).name || s.d.from || '') + '</td>' +
-        '<td class="tt-fc"><b>' + esc(s.fc) + '</b>' + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + '</td>' +
+        '<td class="tt-fc"' + (hrs ? ' data-hrs="' + esc('하차 가능시간 · ' + hrs) + '"' : '') + '><b>' + esc(s.fc) + '</b>' + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + (ln.pk && s.n0 ? '' : notesOf(s.fc)) + '</td>' +
         '<td class="tt-addr"><div class="clip" title="' + esc(s.d.addr) + '">' + esc(s.d.addr) + '</div></td>' +
-        '<td class="num">' + won(s.b) + '</td><td class="num">' + dispKgText(s.kg, s.pkg) + '</td>' +
-        '<td class="tt-hrs"><div class="clip" title="' + esc(s.d.hours) + '">' + esc(s.d.hours) + '</div>' + notesOf(s.fc) + '</td>' +
+        '<td class="num">' + won(ln.b) + '</td><td class="num' + (ln.pk ? ' tt-pkg' : '') + '">' + ln.kg + '</td>' +
         (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in"' + rs + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
