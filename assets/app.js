@@ -7304,6 +7304,30 @@
         toast('저장하지 못했어요: ' + err.message, 'err'); var e = $('#dpSaveSt'); if (e) e.innerHTML = '<span class="err-text">저장 안 됨</span>';
       });
   }
+  // 호차 메뉴 (자주 안 쓰는 버튼): 호차 줄에서 마우스 오른쪽 클릭, 또는 ⋯ 버튼 (휴대폰)
+  (function () {
+    var menu = null;
+    var hide = function () { if (menu) { menu.remove(); menu = null; } };
+    var show = function (tb, x, y) {
+      hide(); var btns = Array.prototype.slice.call(tb.querySelectorAll('.tt-hide button, [data-recopy], [data-rec]')); if (!btns.length) return;
+      menu = document.createElement('div'); menu.className = 'tt-menu';
+      btns.forEach(function (b) { var it = document.createElement('button'); it.type = 'button'; it.textContent = b.textContent; it.onclick = function () { hide(); b.click(); }; menu.appendChild(it); });
+      document.body.appendChild(menu);
+      var w = menu.offsetWidth, h = menu.offsetHeight;
+      menu.style.left = Math.max(4, Math.min(x, window.innerWidth - w - 4)) + 'px'; menu.style.top = Math.max(4, Math.min(y, window.innerHeight - h - 4)) + 'px';
+    };
+    document.addEventListener('contextmenu', function (e) {
+      var tb = e.target.closest && e.target.closest('.dp-tt tbody'); if (!tb || e.target.closest('input, textarea, select')) return; // 입력칸은 원래 메뉴(복사·붙여넣기)
+      if (!tb.querySelector('[data-more]')) return;
+      e.preventDefault(); show(tb, e.clientX, e.clientY);
+    });
+    document.addEventListener('click', function (e) {
+      var mb = e.target.closest && e.target.closest('[data-more]');
+      if (mb) { var r = mb.getBoundingClientRect(); show(mb.closest('tbody'), r.left, r.bottom + 4); return; }
+      if (menu && !menu.contains(e.target)) hide();
+    });
+    window.addEventListener('scroll', hide, true); document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
+  })();
   // 하차 가능시간 말풍선: 화면에 고정해 띄워요 (표 안에 그리면 마지막 줄에서 세로 스크롤이 생겨요)
   (function () {
     var tip = null, cur = null;
@@ -7519,8 +7543,8 @@
         (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in"' + rs + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
-            '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button data-ask="' + esc(key) + '" title="날짜·탭·하차지·차량정보를 문의용으로 복사">문의하기</button>' +
-            (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') +
+            '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
+            '<span class="tt-hide"><button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + '</span>' +
             (t.status === '회차' && !isPartner() ? '<button data-recopy="' + esc(key) + '" title="이 호차의 오더를 다시 배차하도록 복사">오더 복사</button>' : '') +
             (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>' +
           (showCost ? '<td class="tt-cost"' + rs + '>' + truckCostCell(D, no, t, cost) + '</td>' : '') +
@@ -7541,7 +7565,8 @@
     var setY = function (r, y) { Array.prototype.forEach.call(r.children, function (td) { td.style.transform = y ? 'translateY(' + y + 'px)' : ''; }); };
     tbody.addEventListener('pointerdown', function (e) {
       if (e.button !== 0) return;
-      var tr = e.target.closest('tr[data-o]'); if (!tr || e.target.closest('input, button, select, a, label, textarea')) return;
+      // 맨 왼쪽 ⠿ 칸을 잡았을 때만 끌기 (모바일에서 화면을 밀어도 오더가 움직이지 않게)
+      var tr = e.target.closest('tr[data-o]'); if (!tr || !e.target.closest('.dp-drag')) return;
       var list = rows(), from = list.indexOf(tr), y0 = e.clientY, started = false, to = from;
       var mids = list.map(function (r) { var b = r.getBoundingClientRect(); return b.top + b.height / 2; }), h = tr.getBoundingClientRect().height;
       var move = function (ev) {

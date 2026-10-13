@@ -262,7 +262,7 @@ table.data th .tag { font-size: 10px; background: var(--bg-2); padding: 1px 5px;
 .status-pill.no { background: rgba(224, 71, 46, .12); color: #A8331F; }
 
 /* ── 모달 / 토스트 ── */
-.backdrop { position: fixed; inset: 0; background: rgba(30, 28, 25, .42); backdrop-filter: blur(4px); z-index: 50; display: grid; place-items: center; padding: 20px 16px; animation: fade .2s ease both; }
+.backdrop { position: fixed; inset: 0; background: rgba(30, 28, 25, .5); z-index: 50; display: grid; place-items: center; padding: 20px 16px; animation: fade .2s ease both; }
 .modal { width: 100%; max-width: 480px; max-height: calc(100vh - 40px); overflow: auto; background: var(--panel); border-radius: var(--radius-lg); box-shadow: var(--shadow-pop); animation: rise .35s var(--ease) both; }
 .modal.wide { max-width: 720px; }
 .modal .head { padding: 22px 24px 0; }
@@ -1461,3 +1461,14 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .modal-xl { box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
 .modal-xl .pa-list { contain: content; will-change: scroll-position; overscroll-behavior: contain; }
 .modal-xl .adv-map { contain: strict; }
+
+/* 호차 메뉴 */
+.tt-hide { display: none !important; }
+.tt-links .tt-more { font-weight: 700; text-decoration: none; padding: 0 4px; }
+.tt-menu { position: fixed; z-index: 400; min-width: 140px; background: #fff; border: 1px solid #D1D5DB; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 4px; }
+.tt-menu button { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 8px 12px; font: inherit; font-size: 14px; border-radius: 6px; cursor: pointer; }
+.tt-menu button:hover { background: #F3F4F6; }
+/* 오더 끌기는 ⠿ 칸에서만 */
+.dp-table tbody tr[data-o] { cursor: default; } .dp-table td.dp-drag { cursor: grab; touch-action: none; }
+/* 팝업이 떠 있는 동안엔 뒤쪽 위 메뉴 흐림도 끄기 */
+body:has(.backdrop) .topbar, body:has(.backdrop) .nav { backdrop-filter: none; -webkit-backdrop-filter: none; }
