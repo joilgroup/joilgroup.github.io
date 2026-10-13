@@ -1456,3 +1456,8 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .modal-xl .adv-tb td { overflow-wrap: anywhere; vertical-align: middle; }
 .modal-xl .adv-tb td:first-child { width: 34px; } .modal-xl .adv-tb td.num { width: 88px; } .modal-xl .adv-tb td.adv-mv { width: 104px; }
 @media (max-width: 900px) { .modal-xl .adv-map { height: 360px; } .modal-xl .pa-list { max-height: none; } }
+/* 큰 AI 창: 뒤 화면 흐림(blur)을 끄고 스크롤·지도 영역을 따로 그려서 끊김 줄이기 */
+.backdrop:has(.modal-xl) { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(30, 28, 25, .62); }
+.modal-xl { box-shadow: 0 10px 40px rgba(0, 0, 0, .25); }
+.modal-xl .pa-list { contain: content; will-change: scroll-position; overscroll-behavior: contain; }
+.modal-xl .adv-map { contain: strict; }
