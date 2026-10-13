@@ -1472,3 +1472,6 @@ table.data.dp-table td:nth-child(-n+3), table.data.dp-table th:nth-child(-n+3) {
 .dp-table tbody tr[data-o] { cursor: default; } .dp-table td.dp-drag { cursor: grab; touch-action: none; }
 /* 팝업이 떠 있는 동안엔 뒤쪽 위 메뉴 흐림도 끄기 */
 body:has(.backdrop) .topbar, body:has(.backdrop) .nav { backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* 오더수정 표 */
+.te-tb { width: 100%; table-layout: fixed; } .te-tb td { padding: 4px; } .te-tb input { width: 100%; box-sizing: border-box; }

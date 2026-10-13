@@ -2144,7 +2144,7 @@ function dispCopyOrders_(session, req) {
   } finally { lock.releaseLock(); }
 }
 /** 오더 고치기: 정해진 칸만 (호차·순서·가져오기 키는 그대로) */
-var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock'];
+var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3'];
 function dispEditOrder_(session, req) {
   var cust = dispCust_(req.cust), date = dispDate_(req.date), patch = req.patch || {}, sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER);
   var f = findRow_(SHEET_DISP_ORD, DISP_ORD_HEADER, req.id); if (!f || String(f.raw[1]) !== cust || textDate_(f.raw[2]) !== date) throw new Error('오더를 찾을 수 없어요.');
