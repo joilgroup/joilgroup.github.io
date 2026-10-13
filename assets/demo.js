@@ -549,6 +549,9 @@
         store.dispMap = wk('dispMap').filter(function (x) { return x.fc !== req.fc; }); if (req.dest) store.dispMap.push({ fc: req.fc, dest: req.dest }); save(); return handle(Object.assign({}, req, { action: 'dispatch.rates' }));
       case 'dispatch.geo': var dg = {}; (req.addrs || []).forEach(function (a) { var g = demoGeo(a); if (g) dg[a] = g; }); return { coords: dg };
       case 'dispatch.receipt': if (!rcptData[req.id]) fail('데모 모드에서는 새로고침하면 사진이 사라져요.'); return { data: rcptData[req.id], mime: 'image/jpeg' };
+      case 'dest.list': return { dests: wk('dests') };
+      case 'dest.save': var dk = req.kind === 'glove' ? 'glove' : 'fc', dr = (req.rows || []).map(function (x) { return { kind: dk, code: String(x.code || '').trim(), name: String(x.name || '').trim(), addr: String(x.addr || '').trim() }; }).filter(function (x) { return x.code || x.name; });
+        store.dests = wk('dests').filter(function (x) { return x.kind !== dk; }).concat(dr); save(); return { dests: store.dests, saved: dr.length };
       case 'loading.list': return { places: wk('places').slice().sort(function (a, b) { return a.name.localeCompare(b.name); }) };
       case 'loading.save':
         var lp = req.place || {}, ln = String(lp.name || '').trim(); if (!ln) fail('상차지명을 넣으세요.');

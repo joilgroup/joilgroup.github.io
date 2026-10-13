@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -211,6 +211,8 @@ function handle_(req) {
     case 'drivers.save': return driverSave_(session, req);
     case 'drivers.delete': return driverDelete_(req.id);
     case 'loading.save': return loadingSave_(session, req);
+    case 'dest.list': return { dests: destList_() };
+    case 'dest.save': return destSave_(session, req);
     case 'loading.delete': return loadingDelete_(req.id);
     case 'loading.photo': return placePhoto_(req.id);
     case 'loading.photoAdd': return placePhotoAdd_(session, req);
@@ -2295,6 +2297,24 @@ function drvUpload_(req) {
   cacheSheet_(SHEET_RECEIPTS, RECEIPT_HEADER).appendRow([newId_('R'), tr.cust, "'" + tr.date, tr.no, fc, file.getId(), now_(), bytes.length]);
   dispTouch_(tr.cust, tr.date); // 사무실 화면에 인수증이 바로 보이게
   return drvGet_(req.t);
+}
+/* 하차지 주소록 (센터 코드별 정답 주소 · 일반(FC도크)과 장갑이 따로) — 오더 주소가 다르면 화면에서 경고 */
+var SHEET_DESTBOOK = '하차지주소록';
+var DESTBOOK_HEADER = ['종류', '코드', '센터명', '주소', '수정자', '수정일시'];
+function destList_() { headerSheet_(SHEET_DESTBOOK, DESTBOOK_HEADER); return rowsOf_(SHEET_DESTBOOK, DESTBOOK_HEADER).map(function (r) { return { kind: dispTxt_(r[0]), code: dispTxt_(r[1]), name: dispTxt_(r[2]), addr: dispTxt_(r[3]) }; }).filter(function (x) { return x.code || x.name; }); }
+function destSave_(session, req) {
+  var kind = req.kind === 'glove' ? 'glove' : 'fc', q = function (v, n) { return "'" + String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n); };
+  var rows = (req.rows || []).slice(0, 3000).filter(function (x) { return x && (String(x.code || '').trim() || String(x.name || '').trim()); }).map(function (x) { return [kind, q(x.code, 60), q(x.name, 100), q(x.addr, 300), session.name, now_()]; });
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = headerSheet_(SHEET_DESTBOOK, DESTBOOK_HEADER), n = sh.getLastRow() - 1;
+    var keep = n > 0 ? sh.getRange(2, 1, n, DESTBOOK_HEADER.length).getValues().filter(function (r) { return String(r[0]) !== kind; }).map(function (r) { return [r[0], q(dispTxt_(r[1]), 60), q(dispTxt_(r[2]), 100), q(dispTxt_(r[3]), 300), r[4], r[5]]; }) : [];
+    var all = keep.concat(rows);
+    if (n > 0) sh.getRange(2, 1, n, DESTBOOK_HEADER.length).clearContent();
+    if (all.length) sh.getRange(2, 1, all.length, DESTBOOK_HEADER.length).setValues(all);
+  } finally { lock.releaseLock(); }
+  if (ROWS_MEMO_) delete ROWS_MEMO_[SHEET_DESTBOOK];
+  return { dests: destList_(), saved: rows.length };
 }
 function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); var ph = placePhotos_(); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { var id = String(r[0]); return { id: id, name: String(r[1]), addr: String(r[2] || ''), time: String(r[3] || ''), contact: String(r[4] || ''), memo: String(r[5] || ''), rateFrom: String(r[8] || ''), photos: ph.filter(function (x) { return x.place === id; }).map(function (x) { return { id: x.id, cap: x.cap }; }) }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }
 function loadingSave_(session, req) {

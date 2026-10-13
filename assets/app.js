@@ -7195,6 +7195,87 @@
         } });
     }).catch(function (err) { toast(err.message, 'err'); });
   }
+  /* ── 하차지 주소록: 센터 코드(Sap Code)별 정답 주소 · 일반(FC도크)과 장갑이 따로 → 오더 주소가 다르면 경고 ── */
+  function loadDests(force) { var st = dispState(); if (isPartner()) return Promise.resolve([]); if (st.dests && !force) return Promise.resolve(st.dests); return api('dest.list').then(function (r) { st.dests = r.dests || []; return st.dests; }).catch(function () { st.dests = st.dests || []; return st.dests; }); }
+  var DEST_KINDS = [['fc', 'FC도크 (일반)'], ['glove', '장갑']];
+  function destKind(o) { return /장갑/.test((o.d && o.d.item) || '') ? 'glove' : 'fc'; }
+  /** 같은 곳인지 비교용: 시·군(광역시는 구) + 도로명/번지 (띄어쓰기·층·도크·괄호·우편번호 무시) */
+  function destKey(addr) {
+    var s = String(addr || '').replace(/\([^)]*\)/g, ' ').replace(/[,，]/g, ' ').replace(/번지/g, ' ').replace(/\s+/g, ' ').trim();
+    s = s.replace(/(로|길)\s+(\d+번길)/g, '$1$2');
+    var t = s.split(' '), area = '', metro = /^(서울|부산|인천|대구|광주|대전|울산|세종)/;
+    for (var i = 0; i < t.length; i++) {
+      var w = t[i];
+      if (/(특별시|광역시|특별자치시)$/.test(w) || (metro.test(w) && /시?$/.test(w) && t[i + 1] && /(구|군)$/.test(t[i + 1]))) { area = (t[i + 1] || ''); break; }
+      if (/(시|군)$/.test(w) && !/(도)$/.test(w)) { area = w; break; }
+    }
+    var m = s.match(/(\S+번길)\s*(\d+(?:-\d+)?)/) || s.match(/(\S+(?:로|길))\s*(\d+(?:-\d+)?)/) || s.match(/(\S+(?:동|리|가))\s+(\d+(?:-\d+)?)/);
+    return m ? area + '|' + m[1] + m[2] : area + '|' + advAddrKey(addr);
+  }
+  /** 층·동 표기 (둘 다 적혀 있을 때만 비교: 장갑과 일반 품목은 층이 다를 수 있어요) */
+  function destFloor(addr) {
+    var s = String(addr || ''), f = [], b = [], m, re = /(지하\s*|B)?(\d+)\s*(층|F)(?![A-Za-z])/gi;
+    while ((m = re.exec(s))) f.push((m[1] ? '-' : '') + m[2]);
+    var re2 = /(?:^|\s|,)([A-Z])\s*동/g; while ((m = re2.exec(s))) b.push(m[1]);
+    return { f: f.sort().join(','), b: b.sort().join(',') };
+  }
+  function destSame(a, b) {
+    if (destKey(a) !== destKey(b)) return false;
+    var x = destFloor(a), y = destFloor(b);
+    return !(x.f && y.f && x.f !== y.f) && !(x.b && y.b && x.b !== y.b);
+  }
+  /** 이 오더의 주소록 항목: 도착지 코드 = Sap Code (같은 코드가 층별로 여럿이면 센터명으로) → 없으면 센터명으로 */
+  function destOf(o) {
+    var st = dispState(), list = (st.dests || []).filter(function (x) { return x.kind === destKind(o); }); if (!list.length) return null;
+    var code = String(o.d.dest || '').trim().toUpperCase(), nm = function (v) { return String(v || '').replace(/\s|FC|센터/gi, '').toUpperCase(); };
+    var hit = code ? list.filter(function (x) { return x.code.toUpperCase() === code; }) : [];
+    if (!hit.length && code) hit = list.filter(function (x) { return x.code.toUpperCase().indexOf(code + '-') === 0; });
+    if (hit.length > 1) { var byName = hit.filter(function (x) { return nm(x.name) === nm(o.d.fc); }); if (byName.length) hit = byName; }
+    if (!hit.length) hit = list.filter(function (x) { return nm(x.name) && nm(x.name) === nm(o.d.fc); });
+    return hit[0] || null;
+  }
+  function destFlag(o) {
+    var st = dispState(); if (isPartner() || !(st.dests || []).length) return '';
+    var e = destOf(o); if (!e) return '<span class="dest-none" title="하차지 주소록(' + (destKind(o) === 'glove' ? '장갑' : 'FC도크') + ')에 이 코드·센터명이 없어요">주소록에 없음' + (o.d.dest ? ' (' + esc(o.d.dest) + ')' : '') + '</span>';
+    if (!e.addr || destSame(e.addr, o.d.addr)) return '';
+    return '<span class="dest-diff" title="' + esc('주소록(' + (e.kind === 'glove' ? '장갑' : 'FC도크') + ' · ' + e.code + ' ' + e.name + '): ' + e.addr) + '">⚠ 주소록과 다름: ' + esc(e.addr) + '</span>';
+  }
+  function destDiffCount(orders) { var st = dispState(); if (isPartner() || !(st.dests || []).length) return 0; return orders.filter(function (o) { var e = destOf(o); return e && e.addr && !destSame(e.addr, o.d.addr); }).length; }
+  function openDestBook() {
+    var st = dispState(), kind = 'fc', q = '';
+    loadDests(true).then(function () {
+      modal({ wide: true, cls: 'modal-xl', eyebrow: '배차시트', title: '하차지 주소록',
+        body: '<p class="muted small" style="margin:0 0 10px">센터 코드(Sap Code)별 정답 주소예요. 오더의 <b>도착지 코드</b>로 찾아서(없으면 센터명) 오더 주소가 다르면 오더 표에 ⚠ 경고를 띄워요. Item에 "장갑"이 들어간 오더는 장갑 목록으로 비교해요.</p><div id="dbBody"></div>',
+        foot: '<button class="btn" data-close>닫기</button>',
+        onMount: function (m) {
+          var draw = function () {
+            var all = (st.dests || []).filter(function (x) { return x.kind === kind; }), list = all.filter(function (x) { return !q || (x.code + ' ' + x.name + ' ' + x.addr).toLowerCase().indexOf(q.toLowerCase()) !== -1; });
+            $('#dbBody', m).innerHTML = '<div class="segmented" id="dbKind">' + DEST_KINDS.map(function (k) { return '<button type="button" data-k="' + k[0] + '" class="' + (k[0] === kind ? 'on' : '') + '">' + k[1] + ' <span class="muted small">' + (st.dests || []).filter(function (x) { return x.kind === k[0]; }).length + '</span></button>'; }).join('') + '</div>' +
+              '<div class="adv-grid" style="margin-top:12px"><div><div class="actions" style="margin-bottom:8px"><input class="input input-sm" id="dbQ" placeholder="코드·센터명·주소 검색" value="' + esc(q) + '" style="max-width:320px"><span class="muted small">' + list.length + ' / ' + all.length + '곳</span></div>' +
+              '<div class="pa-list"><table class="data te-tb"><thead><tr><th class="left" style="width:150px">Sap Code</th><th class="left" style="width:170px">센터명</th><th class="left">주소</th></tr></thead><tbody>' + (list.length ? list.map(function (x) { return '<tr><td class="left">' + esc(x.code) + '</td><td class="left">' + esc(x.name) + '</td><td class="left small">' + esc(x.addr) + '</td></tr>'; }).join('') : '<tr><td colspan="3" class="muted">아직 없어요. 오른쪽에 붙여넣어 주세요.</td></tr>') + '</tbody></table></div></div>' +
+              '<div><div class="field"><label>' + esc(DEST_KINDS.filter(function (k) { return k[0] === kind; })[0][1]) + ' 목록 붙여넣기 <span class="muted">(엑셀에서 Sap Code · 센터명 · 주소 3칸을 제목 줄째 복사해도 돼요)</span></label><textarea class="input" id="dbIn" rows="14" placeholder="KKW1&#9;경기광주1FC&#9;경기도 광주시 도척면 진우리 1006"></textarea></div>' +
+              '<div class="actions"><span class="small muted" id="dbInfo"></span><span class="spacer"></span><button class="btn btn-sm" id="dbAdd" disabled>목록에 더하기</button><button class="btn btn-sm btn-primary" id="dbRep" disabled>이 목록으로 바꾸기</button></div>' +
+              '<p class="hint">더하기: 같은 코드는 새 주소로 바꾸고 나머지는 그대로 · 바꾸기: 이 종류 목록을 통째로 바꿔요</p></div></div>';
+            $$('#dbKind button', m).forEach(function (b) { b.onclick = function () { kind = b.dataset.k; q = ''; draw(); }; });
+            var qi = $('#dbQ', m); qi.oninput = function () { q = qi.value; var pos = qi.selectionStart; draw(); var n = $('#dbQ', m); n.focus(); n.setSelectionRange(pos, pos); };
+            var parsed = [], inp = $('#dbIn', m);
+            inp.oninput = function () {
+              parsed = parseTsv(inp.value).map(function (r) { return { code: String(r[0] || '').trim(), name: String(r[1] || '').trim(), addr: String(r.slice(2).join(' ') || '').trim() }; })
+                .filter(function (x) { return (x.code || x.name) && !/^sap\s*code$/i.test(x.code) && !/^센터명$/.test(x.name); });
+              $('#dbInfo', m).textContent = parsed.length ? parsed.length + '곳을 읽었어요' + (parsed.filter(function (x) { return !x.addr; }).length ? ' (주소 빈 곳 ' + parsed.filter(function (x) { return !x.addr; }).length + ')' : '') : '';
+              $('#dbAdd', m).disabled = $('#dbRep', m).disabled = !parsed.length;
+            };
+            var saveRows = function (rows, btn) {
+              busy(btn, true, '저장 중');
+              api('dest.save', { kind: kind, rows: rows }).then(function (r) { st.dests = r.dests; toast(r.saved + '곳을 저장했어요.'); draw(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+            };
+            $('#dbAdd', m).onclick = function () { var cur = (st.dests || []).filter(function (x) { return x.kind === kind; }), by = {}; cur.concat(parsed).forEach(function (x) { by[(x.code || '') + '|' + (x.code ? '' : x.name)] = x; }); saveRows(Object.keys(by).map(function (k) { return by[k]; }), this); };
+            $('#dbRep', m).onclick = function () { if (!confirm(DEST_KINDS.filter(function (k) { return k[0] === kind; })[0][1] + ' 목록을 붙여넣은 ' + parsed.length + '곳으로 통째로 바꿀까요?')) return; saveRows(parsed, this); };
+          };
+          draw();
+        } });
+    }).catch(function (err) { toast(err.message, 'err'); });
+  }
   /** 호차 목록 순서: 지역별로 묶어서 (부자재 탭이 있는 지역 순서대로) 지역 안에서는 부자재 탭 먼저, 그다음 같은 지역 다른 탭 */
   function dispRegion(name) { return (String(name).split('-').slice(1).join('-') || String(name)).replace(/\(.*?\)/g, '').trim(); }
   function dispTabsByRegion() {
@@ -7351,16 +7432,16 @@
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Dispatch · 배차시트</div><h2>배차시트</h2><p class="muted small" style="margin:4px 0 0' + (isPartner() ? ';display:none' : '') + '">출발지 탭마다 오더를 붙여넣고 → 호차로 묶고 → 문자(기사용 링크 포함) 복사 → 호차 표에 차량정보 붙여넣기 → 엑셀 복사</p></div>' +
       '<div class="actions"><select class="input input-sm" id="dpCust" style="width:auto">' + DISP_CUSTS.map(function (c) { return '<option' + (c === st.cust ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
       '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>' +
-      (isPartner() ? '' : '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpPool">기사 풀</button>') + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+      (isPartner() ? '' : '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpDests">하차지 주소록</button><button class="btn btn-sm" id="dpPool">기사 풀</button>') + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
     $('#dpBody').addEventListener('focusout', function () {
       setTimeout(function () { var s2 = dispState(), ae = document.activeElement; if (!s2.drawLater || dispTyping() || (ae && ae.tagName === 'SELECT' && ae.closest('#dpBody'))) return; s2.drawLater = false; if (state.view === 'dispatch' && s2.view === 'day') { drawDispDay(); dispFlash(); } }, 250);
     });
     $('#dpCust').onchange = function () { dispSaveNow(); st.cust = this.value; st.tabs = null; st.tabList = null; renderDispatch(); };
     $$('#dpView button').forEach(function (b) { b.onclick = function () { dispSaveNow(); st.view = b.dataset.v; renderDispatch(); }; });
-    if (!isPartner()) { $('#dpPlaces').onclick = openPlaces; $('#dpPool').onclick = openDriverPool; }
+    if (!isPartner()) { $('#dpPlaces').onclick = openPlaces; $('#dpPool').onclick = openDriverPool; $('#dpDests').onclick = openDestBook; }
     var rb = $('#dpRates'); if (rb) rb.onclick = openDispRates;
     if (st.view === 'month') return drawDispMonth();
-    Promise.all([loadDispDay(), loadPlaces().catch(function () { return []; }), loadDispRates(), loadDrivers().catch(function () { return []; })]).then(function () { if (state.view === 'dispatch') { drawDispDay(); needGeo(); } })
+    Promise.all([loadDispDay(), loadPlaces().catch(function () { return []; }), loadDispRates(), loadDrivers().catch(function () { return []; }), loadDests()]).then(function () { if (state.view === 'dispatch') { drawDispDay(); needGeo(); } })
       .catch(function (err) { $('#dpBody').innerHTML = '<div class="card"><p class="err-text">' + esc(err.message) + '</p></div>'; });
   }
   /** 탭 관리: 추가 · 이름 · 문자 머리말 · 순서 · 숨기기 (숨겨도 지난 기록은 월별 기록에 남아요) */
@@ -7667,7 +7748,7 @@
           (function () { var rest = DISP_TABS.filter(function (t) { return t[0] !== st.tab && !st.tabs[t[0]].orders.length; }); return '<span class="dp-tabx">' + (rest.length ? '<select class="input input-sm" id="dpTabMore"><option value="">＋ 다른 탭 열기 (' + rest.length + ')</option>' + rest.map(function (t) { return '<option>' + esc(t[0]) + '</option>'; }).join('') + '</select>' : '') + (isPartner() ? '' : '<button type="button" class="btn btn-sm btn-ghost" id="dpTabMgr">탭 관리</button>') + '</span>'; })() + '</div>') +
         (isPartner() ? '' : '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">동방 엑셀에서 C열(출발센터)부터 AF열까지 데이터만 복사해서 붙여넣으세요 (날짜별로 나눠 저장, 이미 있는 줄은 건너뜀)</span></summary>' +
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details>') + '</div>' +
-      '<div class="card"' + (isPartner() ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + '</h3></div>' +
+      '<div class="card"' + (isPartner() ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg' + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + (function () { var dn = destDiffCount(orders); return dn ? ' <span class="small" style="color:#C0392B">주소록과 다른 주소 ' + dn + '줄</span>' : ''; })() + '</h3></div>' +
         '<div class="actions"' + (isPartner() ? ' style="display:none"' : '') + '><button class="btn btn-sm btn-ai" id="dpPlanAll" title="호차 안 정해진 오더 전체를 한 번에 짜요 (확인 후 적용)">✨ AI 한번에 짜기</button><button class="btn btn-sm btn-ai" id="dpAdvisor" title="호차 안 정해진 오더를 한 대씩 추천해요">✨ AI 도움</button><button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
         '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
         (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"' + (isPartner() ? ' disabled' : '') + '></th><th>호차</th><th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th><th class="left">공지</th></tr></thead><tbody>' +
@@ -7675,7 +7756,7 @@
             var on = !!st.sel[o.id], t = o.truck;
             return '<tr data-o="' + esc(o.id) + '" class="' + (t === '' || t == null ? 'un' : '') + (on ? ' on' : '') + '"' + (t === '' || t == null ? '' : ' style="background:' + TRUCK_SHADES[(Number(t) - 1) % TRUCK_SHADES.length] + '"') + '><td class="dp-drag" title="끌어서 순서 바꾸기">⠿</td><td><input type="checkbox" data-sel="' + esc(o.id) + '"' + (on ? ' checked' : '') + (isPartner() ? ' disabled' : '') + '></td>' +
               '<td><input class="input input-sm num dp-tno" data-t="' + esc(o.id) + '" value="' + (t === '' || t == null ? '' : t) + '" inputmode="numeric"' + (isPartner() ? ' disabled' : '') + '></td><td class="left"><b>' + esc(o.d.fc) + '</b>' + (isPartner() ? '' : ' <button type="button" class="dp-edit" data-oedit="' + esc(o.id) + '" title="오더 고치기 (번들·무게 등)">고치기</button>') + (o.d.reFrom ? ' <span class="tt-re">재배차 ' + esc(o.d.reFrom) + '</span>' : '') + '</td><td class="left small">' + esc(o.d.dest) + '</td><td class="left small">' + esc(o.d.item) + '</td>' +
-              '<td class="num"' + (dispPkg(o.d.bundle) ? ' title="' + esc(o.d.bundle) + '"' : '') + '>' + won(dispOrderB(o)) + '</td><td class="num">' + dispKgText(dispNum(o.d.kg), dispPkg(o.d.bundle)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div>' + geoFlag(o) + '</td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td><td class="left dp-note">' + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
+              '<td class="num"' + (dispPkg(o.d.bundle) ? ' title="' + esc(o.d.bundle) + '"' : '') + '>' + won(dispOrderB(o)) + '</td><td class="num">' + dispKgText(dispNum(o.d.kg), dispPkg(o.d.bundle)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div>' + destFlag(o) + geoFlag(o) + '</td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td><td class="left dp-note">' + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
       (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">Trucks · ③ 호차별 문자</div>' +
@@ -8950,6 +9031,7 @@
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
+      '<b>하차지 주소록</b>: 센터 코드(Sap Code)·센터명·주소를 엑셀에서 복사해 붙여넣어 등록해요(FC도크 일반 / 장갑 따로). 오더의 도착지 코드로 찾아서(없으면 센터명) 오더 주소가 다르면 오더 표 주소 아래에 "⚠ 주소록과 다름"을 띄워요. 띄어쓰기·괄호·도크 표기 차이는 무시하고, 층이나 A동처럼 양쪽에 적힌 층·동이 다르면 경고해요. Item에 "장갑"이 들어간 오더는 장갑 목록으로 비교해요.',
       '<b>✨ AI 한번에 짜기</b>: 호차가 안 정해진 오더 전체를 한 번에 짜서 보여줘요(가까운 착지끼리 차례로 합치기). 하차지가 서로 가까우면(5km, 같은 구·시 10km) 한 대에 4곳까지 묶어요. 호차마다 지도를 보고 ▲▼로 순서를 바꾸거나 ✕로 착지를 뺄 수 있어요. 뺀 착지는 [자동 / 새 호차 혼자 / 새 N에 넣기] 중 골라 [빠진 착지 다시 짜기]를 누르면 반영돼요(뺀 호차로는 다시 안 들어가요). [모두 적용]을 눌러야 실제 호차가 생겨요.',
       '<b>✨ AI 도움</b>: 호차가 안 정해진 오더를 한 대씩 추천해요. 상차지가 같은 착지끼리, 한 대에 3곳까지, 합칠 때는 16번들(11톤)까지(17~18번들 착지는 혼자 한 대, 18번들 넘으면 오더 단위로 나눠 여러 대), 착지끼리 직선 5km(같은 시·군이면 10km) 이내이거나 가는 길 위에 있는 곳만 묶어요. 같이 묶을 곳이 없는 착지(혼자 가야 하는 곳)를 먼저 추천하고, 추천 창의 지도를 보며 ▲▼로 하차 순서를 바꿀 수 있어요. 차량 대수가 줄고 운임이 싼 쪽(단가표 기준)과 지난 2달 같이 보낸 조합을 먼저 추천해요. [수락]하면 새 호차로 묶이고, [다른 추천]으로 다음 후보를 볼 수 있어요.',
       '<b>탭</b>(예: 부자재-인천, 컬리-평택, 부자재-평택(보스턴))마다 따로 붙여넣고 따로 호차를 짜요. 호차 번호·차량정보도 탭별이고, 아래 호차 목록에는 탭별로 나뉘어 모두 보여요. 그날 오더가 있는 탭만 보이고, 나머지는 "다른 탭 열기"에서 골라요. <b>탭 관리</b>에서 탭 추가·이름·문자 머리말·순서·숨기기를 해요.',

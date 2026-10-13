@@ -1475,3 +1475,7 @@ body:has(.backdrop) .topbar, body:has(.backdrop) .nav { backdrop-filter: none; -
 
 /* 오더수정 표 */
 .te-tb { width: 100%; table-layout: fixed; } .te-tb td { padding: 4px; } .te-tb input { width: 100%; box-sizing: border-box; }
+
+/* 하차지 주소록 경고 */
+.dest-diff { display: block; margin-top: 2px; color: #C0392B; font-size: 11.5px; font-weight: 700; white-space: normal; }
+.dest-none { display: block; margin-top: 2px; color: #9CA3AF; font-size: 11px; }
