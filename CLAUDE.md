@@ -17,7 +17,7 @@
 - `config.js`: 서버 주소, 기사 사이트 주소, 카카오 지도 JS 키(공개용 키).
 
 ## 배포
-- 화면(app.js·style.css·demo.js·html): 작업 브랜치에 push하면 GitHub Pages가 1~2분 뒤 자동 반영.
+- 화면(app.js·style.css·demo.js·html): GitHub Pages는 **`claude/annyeong-m64uzj` 브랜치**에서 나가요(main 아님). 다른 작업 브랜치에서 일했으면 그 브랜치에도 올려야(fast-forward push) 1~2분 뒤 사이트에 반영돼요 — 사용자에게 먼저 물어보고.
 - 서버(Code.js): 자동 배포 안 됨. 사용자가 Apps Script에 붙여넣고 "새 버전"으로 배포해야 적용.
 - 화면은 서버가 예전 버전이어도 깨지지 않게 만들어요(새 액션 실패 시 예전 방식으로 동작).
 
