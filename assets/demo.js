@@ -249,7 +249,7 @@
   }
 
   function dKey(car, dr, ph) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(dr || '').replace(/\s/g, '') + '|' + String(ph || '').replace(/[^0-9]/g, ''); }
-  function demoTabs(cust) { return (store.dispTabs || {})[cust] || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
+  function demoTabs(cust) { return (store.dispTabs || {})[cust] || (cust === '삼다수' ? [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }] : null) || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
   /** 권한에 따라 빼고 보내기 (서버 dispScrub_와 같음) */
   function demoScrub(out, me) {
     out = JSON.parse(JSON.stringify(out)); var cost = me.perms.indexOf('analysis') !== -1 || me.role === 'partner', one = function (r) { if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; }); if (me.role === 'partner') (r.orders || []).forEach(function (o) { o.noteIn = ''; }); };
@@ -265,7 +265,7 @@
       var rid = calId('R'); rcptData[rid] = req.data; wk('rcpt').push({ id: rid, cust: tr.cust, date: tr.date, no: tr.no, fc: req.fc, at: today() }); save();
     }
     var stops = [], by = {};
-    orders.forEach(function (o) { var d = o.d, k = d.fc; var x = by[k] || (by[k] = { fc: k, addr: d.addr, hours: d.hours, dock: d.dock, mgr: [d.m1, d.m2, d.m3].filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] }); if (stops.indexOf(x) === -1) stops.push(x);
+    orders.forEach(function (o) { var d = o.d, k = d.fc; var x = by[k] || (by[k] = { fc: k, addr: d.addr, hours: d.hours, dock: d.dock, mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] }); if (stops.indexOf(x) === -1) stops.push(x);
       var n = Number(String(d.bundle).replace(/,/g, '')) || 0; x.bundle += n; x.kg += Number(String(d.kg).replace(/,/g, '')) || 0; x.items[d.item] = (x.items[d.item] || 0) + n; if (d.bl && x.bl.indexOf(d.bl) === -1) x.bl.push(d.bl); var g = demoGeo(d.addr); if (g) { x.lat = g.lat; x.lng = g.lng; } });
     var from = orders[0] && orders[0].d.from, pl = wk('places').filter(function (p) { return p.name === from; })[0] || null;
     var plg = pl && pl.addr && demoGeo(pl.addr); if (pl) pl = Object.assign({}, pl, plg ? { lat: plg.lat, lng: plg.lng } : {});
@@ -293,6 +293,7 @@
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
       if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if ((req.action === 'drivers.list' || req.action === 'drivers.save') && !req._nb) { delete (req.driver || {}).birth; var dpr = handle(Object.assign({}, req, { _nb: 1 })); dpr.drivers = dpr.drivers.map(function (v) { var o = Object.assign({}, v); delete o.birth; return o; }); return dpr; } // 생년월일은 협력사에 안 보내요
       [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
       if (req.action === 'dispatch.tabs') { return { tabs: demoTabs(req.cust).filter(function (t) { return !t.hidden && me.dispTabs.indexOf(req.cust + t.suf) !== -1; }) }; }
     }
@@ -519,13 +520,13 @@
       case 'drivers.save':
         var dv = req.driver || {}; if (!String(dv.car || '').trim() && !String(dv.driver || '').trim()) fail('차량정보나 운전원을 넣으세요.');
         if (wk('drivers').some(function (v) { return v.id !== req.id && dKey(v.car, v.driver, v.phone) === dKey(dv.car, dv.driver, dv.phone); })) fail('같은 기사가 이미 있어요.');
-        var dvals = { car: String(dv.car || '').trim(), driver: String(dv.driver || '').trim(), phone: String(dv.phone || '').trim(), ton: String(dv.ton || '').trim(), memo: String(dv.memo || '').trim(), pin: !!dv.pin };
+        var dvals = { car: String(dv.car || '').trim(), driver: String(dv.driver || '').trim(), phone: String(dv.phone || '').trim(), ton: String(dv.ton || '').trim(), memo: String(dv.memo || '').trim(), pin: !!dv.pin }; if (dv.birth !== undefined) dvals.birth = String(dv.birth || '').trim();
         if (req.id) Object.assign(wk('drivers').filter(function (v) { return v.id === req.id; })[0] || fail('기사를 찾을 수 없어요.'), dvals); else wk('drivers').push(Object.assign({ id: calId('V'), n: 0, last: '' }, dvals));
         save(); return handle({ action: 'drivers.list', token: req.token });
       case 'drivers.delete': store.drivers = wk('drivers').filter(function (v) { return v.id !== req.id; }); save(); return handle({ action: 'drivers.list', token: req.token });
       case 'dispatch.editOrder':
         var eo = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
-        ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3'].forEach(function (k) { if ((req.patch || {}).hasOwnProperty(k)) eo.d[k] = String(req.patch[k]).trim(); }); if (!eo.d.fc) fail('센터명은 비울 수 없어요.'); save(); return { ok: true };
+        ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'].forEach(function (k) { if ((req.patch || {}).hasOwnProperty(k)) eo.d[k] = String(req.patch[k]).trim(); }); if (!eo.d.fc) fail('센터명은 비울 수 없어요.'); save(); return { ok: true };
       case 'dispatch.copyOrders':
         var cids = {}; (req.ids || []).forEach(function (x) { cids[x] = 1; });
         var csrc = wk('dispOrd').filter(function (o) { return cids[o.id] && o.cust === req.cust && o.date === req.date; }); if (!csrc.length) fail('복사할 오더를 찾을 수 없어요.');
@@ -539,7 +540,8 @@
         var dids = {}; (req.ids || []).forEach(function (x) { dids[x] = 1; }); store.dispOrd = wk('dispOrd').filter(function (o) { return !dids[o.id]; }); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
       case 'dispatch.rates':
         if (!canCost(me) && me.role !== 'partner') fail('매입 단가는 분석 권한자만 볼 수 있습니다.');
-        var dm = {}; wk('dispMap').forEach(function (x) { dm[x.fc] = x.dest; }); return { rates: wk('dispRates'), map: dm, tons: ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤'] };
+        var dm = {}; wk('dispMap').forEach(function (x) { dm[x.fc] = x.dest; }); return { rates: wk('dispRates'), map: dm, tons: ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤'] };
+      case 'dispatch.map': var dm2 = {}; wk('dispMap').forEach(function (x) { dm2[x.fc] = x.dest; }); return { map: dm2 };
       case 'dispatch.ratesSave':
         if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');
         store.dispRates = (req.rates || []).map(function (x) { var p = {}; Object.keys(x.p || {}).forEach(function (k) { var v = Number(String(x.p[k]).replace(/[,\s원]/g, '')); if (v > 0) p[k] = v; }); return { from: x.from, to: x.to, dist: Number(x.dist) || 0, p: p }; });

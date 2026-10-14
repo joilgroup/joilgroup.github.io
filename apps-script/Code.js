@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -204,6 +204,7 @@ function handle_(req) {
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
     case 'dispatch.mapSave': return dispMapSave_(session, req);
+    case 'dispatch.map': return { map: dispMap_() }; // 하차지 이름(삼다수 대리점 → 인천백석동 등)은 금액이 없어서 직원 모두 봐요
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
     case 'dispatch.receipt': return dispReceipt_(req.id);
     case 'loading.list': return { places: loadingList_() };
@@ -1989,8 +1990,8 @@ function partnerHandle_(session, action, req) {
     case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
     case 'loading.list': return { places: loadingList_() };
     case 'loading.photo': return placePhoto_(req.id);
-    case 'drivers.list': return { drivers: driverList_() };
-    case 'drivers.save': return driverSave_(session, req);
+    case 'drivers.list': return { drivers: driverList_().map(driverScrub_) };
+    case 'drivers.save': return { drivers: driverSave_(session, req).drivers.map(driverScrub_) };
   }
   throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
 }
@@ -2014,10 +2015,13 @@ function dispMulti_(keys, fn) {
   return { byKey: out };
 }
 /* 배차 탭 (업체마다): [{ name, suf(저장 키 꼬리), prefix(문자 머리말), hidden }] — 예전 인천·평택·부산은 키 꼬리 그대로 이름만 바꿔요 */
-function dispTabsDefault_() { return [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
+function dispTabsDefault_(cust) {
+  if (cust === '삼다수') return [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }];
+  return [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }];
+}
 function dispTabs_(cust) {
   cust = dispCust_(cust); var raw = PropertiesService.getScriptProperties().getProperty('DISP_TABS_' + cust);
-  var list = raw ? parseJson_(raw, null) : null; return Array.isArray(list) && list.length ? list : dispTabsDefault_();
+  var list = raw ? parseJson_(raw, null) : null; return Array.isArray(list) && list.length ? list : dispTabsDefault_(cust);
 }
 function dispTabsSave_(req) {
   var cust = dispCust_(req.cust), old = dispTabs_(cust), names = {}, sufs = {};
@@ -2146,7 +2150,7 @@ function dispCopyOrders_(session, req) {
   } finally { lock.releaseLock(); }
 }
 /** 오더 고치기: 정해진 칸만 (호차·순서·가져오기 키는 그대로) */
-var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3'];
+var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode']; // rsv·rsvCode: 삼다수 쿠팡 예약시간·코드
 function dispEditOrder_(session, req) {
   var cust = dispCust_(req.cust), date = dispDate_(req.date), patch = req.patch || {}, sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER);
   var f = findRow_(SHEET_DISP_ORD, DISP_ORD_HEADER, req.id); if (!f || String(f.raw[1]) !== cust || textDate_(f.raw[2]) !== date) throw new Error('오더를 찾을 수 없어요.');
@@ -2155,6 +2159,7 @@ function dispEditOrder_(session, req) {
   if (!d.fc) throw new Error('센터명은 비울 수 없어요.');
   d.editedBy = session.name; d.editedAt = now_();
   sh.getRange(f.row, 5).setValue(JSON.stringify(d));
+  dispTouch_(cust, date); // 다른 화면도 15초 안에 반영
   return { ok: true };
 }
 /** 오더 공지: 내부용(배차 담당만) · 기사용(문자·기사 링크에 표시) */
@@ -2172,25 +2177,30 @@ function dispDeleteOrders_(session, req) {
 }
 /* 매입 단가표 (분석 권한) · 센터 → 단가표 도착명 */
 var SHEET_DISP_RATES = '배차단가';
-var DISP_RATE_TONS = ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤'];
-var DISP_RATE_HEADER = ['출발', '도착', '거리'].concat(DISP_RATE_TONS).concat(['수정자', '수정일시']);
+var DISP_RATE_TONS0 = ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤'];
+// 18톤(삼다수)은 예전 시트 칸이 밀리지 않게 맨 뒤에 붙여요
+var DISP_RATE_TONS = DISP_RATE_TONS0.concat(['18톤']);
+var DISP_RATE_HEADER = ['출발', '도착', '거리'].concat(DISP_RATE_TONS0).concat(['수정자', '수정일시', '18톤']);
+function dispRateCol_(t) { return DISP_RATE_HEADER.indexOf(t); }
 var SHEET_DISP_MAP = '센터도착';
 var DISP_MAP_HEADER = ['센터명', '도착', '수정자', '수정일시'];
 function dispNeedCost_(session) { if (!canCost_(session)) throw new Error('매입 단가는 분석 권한자만 볼 수 있습니다.'); }
 function dispMap_() { var o = {}; rowsOf_(SHEET_DISP_MAP, DISP_MAP_HEADER).forEach(function (r) { o[String(r[0])] = String(r[1] || ''); }); return o; }
 function dispRates_(session) { dispNeedCost_(session); return dispRatesRead_(); }
 function dispRatesRead_() {
-  var rates = rowsOf_(SHEET_DISP_RATES, DISP_RATE_HEADER).map(function (r) { var p = {}; DISP_RATE_TONS.forEach(function (t, i) { var v = Number(r[3 + i]); if (v > 0) p[t] = v; }); return { from: String(r[0]), to: String(r[1]), dist: Number(r[2]) || 0, p: p }; });
+  headerSheet_(SHEET_DISP_RATES, DISP_RATE_HEADER);
+  var rates = rowsOf_(SHEET_DISP_RATES, DISP_RATE_HEADER).map(function (r) { var p = {}; DISP_RATE_TONS.forEach(function (t) { var v = Number(r[dispRateCol_(t)]); if (v > 0) p[t] = v; }); return { from: String(r[0]), to: String(r[1]), dist: Number(r[2]) || 0, p: p }; });
   return { rates: rates, map: dispMap_(), tons: DISP_RATE_TONS };
 }
 function dispRatesSave_(session, req) {
   dispNeedCost_(session);
   var rows = (req.rates || []).slice(0, 5000).map(function (x, i) {
     var f = String(x.from || '').trim(), t = String(x.to || '').trim(); if (!f || !t) throw new Error((i + 2) + '번째 줄: 출발·도착이 비어 있어요.');
-    return [f, t, Number(x.dist) || ''].concat(DISP_RATE_TONS.map(function (k) { var v = Number(String((x.p || {})[k] == null ? '' : x.p[k]).replace(/[,\s원]/g, '')); return v > 0 ? v : ''; })).concat([session.name, now_()]);
+    var pv = function (k) { var v = Number(String((x.p || {})[k] == null ? '' : x.p[k]).replace(/[,\s원]/g, '')); return v > 0 ? v : ''; };
+    return [f, t, Number(x.dist) || ''].concat(DISP_RATE_TONS0.map(pv)).concat([session.name, now_(), pv('18톤')]);
   });
   if (!rows.length) throw new Error('올릴 단가가 없어요.');
-  var sh = cacheSheet_(SHEET_DISP_RATES, DISP_RATE_HEADER);
+  var sh = headerSheet_(SHEET_DISP_RATES, DISP_RATE_HEADER);
   if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, DISP_RATE_HEADER.length).clearContent();
   sh.getRange(2, 1, rows.length, DISP_RATE_HEADER.length).setValues(rows);
   return dispRates_(session);
@@ -2269,7 +2279,7 @@ function drvGet_(t) {
   var stops = [], by = {};
   orders.forEach(function (o) {
     var d = o.d || {}, k = d.fc || '-', v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
-    var s = by[k] || (by[k] = { fc: k, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
+    var s = by[k] || (by[k] = { fc: k, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
     if (!stops.some(function (x) { return x === s; })) stops.push(s);
     // 번들 칸이 'N패키지'면 같은 착지끼리 모아 24패키지 = 1번들
     var pm = String(d.bundle || '').match(/(\d+(?:\.\d+)?)\s*패키지/), it = d.item || '-';
@@ -2328,21 +2338,24 @@ function loadingSave_(session, req) {
 function loadingDelete_(id) { var f = findRow_(SHEET_LOADING, LOADING_HEADER, id); if (!f) throw new Error('상차지를 찾을 수 없습니다.'); placePhotos_().filter(function (x) { return x.place === String(id); }).forEach(function (x) { placePhotoDelete_(x.id); }); f.sh.deleteRow(f.row); return { places: loadingList_() }; }
 /* 기사 풀: 호차에 넣은 차량정보가 자동으로 쌓이고(횟수·마지막 배차일), 직접 고치기·지우기·고정(★) */
 var SHEET_DRIVERS = '기사풀';
-var DRIVER_HEADER = ['ID', '차량정보', '운전원', '연락처', '톤수', '메모', '고정', '횟수', '마지막배차', '수정자', '수정일시'];
+var DRIVER_HEADER = ['ID', '차량정보', '운전원', '연락처', '톤수', '메모', '고정', '횟수', '마지막배차', '수정자', '수정일시', '생년월일'];
+/** 생년월일(인천항 출입등록용)은 협력사 계정에 보내지 않아요 */
+function driverScrub_(d) { var o = Object.assign({}, d); delete o.birth; return o; }
 function driverKey_(car, driver, phone) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(driver || '').replace(/\s/g, '') + '|' + String(phone || '').replace(/[^0-9]/g, ''); }
 function driverList_() {
-  return rowsOf_(SHEET_DRIVERS, DRIVER_HEADER).map(function (r) { return { id: String(r[0]), car: dispTxt_(r[1]), driver: dispTxt_(r[2]), phone: dispTxt_(r[3]), ton: dispTxt_(r[4]), memo: dispTxt_(r[5]), pin: r[6] === true || String(r[6]) === 'Y', n: Number(r[7]) || 0, last: textDate_(r[8]) }; })
+  headerSheet_(SHEET_DRIVERS, DRIVER_HEADER);
+  return rowsOf_(SHEET_DRIVERS, DRIVER_HEADER).map(function (r) { return { id: String(r[0]), car: dispTxt_(r[1]), driver: dispTxt_(r[2]), phone: dispTxt_(r[3]), ton: dispTxt_(r[4]), memo: dispTxt_(r[5]), pin: r[6] === true || String(r[6]) === 'Y', n: Number(r[7]) || 0, last: textDate_(r[8]), birth: dispTxt_(r[11]) }; })
     .sort(function (a, b) { return (b.pin - a.pin) || (b.n - a.n) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); });
 }
 function driverCollect_(session, date, trucks) {
-  var sh = cacheSheet_(SHEET_DRIVERS, DRIVER_HEADER), rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, DRIVER_HEADER.length).getValues() : [], idx = {};
+  var sh = headerSheet_(SHEET_DRIVERS, DRIVER_HEADER), rows = sh.getLastRow() >= 2 ? sh.getRange(2, 1, sh.getLastRow() - 1, DRIVER_HEADER.length).getValues() : [], idx = {};
   rows.forEach(function (r, i) { idx[driverKey_(dispTxt_(r[1]), dispTxt_(r[2]), dispTxt_(r[3]))] = i; });
   var q = function (v) { return "'" + String(v || '').trim().slice(0, 100); };
   trucks.forEach(function (t) {
     var car = String(t.car || '').trim(), drv = String(t.driver || '').trim(), ph = String(t.phone || '').trim(), ton = String(t.ton || '').trim();
     if (!car && !(drv && ph)) return;
     var k = driverKey_(car, drv, ph), i = idx[k];
-    if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_()]); idx[k] = rows.length; rows.push([]); return; }
+    if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_(), '']); idx[k] = rows.length; rows.push([]); return; }
     var r = sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length), v = (rows[i].length ? rows[i] : r.getValues()[0]).slice(), n = Number(v[7]) || 0, last = textDate_(v[8]);
     var sig = function (x) { return [1, 2, 3, 4, 5].map(function (j) { return dispTxt_(x[j]); }).concat([Number(x[7]) || 0, textDate_(x[8])]).join('|'); }, was = sig(v);
     // 잘린 값(예: '홍길동' → '홍')이 기존 값을 덮지 않게: 새 값이 기존 값의 앞부분이면 기존 값 유지
@@ -2363,7 +2376,8 @@ function driverSave_(session, req) {
     var f = findRow_(SHEET_DRIVERS, DRIVER_HEADER, req.id); if (!f) throw new Error('기사를 찾을 수 없어요.');
     f.sh.getRange(f.row, 2, 1, 6).setValues([[q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N']]);
     f.sh.getRange(f.row, 10, 1, 2).setValues([[session.name, now_()]]);
-  } else cacheSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_()]);
+    if (x.birth !== undefined && session.role !== 'partner') f.sh.getRange(f.row, 12).setValue(q(x.birth)); // 안 보낸 화면(기사 풀 예전 화면·협력사)은 그대로 둬요
+  } else headerSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_(), session.role === 'partner' ? '' : q(x.birth)]);
   return { drivers: driverList_() };
 }
 function driverDelete_(id) { var f = findRow_(SHEET_DRIVERS, DRIVER_HEADER, id); if (!f) throw new Error('기사를 찾을 수 없어요.'); f.sh.deleteRow(f.row); return { drivers: driverList_() }; }

@@ -104,22 +104,22 @@
       document.head.appendChild(sc);
     }
     function draw() {
-      var d = data, tb = 0, tk = 0;
+      var d = data, tb = 0, tk = 0, unit = d.cust === '삼다수' ? '파렛트' : '번들'; // 삼다수는 파렛트 (무게 없음)
       d.stops.forEach(function (s) { tb += s.bundle; tk += s.kg; });
       var got = function (fc) { return d.receipts.filter(function (r) { return r.fc === fc; }); };
       var nGot = d.stops.filter(function (s) { return got(s.fc).length; }).length;
       var p = d.place;
       app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.cust) + '</div><h1>착지 ' + d.stops.length + '곳</h1>' +
-        '<div class="sub">총 ' + won(tb) + '번들 / ' + won(tk) + 'kg' + (d.car || d.driver ? ' · ' + esc([d.car, d.driver].filter(Boolean).join(' ')) : '') + '</div>' +
+        '<div class="sub">총 ' + won(tb) + unit + (unit === '번들' ? ' / ' + won(tk) + 'kg' : '') + (d.car || d.driver ? ' · ' + esc([d.car, d.driver].filter(Boolean).join(' ')) : '') + '</div>' +
         '<div class="sub ' + (nGot === d.stops.length ? 'ok' : '') + '" style="margin-top:4px">인수증 ' + nGot + ' / ' + d.stops.length + (nGot === d.stops.length ? ' · 모두 올렸어요 👍' : '') + '</div>' +
         ((d.notes || []).length ? '<div class="card notice">' + d.notes.map(function (n) { return '<div>⚠️ ' + (d.stops.length > 1 && n.fc ? esc(n.fc) + ': ' : '') + esc(n.text) + '</div>'; }).join('') + '</div>' : '') +
         '<div id="mapSlot"></div><div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from) + '</div>' + (p ? (p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') + (p.contact ? '<div class="row">' + tels(String(p.contact).split(/\n/)) + '</div>' : '') + (p.addr ? '<div class="btns">' + navLinks(p.name, p.addr) + '</div>' : '') +
           ((p.photos || []).length ? '<div class="phs">' + p.photos.map(function (ph) { return '<figure class="ph"><div class="phi" data-ph="' + esc(ph.id) + '">' + (photos[ph.id] ? '<img src="data:image/jpeg;base64,' + photos[ph.id] + '" alt="">' : '<span><span class="spin"></span> 사진 불러오는 중…</span>') + '</div>' + (ph.cap ? '<figcaption>📍 ' + esc(ph.cap) + '</figcaption>' : '') + '</figure>'; }).join('') + '</div>' : '') : '') + '</div>' +
         d.stops.map(function (s, i) {
-          var g = got(s.fc), items = Object.keys(s.items).map(function (k) { return esc(k) + ' <b>' + won(s.items[k]) + '</b>번들'; }).join(' · ');
+          var g = got(s.fc), items = Object.keys(s.items).map(function (k) { return esc(k) + ' <b>' + won(s.items[k]) + '</b>' + unit; }).join(' · ');
           return '<div class="card" id="st' + i + '"><div class="ttl"><span class="no">' + (i + 1) + '</span>' + esc(s.fc) + '</div>' +
             (s.addr ? '<div class="row">' + esc(s.addr) + '</div>' : '') + (s.hours ? '<div class="row muted">⏰ ' + esc(s.hours) + '</div>' : '') + (s.dock ? '<div class="row muted">📌 ' + esc(s.dock) + '</div>' : '') +
-            '<div class="items">' + items + ' · 총 ' + won(s.bundle) + '번들' + (s.bl.length ? '<br><span class="muted">BL ' + esc(s.bl.join(', ')) + '</span>' : '') + '</div>' +
+            '<div class="items">' + items + ' · 총 ' + won(s.bundle) + unit + (s.bl.length ? '<br><span class="muted">BL ' + esc(s.bl.join(', ')) + '</span>' : '') + '</div>' +
             (s.mgr.length ? '<div class="row">' + tels(s.mgr) + '</div>' : '') +
             '<div class="btns">' + navLinks(s.fc, s.addr, s.lat, s.lng) +
             '<label class="btn main' + (g.length ? ' done' : '') + '">' + (busy[s.fc] ? '<span class="spin"></span> 올리는 중…' : g.length ? '✅ 인수증 올림 (' + esc(String(g[g.length - 1].at).slice(11, 16)) + (g.length > 1 ? ' · ' + g.length + '장' : '') + ') · 다시 올리기' : '📷 싸인 받은 거래명세서 사진 올리기') +
