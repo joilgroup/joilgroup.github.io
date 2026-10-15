@@ -7802,6 +7802,32 @@
       '<div class="tt-amt">' + (t.status === '회차' && !base ? '<span class="err-text">금액 입력</span>' : base == null && !ex.length ? '–' : won(sum)) + '</div>' +
       (miss ? '<div class="err-text small">단가 없음: ' + esc(cost.miss.join(', ')) + '</div>' : '') + '</div>';
   }
+  /** 엑셀로 복사: 착지마다 한 줄 (패키지는 따로 한 줄) · 구분 출발센터 날짜 도착지 주소 번들 무게 차량정보 운전원 연락처 입차시간 톤수 상태 도착지특이사항 문자 안내사항 오더코드
+      문자(여러 줄)는 호차 첫 줄에만 · 번들·무게는 숫자만 */
+  function dispSheetRows(D, ns) {
+    var out = [], kind = dispKind(D), sds = isSds();
+    ns.forEach(function (no) {
+      var t = truckInfo(D, no), stops = truckStops(D, no), msg = truckMessage(D, no), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', first = true;
+      stops.forEach(function (s) {
+        var notes = []; s.rows.forEach(function (o) { if (o.noteDrv && notes.indexOf(o.noteDrv) === -1) notes.push(o.noteDrv); });
+        var lines = []; if (s.n0 || !s.pkg) lines.push({ b: s.b0, kg: s.kg0 }); if (s.pkg) lines.push({ b: Math.ceil(s.pkg / PKG_PER_BUNDLE), kg: s.pkg + '패키지' });
+        lines.forEach(function (ln) {
+          out.push([kind, (findPlace(s.d.from) || {}).name || s.d.from || '', D.date, sds ? sdsDest(s.d, D.tab) || s.fc : s.fc, s.d.addr || '', String(ln.b || 0), String(ln.kg || 0),
+            t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '', t.status || '배차전', s.d.hours || '', first ? msg : '', notes.join(' / '), code]);
+          first = false;
+        });
+      });
+    });
+    return out;
+  }
+  /** 표를 클립보드로: 구글 시트에 칸이 그대로 들어가게 HTML 표 + 탭 구분 글자 둘 다 (여러 줄 칸 유지) */
+  function copyTable(rows, msg) {
+    var html = '<table>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td>' + esc(String(c == null ? '' : c)).replace(/\n/g, '<br>') + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+    var tsv = rows.map(function (r) { return r.map(function (c) { c = String(c == null ? '' : c); return /[\t\n"]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c; }).join('\t'); }).join('\n');
+    var ok = function () { toast(msg); }, fail = function () { var ta = document.createElement('textarea'); ta.value = tsv; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); ok(); } catch (e) { toast('복사하지 못했어요.', 'err'); } ta.remove(); };
+    if (navigator.clipboard && window.ClipboardItem) navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([tsv], { type: 'text/plain' }) })]).then(ok, function () { (navigator.clipboard.writeText ? navigator.clipboard.writeText(tsv) : Promise.reject()).then(ok, fail); });
+    else fail();
+  }
   function truckRowsHtml(D, no, showCost, xb, xw) {
     var t = truckInfo(D, no), cost = truckCost(D, no), stops = cost ? cost.stops : truckStops(D, no), key = D.tab + '|' + no, sds = isSds();
     var rc = (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
@@ -7914,7 +7940,7 @@
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
       (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">Trucks · ③ 호차별 문자</div>' +
-        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3></div>' + truckTableHtml(X, ns) + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
+        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3><button class="btn btn-sm" data-xlall="' + esc(t[0]) + '" title="구글 시트·엑셀에 붙여넣기용 (착지마다 한 줄)">엑셀로 복사</button></div>' + truckTableHtml(X, ns) + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
     var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; renderDispatch(); };
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
@@ -8029,6 +8055,7 @@
     $$('[data-tedit]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tedit); openTruckOrderEdit(x.D, x.no); }; });
     $$('[data-tmove]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tmove); openTruckMove(x.D, x.no, function () { redraw(x.tab); }); }; });
     $$('[data-ask]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.ask); openTruckAsk(x.D, x.no, function (txt) { copyText(txt, '문의 내용을 복사했어요. 카톡방에 붙여넣으세요.'); }); }; });
+    $$('[data-xlall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.xlall]; if (!X) return; var rows = dispSheetRows(X, dispTrucks(X)); copyTable(rows, X.tab + ' ' + dispTrucks(X).length + '대(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; });
     $$('[data-xl]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xl), t = truckInfo(x.D, x.no); copyText(TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\r\n]+/g, ' '); }).join('\t'), x.no + '호차 차량정보 5칸을 복사했어요. 엑셀에 붙여넣으세요.'); }; });
     $$('[data-rec]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.rec), rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
     var copyText = function (txt, msg) { (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(msg); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('복사하지 못했어요. 미리보기에서 직접 복사하세요.', 'err'); } ta.remove(); }); };
