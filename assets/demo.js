@@ -312,7 +312,7 @@
       if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
-      if (req.action === 'dispatch.rates' && !req._nb) { return demoRates(pcs); }
+      if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
       if ((req.action === 'drivers.list' || req.action === 'drivers.save') && !req._nb) { delete (req.driver || {}).birth; delete (req.driver || {}).black; var dpr = handle(Object.assign({}, req, { _nb: 1 })); dpr.drivers = dpr.drivers.map(function (v) { var o = Object.assign({}, v); delete o.birth; return o; }); return dpr; } // 생년월일은 협력사에 안 보내요
       [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
       if (req.action === 'dispatch.tabs') { return { tabs: demoTabs(req.cust).filter(function (t) { return !t.hidden && me.dispTabs.indexOf(req.cust + t.suf) !== -1; }) }; }

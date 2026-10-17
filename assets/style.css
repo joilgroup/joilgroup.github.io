@@ -1498,3 +1498,11 @@ body:has(.backdrop) .topbar, body:has(.backdrop) .nav { backdrop-filter: none; -
 table.data.dpool tr.dpool-black td { background: #FDECEA; }
 .modal-xl .pa-list.std-list { overflow-x: auto; }
 .modal-xl .adv-grid.pl-wide { grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); }
+/* 삼다수 배차 표: 한 줄 = 차 한 대 */
+.sds-tt td { vertical-align: middle; }
+.sds-tt td.sds-addr { min-width: 200px; max-width: 280px; }
+.sds-tt .sds-dn { display: inline-block; font-size: 11.5px; font-weight: 800; color: #1F6F7F; }
+.sds-tt td.tt-in .input-sm { width: 100%; min-width: 86px; box-sizing: border-box; }
+.sds-tt tr.sds-black td { background: #FDECEA; }
+.sds-tt .sds-blk { color: #C0392B; font-size: 16px; }
+.sds-tt td.sds-act { white-space: nowrap; }

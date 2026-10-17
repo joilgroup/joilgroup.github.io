@@ -1992,7 +1992,7 @@ function partnerHandle_(session, action, req) {
     case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: dispStamps_(req.keys, req.date) };
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
-    case 'dispatch.rates': return dispRatesRead_(partnerCusts_(session)); // 자기 업체 운송비를 보기만 (단가표 수정은 못 함)
+    case 'dispatch.rates': return partnerRates_(session); // 자기 업체 운송비를 보기만 (단가표 수정은 못 함)
     case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
     case 'loading.list': var pcs = partnerCusts_(session); return { places: loadingList_().filter(function (x) { return pcs.indexOf(x.cust) !== -1; }) };
     case 'loading.photo': return placePhoto_(req.id);
@@ -2003,6 +2003,12 @@ function partnerHandle_(session, action, req) {
 }
 /** 협력사가 볼 수 있는 업체: 배정된 탭 키(업체+접미사 '/평택' 등)의 업체 */
 function partnerCusts_(session) { var o = []; (session.dispTabs || []).forEach(function (k) { var c = String(k).replace(/\/.*$/, ''); if (o.indexOf(c) === -1) o.push(c); }); return o; }
+/** 협력사 단가: 자기 업체 것만 + 하차지 주소록의 '단가표 도착명'(하차지명 → 도착)을 연결 표에 더해요 (주소록 자체는 안 보내요) */
+function partnerRates_(session) {
+  var cs = partnerCusts_(session), out = dispRatesRead_(cs);
+  destList_().forEach(function (d) { if (cs.indexOf(d.cust) !== -1 && d.rateTo && d.name && !(d.name in out.map)) out.map[d.name] = d.rateTo; });
+  return out;
+}
 /** 권한에 따라 빼고 보내기: 비용(분석 권한·협력사는 보기만) · 내부 공지(협력사 제외) */
 function dispScrub_(out, session) {
   var partner = session.role === 'partner', cost = canCost_(session) || partner;
