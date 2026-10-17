@@ -4,9 +4,9 @@
   'use strict';
   // app.js의 공용 도우미 (저장·화면·권한)
   var $ = H.$, $$ = H.$$, DISP_STATUS = H.DISP_STATUS, PKG_PER_BUNDLE = H.PKG_PER_BUNDLE, TRK_FIELDS = H.TRK_FIELDS, api = H.api, busy = H.busy, can = H.can;
-  var dispCode = H.dispCode, dispKind = H.dispKind, dispNum = H.dispNum, dispRegion = H.dispRegion, dispState = H.dispState, drawDispDay = H.drawDispDay, esc = H.esc, findPlace = H.findPlace;
-  var isPartner = H.isPartner, kindShade = H.kindShade, modal = H.modal, parseTsv = H.parseTsv, statusSelect = H.statusSelect, toast = H.toast, truckCost = H.truckCost, truckCostCell = H.truckCostCell;
-  var truckInfo = H.truckInfo, truckNotes = H.truckNotes, truckStops = H.truckStops, won = H.won;
+  var destEntry = H.destEntry, dispCode = H.dispCode, dispKind = H.dispKind, dispNum = H.dispNum, dispRegion = H.dispRegion, dispState = H.dispState, drawDispDay = H.drawDispDay, esc = H.esc;
+  var findPlace = H.findPlace, isPartner = H.isPartner, kindShade = H.kindShade, modal = H.modal, parseTsv = H.parseTsv, rateRows = H.rateRows, statusSelect = H.statusSelect, toast = H.toast;
+  var truckCost = H.truckCost, truckCostCell = H.truckCostCell, truckInfo = H.truckInfo, truckNotes = H.truckNotes, truckStops = H.truckStops, won = H.won;
   /* ───────── 삼다수: 메일 오더 표 → 하차지마다 18파렛트 = 1대 (구글시트 '직송 오더 데이터 처리하기'와 같은 규칙) ───────── */
   var SDS_PLT = 18;
   var SDS_TABS = [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }];
@@ -97,13 +97,13 @@
     if (!items.length) warn.push('읽을 하차지 줄이 없어요.');
     return { items: items, warn: warn.join(' ') };
   }
-  /** 하차지 이름(인천백석동 등): 직접 연결해 둔 이름 > 지방 탭은 비고 */
-  function sdsDest(d, tab) { var st = dispState(), map = st.dmap || (st.rates && st.rates.map) || {}; return map[d.fc] || (sdsLocal(tab) ? d.place || '' : ''); }
+  /** 하차지 이름(인천백석동 등): 직접 연결해 둔 이름 > 하차지 주소록의 '단가표 도착명' > 지방 탭은 비고 */
+  function sdsDest(d, tab) { var st = dispState(), map = st.dmap || (st.rates && st.rates.map) || {}, e = map[d.fc] ? null : destEntry(d.fc); return map[d.fc] || (e && e.rateTo) || (sdsLocal(tab) ? d.place || '' : ''); }
   function loadDispMap(force) { var st = dispState(); if (st.dmap && !force) return Promise.resolve(st.dmap); return api('dispatch.map').then(function (r) { st.dmap = r.map || {}; return st.dmap; }).catch(function () { return null; }); }
   function sdsSizeText(d) { return SDS_SIZES.filter(function (s) { return dispNum(d[s[0]]); }).map(function (s) { return s[1] + ' ' + won(dispNum(d[s[0]])); }).join(' · '); }
   /** 하차지 이름 연결 (분석 권한 · 매입 단가표의 '센터별 도착지'와 같은 곳에 저장) */
   function openSdsDest(fc, tab) {
-    var st = dispState(), dests = {}; ((st.rates && st.rates.rates) || []).forEach(function (r) { dests[r.to] = 1; });
+    var st = dispState(), dests = {}; rateRows().forEach(function (r) { dests[r.to] = 1; });
     modal({ eyebrow: '삼다수 · 하차지 이름', title: fc,
       body: '<p class="muted small" style="margin:0 0 10px">이 대리점명이 오면 늘 이 하차지 이름(단가표의 도착)으로 보여요. 한 번만 연결하면 돼요.</p><div class="field"><label>하차지 이름 (예: 인천백석동)</label><input class="input" id="sdN" list="sdDl" value="' + esc(sdsDest({ fc: fc }, tab)) + '"><datalist id="sdDl">' + Object.keys(dests).sort().map(function (d) { return '<option value="' + esc(d) + '">'; }).join('') + '</datalist></div>',
       foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="sdSave">저장</button>',

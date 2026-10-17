@@ -5,8 +5,8 @@
   // app.js의 공용 도우미 (저장·화면·권한)
   var $ = H.$, $$ = H.$$, advAddrKey = H.advAddrKey, advRegion = H.advRegion, api = H.api, autoTon = H.autoTon, dispBundles = H.dispBundles, dispCleanD = H.dispCleanD;
   var dispNum = H.dispNum, dispOrderB = H.dispOrderB, dispState = H.dispState, dispYmd = H.dispYmd, drawRouteMap = H.drawRouteMap, esc = H.esc, findPlace = H.findPlace, geoKey = H.geoKey;
-  var hav = H.hav, isPartner = H.isPartner, loadDispRates = H.loadDispRates, modal = H.modal, parseTsv = H.parseTsv, routeLen = H.routeLen, toast = H.toast, truckCost = H.truckCost;
-  var won = H.won, ymAdd = H.ymAdd;
+  var hav = H.hav, isPartner = H.isPartner, loadDispRates = H.loadDispRates, mineOf = H.mineOf, modal = H.modal, parseTsv = H.parseTsv, routeLen = H.routeLen, toast = H.toast;
+  var truckCost = H.truckCost, won = H.won, ymAdd = H.ymAdd;
   /* 동방 엑셀 C~AF열 (첫 칸은 항상 출발센터 · B열 순번은 쓰지 않아요) */
   var DISP_COLS = [['from', '출발센터'], ['maker', '제조사'], ['item', 'Item'], ['date', '납품일자'], ['inQty', '입고수량'], ['outQty', '출고수량'], ['dest', '도착지'], ['fc', '센터명'], ['po', 'CP 발주번호'], ['bl', 'BL#'],
     ['bundle', '상차수량(BUNDLE)'], ['car', '차량정보'], ['driver', '운전원'], ['phone', '연락처'], ['time', '입차 예정시간'], ['ton', '톤수'], ['kg', '무게(KG)'], ['load', '상차'], ['qty', '수량'], ['bundle2', '상차수량(BUNDLE)'],
@@ -47,6 +47,9 @@
     return { items: items, warn: bad ? '날짜나 센터명이 없는 ' + bad + '줄은 건너뛰었어요.' + (!items.length ? ' 동방 엑셀의 C열(출발센터)부터 복사했는지 확인해 주세요.' : '') : '' };
   }
   function destKind(o) { return /장갑/.test((o.d && o.d.item) || '') ? 'glove' : 'fc'; }
+  /** 주소록 줄의 종류: '장갑'(예전 값 glove)이면 장갑, 나머지는 일반(FC도크) */
+  function bookKind(x) { return /장갑|glove/i.test(x.kind || '') ? 'glove' : 'fc'; }
+  function myDests() { return mineOf(dispState().dests, '쿠팡부자재'); }
   /** 같은 곳인지 비교용: 시·군(광역시는 구) + 도로명/번지 (띄어쓰기·층·도크·괄호·우편번호 무시) */
   function destKey(addr) {
     var s = String(addr || '').replace(/\([^)]*\)/g, ' ').replace(/[,，]/g, ' ').replace(/번지/g, ' ').replace(/\s+/g, ' ').trim();
@@ -74,7 +77,7 @@
   }
   /** 이 오더의 주소록 항목: 도착지 코드 = Sap Code (같은 코드가 층별로 여럿이면 센터명으로) → 없으면 센터명으로 */
   function destOf(o) {
-    var st = dispState(), list = (st.dests || []).filter(function (x) { return x.kind === destKind(o); }); if (!list.length) return null;
+    var list = myDests().filter(function (x) { return bookKind(x) === destKind(o); }); if (!list.length) return null;
     var code = String(o.d.dest || '').trim().toUpperCase(), nm = function (v) { return String(v || '').replace(/\s|FC|센터/gi, '').toUpperCase(); };
     var hit = code ? list.filter(function (x) { return x.code.toUpperCase() === code; }) : [];
     if (!hit.length && code) hit = list.filter(function (x) { return x.code.toUpperCase().indexOf(code + '-') === 0; });
@@ -83,12 +86,12 @@
     return hit[0] || null;
   }
   function destFlag(o) {
-    var st = dispState(); if (isPartner() || !(st.dests || []).length) return '';
+    if (isPartner() || !myDests().length) return '';
     var e = destOf(o); if (!e) return '<span class="dest-none" title="하차지 주소록(' + (destKind(o) === 'glove' ? '장갑' : 'FC도크') + ')에 이 코드·센터명이 없어요">주소록에 없음' + (o.d.dest ? ' (' + esc(o.d.dest) + ')' : '') + '</span>';
     if (!e.addr || destSame(e.addr, o.d.addr)) return '';
-    return '<span class="dest-diff" title="' + esc('주소록(' + (e.kind === 'glove' ? '장갑' : 'FC도크') + ' · ' + e.code + ' ' + e.name + '): ' + e.addr) + '">⚠ 주소록과 다름: ' + esc(e.addr) + '</span>';
+    return '<span class="dest-diff" title="' + esc('주소록(' + (bookKind(e) === 'glove' ? '장갑' : 'FC도크') + ' · ' + e.code + ' ' + e.name + '): ' + e.addr) + '">⚠ 주소록과 다름: ' + esc(e.addr) + '</span>';
   }
-  function destDiffCount(orders) { var st = dispState(); if (isPartner() || !(st.dests || []).length) return 0; return orders.filter(function (o) { var e = destOf(o); return e && e.addr && !destSame(e.addr, o.d.addr); }).length; }
+  function destDiffCount(orders) { if (isPartner() || !myDests().length) return 0; return orders.filter(function (o) { var e = destOf(o); return e && e.addr && !destSame(e.addr, o.d.addr); }).length; }
   /* ── AI 도움: 호차 안 정해진 오더를 한 대씩 추천 (규칙 + 지난 배차 기록, 데이터는 밖으로 안 나가요) ──
      · 상차지(출발센터)가 같은 착지끼리만, 한 대에 착지 3곳까지
      · 합칠 때는 16번들(11톤)까지 · 한 착지가 17~18번들이면 그 착지만 한 대 · 18번들 넘는 착지는 오더 단위로 여러 대

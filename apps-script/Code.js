@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -214,6 +214,8 @@ function handle_(req) {
     case 'loading.save': return loadingSave_(session, req);
     case 'dest.list': return { dests: destList_() };
     case 'dest.save': return destSave_(session, req);
+    case 'loading.bulk': return loadingBulk_(session, req);
+    case 'drivers.bulk': return driverBulk_(session, req);
     case 'loading.delete': return loadingDelete_(req.id);
     case 'loading.photo': return placePhoto_(req.id);
     case 'loading.photoAdd': return placePhotoAdd_(session, req);
@@ -1950,7 +1952,11 @@ var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정�
 /** 예전 상태 이름 맞추기: 배차중 → 배차전(빈 값), 차량변경 → 정보변경 */
 function dispStatus_(v) { v = dispTxt_(v); return v === '배차중' ? '' : v === '차량변경' ? '정보변경' : v; }
 var SHEET_LOADING = '상차지';
-var LOADING_HEADER = ['ID', '이름', '주소', '상차가능시간', '연락처', '메모', '수정자', '수정일시', '단가표출발'];
+var LOADING_HEADER = ['ID', '이름', '주소', '상차가능시간', '연락처', '메모', '수정자', '수정일시', '단가표출발', '업체', '담당자'];
+/* 업체(화주)별 자료: 상차지·하차지 주소록·매입 단가표는 '업체' 칸으로 나눠요 (업체 칸이 빈 예전 자료 = 쿠팡부자재) */
+var DISP_CUST0 = '쿠팡부자재';
+function custOfRow_(v) { return dispTxt_(v).trim() || DISP_CUST0; }
+function custReq_(c) { return String(c || '').trim().slice(0, 50) || DISP_CUST0; }
 var DISP_TRK_FIELDS = ['car', 'driver', 'phone', 'time', 'ton', 'memo'];
 function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업체를 고르세요.'); return c.slice(0, 50); }
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
@@ -1986,15 +1992,17 @@ function partnerHandle_(session, action, req) {
     case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: dispStamps_(req.keys, req.date) };
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
-    case 'dispatch.rates': return dispRatesRead_(); // 운송비를 보기만 (단가표 수정은 못 함)
+    case 'dispatch.rates': return dispRatesRead_(partnerCusts_(session)); // 자기 업체 운송비를 보기만 (단가표 수정은 못 함)
     case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
-    case 'loading.list': return { places: loadingList_() };
+    case 'loading.list': var pcs = partnerCusts_(session); return { places: loadingList_().filter(function (x) { return pcs.indexOf(x.cust) !== -1; }) };
     case 'loading.photo': return placePhoto_(req.id);
     case 'drivers.list': return { drivers: driverList_().map(driverScrub_) };
     case 'drivers.save': return { drivers: driverSave_(session, req).drivers.map(driverScrub_) };
   }
   throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
 }
+/** 협력사가 볼 수 있는 업체: 배정된 탭 키(업체+접미사 '/평택' 등)의 업체 */
+function partnerCusts_(session) { var o = []; (session.dispTabs || []).forEach(function (k) { var c = String(k).replace(/\/.*$/, ''); if (o.indexOf(c) === -1) o.push(c); }); return o; }
 /** 권한에 따라 빼고 보내기: 비용(분석 권한·협력사는 보기만) · 내부 공지(협력사 제외) */
 function dispScrub_(out, session) {
   var partner = session.role === 'partner', cost = canCost_(session) || partner;
@@ -2176,34 +2184,91 @@ function dispDeleteOrders_(session, req) {
   return dispDay_(cust, date);
 }
 /* 매입 단가표 (분석 권한) · 센터 → 단가표 도착명 */
-var SHEET_DISP_RATES = '배차단가';
+var SHEET_DISP_RATES = '배차단가'; // 예전 가로형 (한 번 옮긴 뒤엔 백업으로만 남아요)
 var DISP_RATE_TONS0 = ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤'];
 // 18톤(삼다수)은 예전 시트 칸이 밀리지 않게 맨 뒤에 붙여요
 var DISP_RATE_TONS = DISP_RATE_TONS0.concat(['18톤']);
 var DISP_RATE_HEADER = ['출발', '도착', '거리'].concat(DISP_RATE_TONS0).concat(['수정자', '수정일시', '18톤']);
 function dispRateCol_(t) { return DISP_RATE_HEADER.indexOf(t); }
+/* 매입 단가표 (세로형): 한 줄 = 업체 · 출발 · 도착 · 톤수 하나 · 단가 · 적용시작일(비우면 처음부터) */
+var SHEET_DISP_RATES2 = '배차단가표';
+var DISP_RATE2_HEADER = ['업체', '출발', '도착', '톤수', '단가', '적용시작일', '비고', '거리', '수정자', '수정일시'];
 var SHEET_DISP_MAP = '센터도착';
 var DISP_MAP_HEADER = ['센터명', '도착', '수정자', '수정일시'];
 function dispNeedCost_(session) { if (!canCost_(session)) throw new Error('매입 단가는 분석 권한자만 볼 수 있습니다.'); }
 function dispMap_() { var o = {}; rowsOf_(SHEET_DISP_MAP, DISP_MAP_HEADER).forEach(function (r) { o[String(r[0])] = String(r[1] || ''); }); return o; }
 function dispRates_(session) { dispNeedCost_(session); return dispRatesRead_(); }
-function dispRatesRead_() {
-  headerSheet_(SHEET_DISP_RATES, DISP_RATE_HEADER);
-  var rates = rowsOf_(SHEET_DISP_RATES, DISP_RATE_HEADER).map(function (r) { var p = {}; DISP_RATE_TONS.forEach(function (t) { var v = Number(r[dispRateCol_(t)]); if (v > 0) p[t] = v; }); return { from: String(r[0]), to: String(r[1]), dist: Number(r[2]) || 0, p: p }; });
-  return { rates: rates, map: dispMap_(), tons: DISP_RATE_TONS };
+/** 톤수 글자 맞추기: '5' · '5t' · '5 톤' → '5톤' */
+function rateTon_(v) { var t = String(v == null ? '' : v).replace(/\s/g, '').replace(/^'/, '').replace(/(t|T|ton|TON|Ton)$/, '톤'); return /^\d+(\.\d+)?$/.test(t) ? t + '톤' : t; }
+function rateStart_(v) { var t = textDate_(v).trim(); if (!t) return ''; var m = t.match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})/); if (!m) throw new Error('적용시작일은 2026-11-01처럼 넣어 주세요: ' + t); return m[1] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[3]).slice(-2); }
+/** 한 번만: 예전 가로형 '배차단가' → 세로형 '배차단가표' (18톤 칸 = 삼다수, 나머지 = 쿠팡부자재) */
+function dispRatesMigrate_() {
+  var props = PropertiesService.getScriptProperties(); if (props.getProperty('DISP_RATES_V2')) return;
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    if (props.getProperty('DISP_RATES_V2')) return;
+    var sh2 = headerSheet_(SHEET_DISP_RATES2, DISP_RATE2_HEADER), old = SpreadsheetApp.getActive().getSheetByName(SHEET_DISP_RATES), out = [];
+    if (sh2.getLastRow() < 2 && old && old.getLastRow() >= 2) {
+      old.getRange(2, 1, old.getLastRow() - 1, DISP_RATE_HEADER.length).getValues().forEach(function (r) {
+        var f = dispTxt_(r[0]).trim(), t = dispTxt_(r[1]).trim(); if (!f || !t) return;
+        DISP_RATE_TONS.forEach(function (ton) { var v = Number(r[dispRateCol_(ton)]); if (v > 0) out.push(["'" + (ton === '18톤' ? '삼다수' : DISP_CUST0), "'" + f, "'" + t, "'" + ton, v, '', '', Number(r[2]) || '', '예전 단가표', now_()]); });
+      });
+      if (out.length) sh2.getRange(2, 1, out.length, DISP_RATE2_HEADER.length).setValues(out);
+    }
+    props.setProperty('DISP_RATES_V2', String(out.length));
+    if (ROWS_MEMO_) delete ROWS_MEMO_[SHEET_DISP_RATES2];
+  } finally { lock.releaseLock(); }
 }
+function dispRateRows_() {
+  dispRatesMigrate_(); headerSheet_(SHEET_DISP_RATES2, DISP_RATE2_HEADER);
+  return rowsOf_(SHEET_DISP_RATES2, DISP_RATE2_HEADER).map(function (r) { return { cust: custOfRow_(r[0]), from: dispTxt_(r[1]).trim(), to: dispTxt_(r[2]).trim(), ton: rateTon_(r[3]), price: Number(r[4]) || 0, start: textDate_(r[5]).trim(), memo: dispTxt_(r[6]), dist: Number(r[7]) || 0 }; })
+    .filter(function (x) { return x.from && x.to && x.ton && x.price > 0; });
+}
+/** custs를 주면 그 업체 것만 · rates는 예전 화면용(오늘 적용 단가를 가로형으로) */
+function dispRatesRead_(custs) {
+  var rows = dispRateRows_(); if (custs) rows = rows.filter(function (x) { return custs.indexOf(x.cust) !== -1; });
+  var today = ymd_(new Date()), by = {}, rates = [];
+  rows.forEach(function (x) {
+    if (x.start && x.start > today) return;
+    var k = x.from + '|' + x.to, g = by[k]; if (!g) { g = by[k] = { from: x.from, to: x.to, dist: x.dist, p: {}, s: {} }; rates.push(g); }
+    if (!(x.ton in g.s) || x.start >= g.s[x.ton]) { g.p[x.ton] = x.price; g.s[x.ton] = x.start; }
+  });
+  rates.forEach(function (g) { delete g.s; });
+  return { rows: rows, rates: rates, map: dispMap_(), tons: DISP_RATE_TONS };
+}
+/** 단가표 저장: rows(세로형) + cust · mode 'add'(같은 출발·도착·톤수·시작일은 바꾸기) / 'replace'(그 업체 단가표를 통째로)
+    예전 화면이 보내는 rates(가로형)도 받아요 (18톤 = 삼다수) */
 function dispRatesSave_(session, req) {
   dispNeedCost_(session);
-  var rows = (req.rates || []).slice(0, 5000).map(function (x, i) {
-    var f = String(x.from || '').trim(), t = String(x.to || '').trim(); if (!f || !t) throw new Error((i + 2) + '번째 줄: 출발·도착이 비어 있어요.');
-    var pv = function (k) { var v = Number(String((x.p || {})[k] == null ? '' : x.p[k]).replace(/[,\s원]/g, '')); return v > 0 ? v : ''; };
-    return [f, t, Number(x.dist) || ''].concat(DISP_RATE_TONS0.map(pv)).concat([session.name, now_(), pv('18톤')]);
-  });
-  if (!rows.length) throw new Error('올릴 단가가 없어요.');
-  var sh = headerSheet_(SHEET_DISP_RATES, DISP_RATE_HEADER);
-  if (sh.getLastRow() > 1) sh.getRange(2, 1, sh.getLastRow() - 1, DISP_RATE_HEADER.length).clearContent();
-  sh.getRange(2, 1, rows.length, DISP_RATE_HEADER.length).setValues(rows);
-  return dispRates_(session);
+  var add = [], custs = {};
+  if (req.rows) {
+    var cust = custReq_(req.cust); custs[cust] = 1;
+    add = req.rows.slice(0, 20000).map(function (x, i) {
+      var f = String(x.from || '').trim(), t = String(x.to || '').trim(), ton = rateTon_(x.ton), v = Number(String(x.price == null ? '' : x.price).replace(/[,\s원]/g, ''));
+      if (!f || !t || !ton) throw new Error((i + 1) + '번째 줄: 출발·도착·톤수가 비어 있어요.');
+      if (!(v > 0)) throw new Error((i + 1) + '번째 줄: 단가가 숫자가 아니에요.');
+      return { cust: cust, from: f.slice(0, 60), to: t.slice(0, 60), ton: ton.slice(0, 20), price: v, start: rateStart_(x.start), memo: String(x.memo || '').trim().slice(0, 200), dist: Number(x.dist) || '' };
+    });
+  } else {
+    (req.rates || []).slice(0, 5000).forEach(function (x) {
+      var f = String(x.from || '').trim(), t = String(x.to || '').trim(); if (!f || !t) return;
+      DISP_RATE_TONS.forEach(function (ton) { var v = Number(String((x.p || {})[ton] == null ? '' : x.p[ton]).replace(/[,\s원]/g, '')); if (v > 0) { var c = ton === '18톤' ? '삼다수' : DISP_CUST0; custs[c] = 1; add.push({ cust: c, from: f, to: t, ton: ton, price: v, start: '', memo: '', dist: Number(x.dist) || '' }); } });
+    });
+    req.mode = 'replace';
+  }
+  if (!add.length) throw new Error('올릴 단가가 없어요.');
+  var key = function (x) { return [x.cust, x.from, x.to, x.ton, x.start].join('|'); };
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var cur = dispRateRows_(), nk = {}; add.forEach(function (x) { nk[key(x)] = 1; });
+    var keep = cur.filter(function (x) { return req.mode === 'add' ? !nk[key(x)] : !custs[x.cust]; });
+    var all = keep.concat(add), sh = headerSheet_(SHEET_DISP_RATES2, DISP_RATE2_HEADER), n = sh.getLastRow() - 1;
+    var rows = all.map(function (x) { return ["'" + x.cust, "'" + x.from, "'" + x.to, "'" + x.ton, x.price, x.start ? "'" + x.start : '', "'" + (x.memo || ''), x.dist || '', session.name, now_()]; });
+    if (n > 0) sh.getRange(2, 1, n, DISP_RATE2_HEADER.length).clearContent();
+    if (rows.length) sh.getRange(2, 1, rows.length, DISP_RATE2_HEADER.length).setValues(rows);
+    if (ROWS_MEMO_) delete ROWS_MEMO_[SHEET_DISP_RATES2];
+  } finally { lock.releaseLock(); }
+  var out = dispRates_(session); out.saved = add.length; return out;
 }
 function dispMapSave_(session, req) {
   dispNeedCost_(session);
@@ -2288,12 +2353,12 @@ function drvGet_(t) {
     s.kg += Number(String(d.kg || '').replace(/[,\s]/g, '')) || 0; if (d.bl && s.bl.indexOf(d.bl) === -1) s.bl.push(d.bl);
   });
   stops.forEach(function (s) { if (!s.pkg) return; s.bundle += Math.ceil(s.pkg / 24); Object.keys(s.pkgItems).forEach(function (it) { s.items[it + ' ' + s.pkgItems[it] + '패키지'] = Math.ceil(s.pkgItems[it] / 24); }); delete s.pkgItems; });
-  var from = orders[0] && orders[0].d.from, place = loadingList_().filter(function (p) { return String(p.name).replace(/\s|\(주\)|㈜/g, '') === String(from || '').replace(/\s|\(주\)|㈜/g, ''); })[0] || null;
+  var from = orders[0] && orders[0].d.from, place = loadingFind_(tr.cust.replace(/\/.*$/, ''), from);
   var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : [])); } catch (e) { /* 지도 없이 */ }
   stops.forEach(function (s) { var g = geo[String(s.addr).replace(/\s+/g, ' ').trim()]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
   var rc = dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no; }), notes = [], seen = {};
   orders.forEach(function (o) { var k = (o.d.fc || '') + '|' + o.noteDrv; if (o.noteDrv && !seen[k]) { seen[k] = 1; notes.push({ fc: o.d.fc || '', text: o.noteDrv }); } });
-  return { notes: notes, date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: place.contact, photos: place.photos || [], lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
+  return { notes: notes, date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: [place.manager, place.contact].filter(Boolean).join(' / '), photos: place.photos || [], lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
 }
 function drvUpload_(req) {
   var tr = drvFind_(req.t), fc = String(req.fc || '');
@@ -2310,15 +2375,26 @@ function drvUpload_(req) {
 }
 /* 하차지 주소록 (센터 코드별 정답 주소 · 일반(FC도크)과 장갑이 따로) — 오더 주소가 다르면 화면에서 경고 */
 var SHEET_DESTBOOK = '하차지주소록';
-var DESTBOOK_HEADER = ['종류', '코드', '센터명', '주소', '수정자', '수정일시'];
-function destList_() { headerSheet_(SHEET_DESTBOOK, DESTBOOK_HEADER); return rowsOf_(SHEET_DESTBOOK, DESTBOOK_HEADER).map(function (r) { return { kind: dispTxt_(r[0]), code: dispTxt_(r[1]), name: dispTxt_(r[2]), addr: dispTxt_(r[3]) }; }).filter(function (x) { return x.code || x.name; }); }
+var DESTBOOK_HEADER = ['종류', '코드', '센터명', '주소', '수정자', '수정일시', '업체', '담당자', '연락처', '하차가능시간', '단가표도착', '비고'];
+/** 종류: 예전 값 fc·glove → 일반(FC도크)·장갑 (빈 칸이면 시트가 줄을 빈 줄로 봐서 '일반'으로 채워요) */
+function destKindTxt_(v) { v = dispTxt_(v).trim(); return v === 'glove' ? '장갑' : v === 'fc' || !v ? '일반(FC도크)' : v; }
+function destList_() {
+  headerSheet_(SHEET_DESTBOOK, DESTBOOK_HEADER);
+  return rowsOf_(SHEET_DESTBOOK, DESTBOOK_HEADER).map(function (r) { return { cust: custOfRow_(r[6]), kind: destKindTxt_(r[0]), code: dispTxt_(r[1]), name: dispTxt_(r[2]), addr: dispTxt_(r[3]), manager: dispTxt_(r[7]), tel: dispTxt_(r[8]), hours: dispTxt_(r[9]), rateTo: dispTxt_(r[10]), memo: dispTxt_(r[11]) }; })
+    .filter(function (x) { return x.code || x.name; });
+}
+/** 하차지 주소록 저장: 그 업체 목록을 통째로 바꿔요 (화면에서 더하기·고치기·지우기를 합친 목록을 보내요)
+    예전 화면은 cust 없이 kind(fc·glove)만 보내요 → 쿠팡부자재의 그 종류만 바꿔요 */
 function destSave_(session, req) {
-  var kind = req.kind === 'glove' ? 'glove' : 'fc', q = function (v, n) { return "'" + String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n); };
-  var rows = (req.rows || []).slice(0, 3000).filter(function (x) { return x && (String(x.code || '').trim() || String(x.name || '').trim()); }).map(function (x) { return [kind, q(x.code, 60), q(x.name, 100), q(x.addr, 300), session.name, now_()]; });
+  var cust = custReq_(req.cust), oldKind = req.cust ? '' : (req.kind === 'glove' ? '장갑' : '일반(FC도크)');
+  var q = function (v, n) { return "'" + String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n); };
+  var row = function (x, by, at) { return [q(destKindTxt_(x.kind), 30), q(x.code, 60), q(x.name, 100), q(x.addr, 300), by, at, q(x.cust, 50), q(x.manager, 60), q(x.tel, 100), q(x.hours, 200), q(x.rateTo, 60), q(x.memo, 300)]; };
+  var rows = (req.rows || []).slice(0, 5000).filter(function (x) { return x && (String(x.code || '').trim() || String(x.name || '').trim()); }).map(function (x) { return row(Object.assign({}, x, { cust: cust, kind: oldKind || x.kind }), session.name, now_()); });
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     var sh = headerSheet_(SHEET_DESTBOOK, DESTBOOK_HEADER), n = sh.getLastRow() - 1;
-    var keep = n > 0 ? sh.getRange(2, 1, n, DESTBOOK_HEADER.length).getValues().filter(function (r) { return String(r[0]) !== kind; }).map(function (r) { return [r[0], q(dispTxt_(r[1]), 60), q(dispTxt_(r[2]), 100), q(dispTxt_(r[3]), 300), r[4], r[5]]; }) : [];
+    var keep = n > 0 ? sh.getRange(2, 1, n, DESTBOOK_HEADER.length).getValues().filter(function (r) { return r[0] !== '' && (custOfRow_(r[6]) !== cust || (oldKind && destKindTxt_(r[0]) !== oldKind)); })
+      .map(function (r) { return row({ kind: r[0], code: dispTxt_(r[1]), name: dispTxt_(r[2]), addr: dispTxt_(r[3]), cust: custOfRow_(r[6]), manager: dispTxt_(r[7]), tel: dispTxt_(r[8]), hours: dispTxt_(r[9]), rateTo: dispTxt_(r[10]), memo: dispTxt_(r[11]) }, r[4], r[5]); }) : [];
     var all = keep.concat(rows);
     if (n > 0) sh.getRange(2, 1, n, DESTBOOK_HEADER.length).clearContent();
     if (all.length) sh.getRange(2, 1, all.length, DESTBOOK_HEADER.length).setValues(all);
@@ -2326,25 +2402,60 @@ function destSave_(session, req) {
   if (ROWS_MEMO_) delete ROWS_MEMO_[SHEET_DESTBOOK];
   return { dests: destList_(), saved: rows.length };
 }
-function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); var ph = placePhotos_(); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { var id = String(r[0]); return { id: id, name: String(r[1]), addr: String(r[2] || ''), time: String(r[3] || ''), contact: String(r[4] || ''), memo: String(r[5] || ''), rateFrom: String(r[8] || ''), photos: ph.filter(function (x) { return x.place === id; }).map(function (x) { return { id: x.id, cap: x.cap }; }) }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }
+function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); var ph = placePhotos_(); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { var id = String(r[0]); return { id: id, cust: custOfRow_(r[9]), name: dispTxt_(r[1]), addr: dispTxt_(r[2]), time: dispTxt_(r[3]), contact: dispTxt_(r[4]), memo: dispTxt_(r[5]), rateFrom: dispTxt_(r[8]), manager: dispTxt_(r[10]), photos: ph.filter(function (x) { return x.place === id; }).map(function (x) { return { id: x.id, cap: x.cap }; }) }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }
+/** 상차지 찾기 (기사 링크용): 같은 업체 먼저, 없으면 다른 업체 같은 이름 */
+function loadingFind_(cust, name) {
+  var n = function (v) { return String(v || '').replace(/\s|\(주\)|㈜/g, ''); }, l = loadingList_().filter(function (p) { return n(p.name) === n(name); });
+  return l.filter(function (p) { return p.cust === cust; })[0] || l[0] || null;
+}
+/** 상차지 한 줄 (ID 다음 칸부터 · 헤더 길이 - 1) */
+function loadingRow_(session, x, cust) {
+  var q = function (v, n) { return "'" + String(v == null ? '' : v).trim().slice(0, n); };
+  return [q(x.name, 60), q(x.addr, 300), q(x.time, 300), q(x.contact, 1000), q(x.memo, 500), session.name, now_(), q(x.rateFrom, 30), q(cust, 50), q(x.manager, 100)];
+}
 function loadingSave_(session, req) {
   var x = req.place || {}, name = String(x.name || '').trim().slice(0, 60); if (!name) throw new Error('상차지명을 넣으세요.');
-  var row = [name, String(x.addr || '').slice(0, 300), String(x.time || '').slice(0, 300), String(x.contact || '').slice(0, 1000), String(x.memo || '').slice(0, 500), session.name, now_(), String(x.rateFrom || '').trim().slice(0, 30)];
-  if (loadingList_().some(function (p) { return p.name === name && p.id !== req.id; })) throw new Error('"' + name + '" 상차지가 이미 있어요.');
-  if (req.id) { var f = findRow_(SHEET_LOADING, LOADING_HEADER, req.id); if (!f) throw new Error('상차지를 찾을 수 없습니다.'); f.sh.getRange(f.row, 2, 1, row.length).setValues([row]); }
-  else cacheSheet_(SHEET_LOADING, LOADING_HEADER).appendRow([newId_('L')].concat(row));
+  var f = req.id ? findRow_(SHEET_LOADING, LOADING_HEADER, req.id) : null; if (req.id && !f) throw new Error('상차지를 찾을 수 없습니다.');
+  var cust = req.cust ? custReq_(req.cust) : f ? custOfRow_(f.raw[9]) : DISP_CUST0; // 예전 화면은 업체를 안 보내요
+  if (x.manager === undefined && f) x = Object.assign({}, x, { manager: dispTxt_(f.raw[10]) });
+  if (loadingList_().some(function (p) { return p.cust === cust && p.name === name && p.id !== req.id; })) throw new Error('"' + name + '" 상차지가 이미 있어요.');
+  var row = loadingRow_(session, Object.assign({}, x, { name: name }), cust);
+  if (f) f.sh.getRange(f.row, 2, 1, row.length).setValues([row]);
+  else headerSheet_(SHEET_LOADING, LOADING_HEADER).appendRow([newId_('L')].concat(row));
+  if (ROWS_MEMO_) delete ROWS_MEMO_[SHEET_LOADING];
   return { places: loadingList_() };
+}
+/** 상차지 여러 곳 올리기 (표준 양식): 같은 업체에 같은 이름이 있으면 바꾸고(사진은 그대로) 없으면 더해요 */
+function loadingBulk_(session, req) {
+  var cust = custReq_(req.cust), list = (req.rows || []).slice(0, 2000).filter(function (x) { return x && String(x.name || '').trim(); });
+  if (!list.length) throw new Error('올릴 상차지가 없어요.');
+  var lock = LockService.getScriptLock(), added = 0, updated = 0; lock.waitLock(20000);
+  try {
+    var sh = headerSheet_(SHEET_LOADING, LOADING_HEADER), n = sh.getLastRow() - 1, cur = n > 0 ? sh.getRange(2, 1, n, LOADING_HEADER.length).getValues() : [], at = {}, fresh = [];
+    cur.forEach(function (r, i) { if (r[0] !== '' && custOfRow_(r[9]) === cust) at[dispTxt_(r[1]).trim()] = i; });
+    list.forEach(function (x) {
+      var name = String(x.name).trim().slice(0, 60), row = loadingRow_(session, Object.assign({}, x, { name: name }), cust), i = at[name];
+      if (typeof i === 'string') fresh[Number(i)] = [fresh[Number(i)][0]].concat(row); // 올린 목록 안에서 같은 이름: 뒤의 것으로
+      else if (i != null) { sh.getRange(i + 2, 2, 1, row.length).setValues([row]); updated++; }
+      else { at[name] = String(fresh.length); fresh.push([newId_('L')].concat(row)); added++; }
+    });
+    if (fresh.length) sh.getRange(sh.getLastRow() + 1, 1, fresh.length, LOADING_HEADER.length).setValues(fresh);
+  } finally { lock.releaseLock(); }
+  if (ROWS_MEMO_) delete ROWS_MEMO_[SHEET_LOADING];
+  return { places: loadingList_(), added: added, updated: updated };
 }
 function loadingDelete_(id) { var f = findRow_(SHEET_LOADING, LOADING_HEADER, id); if (!f) throw new Error('상차지를 찾을 수 없습니다.'); placePhotos_().filter(function (x) { return x.place === String(id); }).forEach(function (x) { placePhotoDelete_(x.id); }); f.sh.deleteRow(f.row); return { places: loadingList_() }; }
 /* 기사 풀: 호차에 넣은 차량정보가 자동으로 쌓이고(횟수·마지막 배차일), 직접 고치기·지우기·고정(★) */
 var SHEET_DRIVERS = '기사풀';
-var DRIVER_HEADER = ['ID', '차량정보', '운전원', '연락처', '톤수', '메모', '고정', '횟수', '마지막배차', '수정자', '수정일시', '생년월일'];
+var DRIVER_HEADER = ['ID', '차량정보', '운전원', '연락처', '톤수', '메모', '고정', '횟수', '마지막배차', '수정자', '수정일시', '생년월일', '소속', '블랙'];
+/** 블랙(출입 금지) 칸: O · 1 · 예 · Y · 블랙 · 금지 등은 블랙 */
+function driverBlack_(v) { return /^(o|ㅇ|1|y|yes|예|네|블랙|black|true|v|✓|✔|●|금지|출입금지)$/i.test(dispTxt_(v).trim()); }
 /** 생년월일(인천항 출입등록용)은 협력사 계정에 보내지 않아요 */
 function driverScrub_(d) { var o = Object.assign({}, d); delete o.birth; return o; }
 function driverKey_(car, driver, phone) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(driver || '').replace(/\s/g, '') + '|' + String(phone || '').replace(/[^0-9]/g, ''); }
 function driverList_() {
   headerSheet_(SHEET_DRIVERS, DRIVER_HEADER);
-  return rowsOf_(SHEET_DRIVERS, DRIVER_HEADER).map(function (r) { return { id: String(r[0]), car: dispTxt_(r[1]), driver: dispTxt_(r[2]), phone: dispTxt_(r[3]), ton: dispTxt_(r[4]), memo: dispTxt_(r[5]), pin: r[6] === true || String(r[6]) === 'Y', n: Number(r[7]) || 0, last: textDate_(r[8]), birth: dispTxt_(r[11]) }; })
+  return rowsOf_(SHEET_DRIVERS, DRIVER_HEADER).map(function (r) { return { id: String(r[0]), car: dispTxt_(r[1]), driver: dispTxt_(r[2]), phone: dispTxt_(r[3]), ton: dispTxt_(r[4]), memo: dispTxt_(r[5]), pin: r[6] === true || String(r[6]) === 'Y', n: Number(r[7]) || 0, last: textDate_(r[8]), birth: dispTxt_(r[11]), org: dispTxt_(r[12]), black: driverBlack_(r[13]) }; })
     .sort(function (a, b) { return (b.pin - a.pin) || (b.n - a.n) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); });
 }
 function driverCollect_(session, date, trucks) {
@@ -2355,7 +2466,7 @@ function driverCollect_(session, date, trucks) {
     var car = String(t.car || '').trim(), drv = String(t.driver || '').trim(), ph = String(t.phone || '').trim(), ton = String(t.ton || '').trim();
     if (!car && !(drv && ph)) return;
     var k = driverKey_(car, drv, ph), i = idx[k];
-    if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_(), '']); idx[k] = rows.length; rows.push([]); return; }
+    if (i == null) { sh.appendRow([newId_('V'), q(car), q(drv), q(ph), q(ton), '', 'N', 1, "'" + date, session.name, now_(), '', session.role === 'partner' ? q(session.name) : '', '']); idx[k] = rows.length; rows.push([]); return; }
     var r = sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length), v = (rows[i].length ? rows[i] : r.getValues()[0]).slice(), n = Number(v[7]) || 0, last = textDate_(v[8]);
     var sig = function (x) { return [1, 2, 3, 4, 5].map(function (j) { return dispTxt_(x[j]); }).concat([Number(x[7]) || 0, textDate_(x[8])]).join('|'); }, was = sig(v);
     // 잘린 값(예: '홍길동' → '홍')이 기존 값을 덮지 않게: 새 값이 기존 값의 앞부분이면 기존 값 유지
@@ -2377,8 +2488,32 @@ function driverSave_(session, req) {
     f.sh.getRange(f.row, 2, 1, 6).setValues([[q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N']]);
     f.sh.getRange(f.row, 10, 1, 2).setValues([[session.name, now_()]]);
     if (x.birth !== undefined && session.role !== 'partner') f.sh.getRange(f.row, 12).setValue(q(x.birth)); // 안 보낸 화면(기사 풀 예전 화면·협력사)은 그대로 둬요
-  } else headerSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_(), session.role === 'partner' ? '' : q(x.birth)]);
+    if (x.org !== undefined) f.sh.getRange(f.row, 13).setValue(q(x.org));
+    if (x.black !== undefined && session.role !== 'partner') f.sh.getRange(f.row, 14).setValue(x.black ? 'Y' : ''); // 블랙은 직원만 정해요
+  } else headerSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_(), session.role === 'partner' ? '' : q(x.birth), q(x.org || (session.role === 'partner' ? session.name : '')), x.black && session.role !== 'partner' ? 'Y' : '']);
   return { drivers: driverList_() };
+}
+/** 기사 여러 명 올리기 (표준 양식: 차량번호 · 운전원 · 연락처 · 톤수 · 소속 · 생년월일 · 블랙 · 비고)
+    같은 기사(차량번호, 없으면 이름+연락처)가 있으면 그 줄을 바꾸고(횟수·고정은 그대로) 없으면 더해요 */
+function driverBulk_(session, req) {
+  var q = function (v) { return "'" + String(v == null ? '' : v).trim().slice(0, 100); };
+  var list = (req.rows || []).slice(0, 3000).filter(function (x) { return x && (String(x.car || '').trim() || String(x.driver || '').trim()); });
+  if (!list.length) throw new Error('올릴 기사가 없어요.');
+  var lock = LockService.getScriptLock(), added = 0, updated = 0; lock.waitLock(20000);
+  try {
+    var sh = headerSheet_(SHEET_DRIVERS, DRIVER_HEADER), n = sh.getLastRow() - 1, cur = n > 0 ? sh.getRange(2, 1, n, DRIVER_HEADER.length).getValues() : [], idx = {}, fresh = [];
+    cur.forEach(function (r, i) { if (r[0] !== '') idx[driverKey_(dispTxt_(r[1]), dispTxt_(r[2]), dispTxt_(r[3]))] = i; });
+    list.forEach(function (x) {
+      var k = driverKey_(x.car, x.driver, x.phone), i = idx[k], bl = x.black === true || driverBlack_(x.black) ? 'Y' : '';
+      if (i != null && i >= 0) {
+        var v = cur[i].slice(); v[1] = q(x.car); v[2] = q(x.driver); v[3] = q(x.phone); v[4] = q(x.ton); v[5] = q(x.memo); v[9] = session.name; v[10] = now_(); v[11] = q(x.birth); v[12] = q(x.org); v[13] = bl;
+        v[6] = v[6] === true ? 'Y' : String(v[6] || 'N'); v[8] = v[8] instanceof Date ? "'" + textDate_(v[8]) : v[8];
+        sh.getRange(i + 2, 1, 1, DRIVER_HEADER.length).setValues([v]); updated++;
+      } else if (i == null) { idx[k] = -1; fresh.push([newId_('V'), q(x.car), q(x.driver), q(x.phone), q(x.ton), q(x.memo), 'N', 0, '', session.name, now_(), q(x.birth), q(x.org), bl]); added++; }
+    });
+    if (fresh.length) sh.getRange(sh.getLastRow() + 1, 1, fresh.length, DRIVER_HEADER.length).setValues(fresh);
+  } finally { lock.releaseLock(); }
+  return { drivers: driverList_(), added: added, updated: updated };
 }
 function driverDelete_(id) { var f = findRow_(SHEET_DRIVERS, DRIVER_HEADER, id); if (!f) throw new Error('기사를 찾을 수 없어요.'); f.sh.deleteRow(f.row); return { drivers: driverList_() }; }
 /* 상차지 사진 (기사 링크의 상차지 카드에 보여요 · 한 곳에 2장까지) */

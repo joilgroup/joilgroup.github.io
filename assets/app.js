@@ -6567,7 +6567,7 @@
   function custOf(name) { custDef(); return CUSTS[name] || {}; }
   /** 업체 파일에 넘기는 공용 도우미 (업체 파일은 이것만 써요 · 필요한 게 있으면 여기에 더해요) */
   function custHelpers() {
-    return { '$': $, '$$': $$, DISP_STATUS: DISP_STATUS, PKG_PER_BUNDLE: PKG_PER_BUNDLE, TRK_FIELDS: TRK_FIELDS, advAddrKey: advAddrKey, advRegion: advRegion, api: api, autoTon: autoTon, busy: busy, can: can, dispBundles: dispBundles, dispCleanD: dispCleanD, dispCode: dispCode, dispKind: dispKind, dispNum: dispNum, dispOrderB: dispOrderB, dispRegion: dispRegion, dispState: dispState, dispYmd: dispYmd, drawDispDay: drawDispDay, drawRouteMap: drawRouteMap, esc: esc, findPlace: findPlace, geoKey: geoKey, hav: hav, isPartner: isPartner, kindShade: kindShade, loadDispRates: loadDispRates, modal: modal, parseTsv: parseTsv, routeLen: routeLen, statusSelect: statusSelect, toast: toast, truckCost: truckCost, truckCostCell: truckCostCell, truckInfo: truckInfo, truckNotes: truckNotes, truckStops: truckStops, won: won, ymAdd: ymAdd, cust: custOf };
+    return { '$': $, '$$': $$, DISP_STATUS: DISP_STATUS, PKG_PER_BUNDLE: PKG_PER_BUNDLE, TRK_FIELDS: TRK_FIELDS, advAddrKey: advAddrKey, advRegion: advRegion, api: api, autoTon: autoTon, busy: busy, can: can, destEntry: destEntry, dispBundles: dispBundles, dispCleanD: dispCleanD, dispCode: dispCode, dispKind: dispKind, dispNum: dispNum, dispOrderB: dispOrderB, dispRegion: dispRegion, dispState: dispState, dispYmd: dispYmd, drawDispDay: drawDispDay, drawRouteMap: drawRouteMap, esc: esc, findPlace: findPlace, geoKey: geoKey, hav: hav, isPartner: isPartner, kindShade: kindShade, loadDispRates: loadDispRates, mineOf: mineOf, modal: modal, parseTsv: parseTsv, rateRows: rateRows, routeLen: routeLen, statusSelect: statusSelect, toast: toast, truckCost: truckCost, truckCostCell: truckCostCell, truckInfo: truckInfo, truckNotes: truckNotes, truckStops: truckStops, won: won, ymAdd: ymAdd, cust: custOf };
   }
   /* 출발지 탭: [이름, 저장 키 꼬리, 문자 머리말] · 탭 관리에서 추가·이름 바꾸기·순서·숨기기 (서버에 업체별로 저장) */
   var DISP_TABS = [['부자재-인천', '', '부자재'], ['부자재-평택', '/평택', '부자재'], ['부자재-부산', '/부산', '부자재']];
@@ -6751,7 +6751,36 @@
     if (st.rates && !force) return Promise.resolve(st.rates);
     return api('dispatch.rates').then(function (r) { st.rates = r; return r; }).catch(function () { return null; });
   }
-  function findPlace(name) { var n = custNorm(name); return (dispState().places || []).filter(function (p) { return custNorm(p.name) === n; })[0] || null; }
+  /* 업체별 자료: 상차지·하차지 주소록·매입 단가표는 지금 보는 업체 것만 (업체 칸이 빈 예전 자료 = 쿠팡부자재) · 기사 풀은 모든 업체가 같이 써요 */
+  var CUST0 = '쿠팡부자재';
+  function rowCust(x) { return (x && x.cust) || CUST0; }
+  /** 이 업체 것만 (cust가 아예 없는 줄 = 서버가 예전 버전 → 다 보여요) */
+  function mineOf(list, cust) { cust = cust || dispState().cust; return (list || []).filter(function (x) { return x.cust == null || rowCust(x) === cust; }); }
+  /** 상차지 찾기: 지금 업체 것 먼저, 없으면 다른 업체의 같은 이름 (예전 자료로 계산하던 운송비가 끊기지 않게) */
+  function findPlace(name) { var n = custNorm(name), l = (dispState().places || []).filter(function (p) { return custNorm(p.name) === n; }); return mineOf(l)[0] || l[0] || null; }
+  /** 하차지 주소록에서 찾기: 코드(도착지 코드)가 같은 것 → 없으면 하차지명이 같은 것 */
+  function destEntry(fc, code) {
+    var l = mineOf(dispState().dests), nm = function (v) { return String(v || '').replace(/\s|FC|센터/gi, '').toUpperCase(); }, c = String(code || '').trim().toUpperCase();
+    return (c && l.filter(function (x) { return String(x.code || '').toUpperCase() === c; })[0]) || (nm(fc) && l.filter(function (x) { return nm(x.name) === nm(fc); })[0]) || null;
+  }
+  /** 이 업체 단가 줄 (세로형: from · to · ton · price · start) · 서버가 예전이면 가로형을 풀어서 */
+  function rateRows(cust) {
+    var R = dispState().rates; if (!R) return []; cust = cust || dispState().cust; R._c = R._c || {};
+    if (R._c[cust]) return R._c[cust];
+    var out = []; if (R.rows) out = R.rows.filter(function (x) { return rowCust(x) === cust; });
+    else (R.rates || []).forEach(function (r) { Object.keys(r.p || {}).forEach(function (t) { out.push({ from: r.from, to: r.to, ton: t, price: r.p[t], start: '', memo: '', dist: r.dist }); }); });
+    out.idx = {}; out.forEach(function (x) { var k = x.from + '|' + x.to + '|' + x.ton; (out.idx[k] = out.idx[k] || []).push(x); });
+    return (R._c[cust] = out);
+  }
+  /** 단가: 적용시작일이 배차일보다 늦지 않은 것 중 가장 최근 것 (시작일 빈 칸 = 처음부터) */
+  function ratePrice(from, to, ton, date) { var best = null; (rateRows().idx[from + '|' + to + '|' + ton] || []).forEach(function (x) { if (x.start && date && x.start > date) return; if (!best || (x.start || '') >= (best.start || '')) best = x; }); return best ? best.price : null; }
+  /** 블랙(출입 금지) 기사: 기사 풀에서 차량번호가 같거나 이름+연락처가 같은 기사 */
+  function drvBlack(t) {
+    var sp = function (v) { return String(v || '').replace(/\s/g, ''); }, dg = function (v) { return String(v || '').replace(/[^0-9]/g, ''); }, c = sp(t.car), d = sp(t.driver), p = dg(t.phone);
+    if (!c && !(d && p)) return null;
+    return (dispState().drivers || []).filter(function (v) { return v.black && ((c && sp(v.car) === c) || (d && p && sp(v.driver) === d && dg(v.phone) === p)); })[0] || null;
+  }
+  function blackWarn(t, no) { var v = drvBlack(t); if (v) toast('⛔ ' + (no ? no + '호차 · ' : '') + (v.driver || v.car) + ' 기사는 블랙(출입 금지)이에요' + (v.memo ? ' — ' + v.memo : '') + '. 다른 기사로 바꿔 주세요.', 'err'); return v; }
   /** 문자 머리말: 탭의 머리말(없으면 탭 이름 '-' 앞부분) + [출발센터] */
   function dispPrefix(D, from) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0], pre = (t && t[2]) || String(D.tab || '').split('-')[0] || dispState().cust.replace(/^쿠팡/, ''); return pre + '[' + String(from || '').replace(/물류센터|센터|물류/g, '') + ']'; }
   /** 기사 링크 주소: config.js의 DRIVER_URL(회사명이 안 드러나는 별도 주소)이 있으면 그것, 없으면 이 사이트의 drv.html */
@@ -6779,13 +6808,14 @@
     return rank(b) > rank(a) ? b : a;
   }
   /** 센터 → 단가표 도착명: 직접 고친 값 > 주소의 시·군으로 단가표에서 찾기 */
-  function destName(fc, addr, origin) {
+  function destName(fc, addr, origin, code) {
     var st = dispState(), R = st.rates; if (!R) return { name: '', auto: true };
     if (R.map[fc]) return { name: R.map[fc], auto: false };
+    var e = destEntry(fc, code); if (e && e.rateTo) return { name: e.rateTo, auto: false, book: true }; // 하차지 주소록의 '단가표 도착명'
     var toks = String(addr || '').replace(/[(),]/g, ' ').split(/\s+/).filter(Boolean), sido = (toks[0] || '').replace(/(특별자치시|특별자치도|특별시|광역시|도)$/, ''), city = (toks[1] || '').replace(/(시|군|구)$/, '');
     var short = { 경기: '경', 강원: '강', 충청북: '충', 충청남: '충', 충북: '충', 충남: '충', 전라북: '전', 전라남: '전', 전북: '전', 전남: '전', 경상북: '경', 경상남: '경', 경북: '경', 경남: '경', 제주: '제' }[sido] || sido.slice(0, 1);
     var cands = [city, sido, short + city, '전' + sido, city + '시'].filter(Boolean);
-    var have = {}; R.rates.forEach(function (r) { if (r.from === origin) have[r.to] = 1; });
+    var have = {}; rateRows().forEach(function (r) { if (r.from === origin) have[r.to] = 1; });
     for (var i = 0; i < cands.length; i++) if (have[cands[i]]) return { name: cands[i], auto: true };
     return { name: '', auto: true, guess: city || sido };
   }
@@ -6794,8 +6824,8 @@
     var stops = truckStops(D, no); if (!stops.length) return null;
     var C = custDef(st), kg = stops.reduce(function (a, s) { return a + s.kg; }, 0), ton = C.ton || autoTon(kg, stops.reduce(function (a, s) { return a + s.b; }, 0)), origin = rateFromName(stops[0].d.from), miss = [], best = null;
     stops.forEach(function (s) {
-      var dn = C.destName ? { name: C.destName(s.d, D.tab), auto: false } : destName(s.fc, s.d.addr, origin); s.dest = dn;
-      var r = dn.name && R.rates.filter(function (x) { return x.from === origin && x.to === dn.name; })[0], p = r && r.p[ton];
+      var dn = C.destName ? { name: C.destName(s.d, D.tab), auto: false } : destName(s.fc, s.d.addr, origin, s.d.dest); s.dest = dn;
+      var p = dn.name && ratePrice(origin, dn.name, ton, D.date);
       s.price = p || null;
       if (!p) miss.push(s.fc); else if (!best || p > best.p) best = { p: p, s: s };
     });
@@ -6904,39 +6934,98 @@
     var t = String(addr || '').replace(/\(.*?\)/g, ' ').replace(/,/g, ' ').split(/\s+/).filter(Boolean);
     return advRegion(addr) + '|' + t.slice(2).filter(function (x) { return !/(층|호)$|^\d+F$|^B\d+$/i.test(x); }).join('');
   }
-  /* ── 하차지 주소록: 센터 코드(Sap Code)별 정답 주소 · 일반(FC도크)과 장갑이 따로 → 오더 주소가 다르면 경고 ── */
+  /* ── 표준 양식 올리기 (상차지·하차지·기사·매입단가 공통): 양식 내려받기 · 엑셀에서 복사해 붙여넣기(제목 줄 있어도/없어도) · 파일 올리기 ──
+     cfg = { el, name, file, cols: [[키, 제목, 넓이, 예시]], alias: { 키: /제목 정규식/ }, read(rows) → 다른 양식이면 줄 목록, add(items, btn), replace(items, btn), hint } */
+  function stdImport(cfg) {
+    var el = cfg.el, items = [];
+    el.innerHTML = '<details class="std-imp"' + (cfg.open ? ' open' : '') + '><summary><b>⬆ 여러 줄 올리기</b> <span class="muted small">표준 양식: ' + esc(cfg.cols.map(function (c) { return c[1]; }).join(' | ')) + '</span></summary>' +
+      '<div class="actions" style="margin:8px 0"><button type="button" class="btn btn-sm" data-si="tpl">양식 내려받기</button><label class="btn btn-sm">파일 올리기<input type="file" data-si="file" accept=".xlsx,.xls,.csv" hidden></label><span class="small muted">또는 엑셀에서 복사해 아래에 붙여넣기 (제목 줄 있어도·없어도 돼요 · 업체는 ' + esc(dispState().cust) + '로 들어가요)</span></div>' +
+      '<textarea class="input" data-si="in" rows="3" placeholder="' + esc(cfg.cols.map(function (c) { return c[1]; }).join('\t')) + '"></textarea>' +
+      '<div class="actions" style="margin-top:6px"><span class="small" data-si="info"></span><span class="spacer"></span>' + (cfg.add ? '<button type="button" class="btn btn-sm' + (cfg.replace ? '' : ' btn-primary') + '" data-si="add" disabled>' + esc(cfg.addLabel || '목록에 더하기') + '</button>' : '') + (cfg.replace ? '<button type="button" class="btn btn-sm btn-primary" data-si="rep" disabled>이 목록으로 바꾸기</button>' : '') + '</div>' +
+      (cfg.hint ? '<p class="hint">' + cfg.hint + '</p>' : '') + '</details>';
+    var q = function (k) { return el.querySelector('[data-si="' + k + '"]'); };
+    var use = function (rows) {
+      rows = rows.map(function (r) { return r.map(function (c) { return String(c == null ? '' : c).trim(); }); }).filter(function (r) { return r.some(Boolean); });
+      items = stdRead(rows, cfg);
+      q('info').innerHTML = items.length ? '<b>' + items.length + '줄</b>을 읽었어요' + (items.warn ? ' · <span style="color:var(--orange)">' + esc(items.warn) + '</span>' : '') : rows.length ? '<span class="err-text">읽을 줄이 없어요. ' + esc(items.warn || '양식의 칸 순서를 확인해 주세요.') + '</span>' : '';
+      if (q('add')) q('add').disabled = !items.length; if (q('rep')) q('rep').disabled = !items.length;
+    };
+    q('in').oninput = function () { use(parseTsv(this.value)); };
+    q('file').onchange = function () { var f = this.files[0]; if (!f) return; Promise.all([loadXlsx(), f.arrayBuffer()]).then(function (r) { var wb = r[0].read(r[1], { type: 'array' }); use(r[0].utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: '' })); }).catch(function (err) { toast(err.message, 'err'); }); this.value = ''; };
+    q('tpl').onclick = function () { downloadXlsx(cfg.file, [{ name: cfg.name, widths: cfg.cols.map(function (c) { return c[2] || 12; }), rows: [cfg.cols.map(function (c) { return c[1]; }), cfg.cols.map(function (c) { return c[3] || ''; })] }]).catch(function (err) { toast(err.message, 'err'); }); };
+    var done = function () { q('in').value = ''; use([]); };
+    if (q('add')) q('add').onclick = function () { cfg.add(items, this, done); };
+    if (q('rep')) q('rep').onclick = function () { if (!confirm(dispState().cust + ' ' + cfg.name + ' 목록을 올린 ' + items.length + '줄로 통째로 바꿀까요?')) return; cfg.replace(items, this, done); };
+  }
+  /** 제목 줄이 있으면 제목으로 칸을 찾고, 없으면 양식 칸 순서대로 · 예시 줄('예)'로 시작)은 빼요 */
+  function stdRead(rows, cfg) {
+    if (!rows.length) return [];
+    var sp = cfg.read && cfg.read(rows); if (sp) return sp;
+    var nm = function (v) { return String(v || '').replace(/[\s()·.\-_/]/g, '').toLowerCase(); }, head = rows[0].map(nm), idx = {}, hit = 0;
+    cfg.cols.forEach(function (c) { var re = cfg.alias && cfg.alias[c[0]]; for (var j = 0; j < head.length; j++) if (head[j] && (head[j] === nm(c[1]) || (re && re.test(head[j])))) { if (idx[c[0]] == null) { idx[c[0]] = j; hit++; } break; } });
+    if (hit >= 2) rows = rows.slice(1); else { idx = {}; cfg.cols.forEach(function (c, j) { idx[c[0]] = j; }); }
+    var out = rows.map(function (r) { var o = {}; cfg.cols.forEach(function (c) { var j = idx[c[0]]; o[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); }); return o; })
+      .filter(function (o) { return !cfg.cols.some(function (c) { return /^예\)/.test(o[c[0]]); }) && (cfg.keep ? cfg.keep(o) : Object.keys(o).some(function (k) { return o[k]; })); });
+    if (cfg.check) out.warn = cfg.check(out);
+    return out;
+  }
+  /** 목록 표 위 검색칸: 글자를 칠 때마다 다시 그려도 커서가 그 자리에 */
+  function keepTyping(inp, draw) { inp.oninput = function () { var v = inp.value, pos = inp.selectionStart; draw(v); var n = document.getElementById(inp.id); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }; }
+  /** 서버가 예전 버전이면 업체별 저장을 막아요 (예전 서버는 업체를 몰라서 다른 업체 자료를 덮어써요) */
+  function oldServer(list) { return (list || []).length && list.every(function (x) { return x.cust == null; }); }
+  var OLD_SRV = '서버(Code.js)가 예전 버전이라 업체별로 저장할 수 없어요. Apps Script에 새 Code.js를 붙여넣고 새 버전으로 배포해 주세요.';
+
+  /* ── 하차지 주소록 (업체별): 코드 · 하차지명 · 주소 · 담당자 · 연락처 · 하차가능시간 · 단가표 도착명 · 종류 · 비고 ── */
   function loadDests(force) { var st = dispState(); if (isPartner()) return Promise.resolve([]); if (st.dests && !force) return Promise.resolve(st.dests); return api('dest.list').then(function (r) { st.dests = r.dests || []; return st.dests; }).catch(function () { st.dests = st.dests || []; return st.dests; }); }
-  var DEST_KINDS = [['fc', 'FC도크 (일반)'], ['glove', '장갑']];
+  var DEST_COLS = [['code', '코드', 12, '예) ABC1'], ['name', '하차지명(대리점·센터)', 22, '예) ○○1FC'], ['addr', '주소', 40, '예) 경기도 ○○시 ○○로 1'], ['manager', '담당자', 10, ''], ['tel', '연락처', 16, ''], ['hours', '하차가능시간', 18, ''], ['rateTo', '단가표 도착명', 14, ''], ['kind', '종류', 14, '예) 일반(FC도크)'], ['memo', '비고', 20, '']];
+  var DEST_ALIAS = { code: /^(sapcode|코드|센터코드|도착지코드)$/, name: /^(하차지명|하차지|센터명|대리점명?|센터|도착지명)/, addr: /^(주소|하차지주소)$/, tel: /^(연락처|전화|전화번호)$/, hours: /(하차|상하차)?가능시간|하차시간/, rateTo: /단가표?도착/, kind: /^(종류|구분)$/ };
+  function destKindLabel(k) { return k === 'glove' ? '장갑' : k === 'fc' || !k ? '일반(FC도크)' : k; }
   function openDestBook() {
-    var st = dispState(), kind = 'fc', q = '';
+    var st = dispState(), kind = '', q = '', cur = null;
     loadDests(true).then(function () {
-      modal({ wide: true, cls: 'modal-xl', eyebrow: '배차시트', title: '하차지 주소록',
-        body: '<p class="muted small" style="margin:0 0 10px">센터 코드(Sap Code)별 정답 주소예요. 오더의 <b>도착지 코드</b>로 찾아서(없으면 센터명) 오더 주소가 다르면 오더 표에 ⚠ 경고를 띄워요. Item에 "장갑"이 들어간 오더는 장갑 목록으로 비교해요.</p><div id="dbBody"></div>',
+      var old = oldServer(st.dests);
+      modal({ wide: true, cls: 'modal-xl', eyebrow: '배차시트 · ' + st.cust, title: '하차지 주소록',
+        body: '<p class="muted small" style="margin:0 0 10px"><b>' + esc(st.cust) + '</b> 하차지예요. 오더의 <b>도착지 코드</b>(없으면 하차지명)로 찾아요. "단가표 도착명"을 넣으면 운송비를 그 도착으로 계산해요.' + (st.cust === CUST0 ? ' 쿠팡부자재는 오더 주소가 다르면 오더 표에 ⚠ 경고를 띄우고, Item에 "장갑"이 있는 오더는 종류가 "장갑"인 줄과 비교해요.' : '') + '</p>' +
+          (old ? '<p class="err-text small">' + esc(OLD_SRV) + '</p>' : '') + '<div id="dbImp"></div><div id="dbBody" style="margin-top:12px"></div>',
         foot: '<button class="btn" data-close>닫기</button>',
         onMount: function (m) {
+          var mine = function () { return mineOf(st.dests).map(function (x) { return Object.assign({}, x, { kind: destKindLabel(x.kind) }); }); };
+          var keyOf = function (x) { return (/장갑/.test(x.kind) ? 'g' : x.kind) + '|' + (x.code ? x.code.toUpperCase() : '#' + x.name); };
+          var saveAll = function (rows, btn, msg, done) {
+            if (old) return toast(OLD_SRV, 'err');
+            if (btn) busy(btn, true, '저장 중');
+            api('dest.save', { cust: st.cust, rows: rows }).then(function (r) { st.dests = r.dests; cur = null; toast(msg || '저장했어요.'); if (done) done(); draw(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); })
+              .catch(function (err) { if (btn) busy(btn, false); toast(err.message, 'err'); });
+          };
+          stdImport({ el: $('#dbImp', m), name: '하차지', file: '하차지_양식.xlsx', cols: DEST_COLS, alias: DEST_ALIAS, replace: true,
+            keep: function (o) { return o.code || o.name; },
+            add: function (items, btn, done) { var by = {}, order = []; mine().concat(items).forEach(function (x) { var k = keyOf(x); if (!by[k]) order.push(k); by[k] = x; }); saveAll(order.map(function (k) { return by[k]; }), btn, items.length + '줄을 더했어요 (같은 코드는 바꿨어요).', done); },
+            replace: function (items, btn, done) { saveAll(items, btn, items.length + '줄로 바꿨어요.', done); },
+            hint: '더하기: 같은 종류·코드(코드가 없으면 하차지명)는 새 줄로 바꾸고 나머지는 그대로 · 바꾸기: ' + esc(st.cust) + ' 목록을 통째로 바꿔요' });
           var draw = function () {
-            var all = (st.dests || []).filter(function (x) { return x.kind === kind; }), list = all.filter(function (x) { return !q || (x.code + ' ' + x.name + ' ' + x.addr).toLowerCase().indexOf(q.toLowerCase()) !== -1; });
-            $('#dbBody', m).innerHTML = '<div class="segmented" id="dbKind">' + DEST_KINDS.map(function (k) { return '<button type="button" data-k="' + k[0] + '" class="' + (k[0] === kind ? 'on' : '') + '">' + k[1] + ' <span class="muted small">' + (st.dests || []).filter(function (x) { return x.kind === k[0]; }).length + '</span></button>'; }).join('') + '</div>' +
-              '<div class="adv-grid" style="margin-top:12px"><div><div class="actions" style="margin-bottom:8px"><input class="input input-sm" id="dbQ" placeholder="코드·센터명·주소 검색" value="' + esc(q) + '" style="max-width:320px"><span class="muted small">' + list.length + ' / ' + all.length + '곳</span></div>' +
-              '<div class="pa-list"><table class="data te-tb"><thead><tr><th class="left" style="width:150px">Sap Code</th><th class="left" style="width:170px">센터명</th><th class="left">주소</th></tr></thead><tbody>' + (list.length ? list.map(function (x) { return '<tr><td class="left">' + esc(x.code) + '</td><td class="left">' + esc(x.name) + '</td><td class="left small">' + esc(x.addr) + '</td></tr>'; }).join('') : '<tr><td colspan="3" class="muted">아직 없어요. 오른쪽에 붙여넣어 주세요.</td></tr>') + '</tbody></table></div></div>' +
-              '<div><div class="field"><label>' + esc(DEST_KINDS.filter(function (k) { return k[0] === kind; })[0][1]) + ' 목록 붙여넣기 <span class="muted">(엑셀에서 Sap Code · 센터명 · 주소 3칸을 제목 줄째 복사해도 돼요)</span></label><textarea class="input" id="dbIn" rows="14" placeholder="KKW1&#9;경기광주1FC&#9;경기도 광주시 도척면 진우리 1006"></textarea></div>' +
-              '<div class="actions"><span class="small muted" id="dbInfo"></span><span class="spacer"></span><button class="btn btn-sm" id="dbAdd" disabled>목록에 더하기</button><button class="btn btn-sm btn-primary" id="dbRep" disabled>이 목록으로 바꾸기</button></div>' +
-              '<p class="hint">더하기: 같은 코드는 새 주소로 바꾸고 나머지는 그대로 · 바꾸기: 이 종류 목록을 통째로 바꿔요</p></div></div>';
-            $$('#dbKind button', m).forEach(function (b) { b.onclick = function () { kind = b.dataset.k; q = ''; draw(); }; });
-            var qi = $('#dbQ', m); qi.oninput = function () { q = qi.value; var pos = qi.selectionStart; draw(); var n = $('#dbQ', m); n.focus(); n.setSelectionRange(pos, pos); };
-            var parsed = [], inp = $('#dbIn', m);
-            inp.oninput = function () {
-              parsed = parseTsv(inp.value).map(function (r) { return { code: String(r[0] || '').trim(), name: String(r[1] || '').trim(), addr: String(r.slice(2).join(' ') || '').trim() }; })
-                .filter(function (x) { return (x.code || x.name) && !/^sap\s*code$/i.test(x.code) && !/^센터명$/.test(x.name); });
-              $('#dbInfo', m).textContent = parsed.length ? parsed.length + '곳을 읽었어요' + (parsed.filter(function (x) { return !x.addr; }).length ? ' (주소 빈 곳 ' + parsed.filter(function (x) { return !x.addr; }).length + ')' : '') : '';
-              $('#dbAdd', m).disabled = $('#dbRep', m).disabled = !parsed.length;
-            };
-            var saveRows = function (rows, btn) {
-              busy(btn, true, '저장 중');
-              api('dest.save', { kind: kind, rows: rows }).then(function (r) { st.dests = r.dests; toast(r.saved + '곳을 저장했어요.'); draw(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
-            };
-            $('#dbAdd', m).onclick = function () { var cur = (st.dests || []).filter(function (x) { return x.kind === kind; }), by = {}; cur.concat(parsed).forEach(function (x) { by[(x.code || '') + '|' + (x.code ? '' : x.name)] = x; }); saveRows(Object.keys(by).map(function (k) { return by[k]; }), this); };
-            $('#dbRep', m).onclick = function () { if (!confirm(DEST_KINDS.filter(function (k) { return k[0] === kind; })[0][1] + ' 목록을 붙여넣은 ' + parsed.length + '곳으로 통째로 바꿀까요?')) return; saveRows(parsed, this); };
+            var all = mine(), kinds = []; all.forEach(function (x) { if (kinds.indexOf(x.kind) === -1) kinds.push(x.kind); }); if (kind && kinds.indexOf(kind) === -1) kind = '';
+            var ql = q.toLowerCase(), list = all.filter(function (x) { return (!kind || x.kind === kind) && (!ql || DEST_COLS.map(function (c) { return x[c[0]]; }).join(' ').toLowerCase().indexOf(ql) !== -1); });
+            var v = cur || {};
+            $('#dbBody', m).innerHTML = '<div class="actions" style="margin-bottom:8px">' + (kinds.length > 1 ? '<div class="segmented" id="dbKind"><button type="button" data-k="" class="' + (kind ? '' : 'on') + '">전체 <span class="muted small">' + all.length + '</span></button>' + kinds.map(function (k) { return '<button type="button" data-k="' + esc(k) + '" class="' + (k === kind ? 'on' : '') + '">' + esc(k) + ' <span class="muted small">' + all.filter(function (x) { return x.kind === k; }).length + '</span></button>'; }).join('') + '</div>' : '') +
+              '<input class="input input-sm" id="dbQ" placeholder="코드·하차지명·주소 검색" value="' + esc(q) + '" style="max-width:300px"><span class="muted small">' + list.length + ' / ' + all.length + '곳</span><span class="spacer"></span><button type="button" class="btn btn-sm" id="dbNew">＋ 한 줄 더하기</button></div>' +
+              (cur ? '<div class="std-form">' + DEST_COLS.map(function (c) { return '<label class="small">' + esc(c[1]) + '<input class="input input-sm" data-df="' + c[0] + '" value="' + esc(v[c[0]] || '') + '"' + (c[0] === 'kind' ? ' list="dbKl"' : '') + '></label>'; }).join('') + '<datalist id="dbKl">' + ['일반(FC도크)', '장갑'].concat(kinds).filter(function (k, i, a) { return a.indexOf(k) === i; }).map(function (k) { return '<option value="' + esc(k) + '">'; }).join('') + '</datalist><div class="actions"><button type="button" class="btn btn-sm" id="dbCancel">취소</button><button type="button" class="btn btn-sm btn-primary" id="dbSave">' + (cur._i != null ? '고치기' : '더하기') + '</button></div></div>' : '') +
+              '<div class="pa-list std-list"><table class="data te-tb std-tb"><thead><tr>' + DEST_COLS.map(function (c) { return '<th class="left">' + esc(c[1]) + '</th>'; }).join('') + '<th></th></tr></thead><tbody>' +
+              (list.length ? list.map(function (x) { return '<tr>' + DEST_COLS.map(function (c) { return '<td class="left' + (c[0] === 'addr' ? ' small' : '') + '">' + esc(x[c[0]] || '') + '</td>'; }).join('') + '<td class="nowrap"><button type="button" class="btn btn-sm" data-ded="' + all.indexOf(x) + '">수정</button> <button type="button" class="btn btn-sm btn-ghost" data-ddel="' + all.indexOf(x) + '">삭제</button></td></tr>'; }).join('')
+                : '<tr><td colspan="' + (DEST_COLS.length + 1) + '" class="muted">' + (all.length ? '맞는 하차지가 없어요.' : '아직 없어요. 위 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table></div>';
+            $$('#dbKind button', m).forEach(function (b) { b.onclick = function () { kind = b.dataset.k; draw(); }; });
+            keepTyping($('#dbQ', m), function (val) { q = val; draw(); });
+            $('#dbNew', m).onclick = function () { cur = { kind: kind || (all[0] && all[0].kind) || '일반(FC도크)' }; draw(); };
+            $$('[data-ded]', m).forEach(function (b) { b.onclick = function () { cur = Object.assign({ _i: Number(b.dataset.ded) }, all[Number(b.dataset.ded)]); draw(); }; });
+            $$('[data-ddel]', m).forEach(function (b) { b.onclick = function () { var i = Number(b.dataset.ddel), x = all[i]; if (!confirm((x.code ? x.code + ' ' : '') + x.name + ' 하차지를 지울까요?')) return; saveAll(all.filter(function (y, j) { return j !== i; }), null, '지웠어요.'); }; });
+            if (cur) {
+              $('#dbCancel', m).onclick = function () { cur = null; draw(); };
+              $('#dbSave', m).onclick = function () {
+                var x = {}; $$('[data-df]', m).forEach(function (inp) { x[inp.dataset.df] = inp.value.trim(); });
+                if (!x.code && !x.name) return toast('코드나 하차지명을 넣으세요.', 'err');
+                var rows = all.slice(); if (cur._i != null) rows[cur._i] = x; else rows.push(x);
+                saveAll(rows, this, cur._i != null ? '고쳤어요.' : '더했어요.');
+              };
+            }
           };
           draw();
         } });
@@ -6989,7 +7078,7 @@
     froms.forEach(function (f, i) {
       var p = findPlace(f);
       out.push(froms.length > 1 ? '상차지' + (i + 1) : '상차지'); out.push(p ? p.name : f);
-      if (p) { if (p.addr) out.push(p.addr); if (p.time) out.push('상차가능시간 = ' + p.time); if (p.contact) out.push(p.contact); }
+      if (p) { if (p.addr) out.push(p.addr); if (p.time) out.push('상차가능시간 = ' + p.time); if (p.manager || p.contact) out.push([p.manager, p.contact].filter(Boolean).join(' / ')); }
       else out.push('(상차지 설정에 "' + f + '" 정보가 없어요)');
       out.push('');
     });
@@ -7354,7 +7443,7 @@
     var t = truckInfo(D, no), cost = truckCost(D, no), stops = cost ? cost.stops : truckStops(D, no), key = D.tab + '|' + no;
     var rc = (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
     var nGot = stops.filter(function (s) { return got(s.fc).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
-    var rec = bestOrder(D, no), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
+    var rec = bestOrder(D, no), blk = drvBlack(t), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
     var sti = Math.max(0, DISP_STATUS.indexOf(t.status || '배차전')), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', shade = kindShade(kind);
     // 착지마다 한 줄, 패키지가 있으면 그 착지에 패키지 줄을 따로 (예: 천안2 4번들 2,660 / 천안2 1번들 10패키지)
@@ -7369,9 +7458,9 @@
         '<td class="tt-fc"' + (hrs ? ' data-hrs="' + esc('하차 가능시간 · ' + hrs) + '"' : '') + '><b>' + esc(s.fc) + '</b>' + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + (ln.pk && s.n0 ? '' : notesOf(s.fc)) + '</td>' +
         '<td class="tt-addr"><div class="clip" title="' + esc(s.d.memo || s.d.addr) + '">' + esc(s.d.addr) + '</div></td>' +
         '<td class="num">' + won(ln.b) + '</td><td class="num' + (ln.pk ? ' tt-pkg' : '') + '">' + ln.kg + '</td>' +
-        (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in"' + rs + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
+        (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in' + (blk && f[0] === 'car' ? ' tt-blk' : '') + '"' + rs + (blk && f[0] === 'car' ? ' title="⛔ 블랙(출입 금지) 기사"' : '') + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
-          '<td class="tt-act"' + rs + '><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
+          '<td class="tt-act"' + rs + '>' + (blk ? '<div class="tt-blkw">⛔ 블랙 기사</div>' : '') + '<button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
             '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
             '<span class="tt-hide">' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + '</span>' +
             (t.status === '회차' && !isPartner() ? '<button data-recopy="' + esc(key) + '" title="이 호차의 오더를 다시 배차하도록 복사">오더 복사</button>' : '') +
@@ -7522,7 +7611,7 @@
       var mv = orders.splice(from, 1)[0]; orders.splice(to, 0, mv); orders.forEach(function (o, i) { o.seq = i + 1; }); redraw();
     });
     var tn = function (v) { var p = v.split('|'); return { D: st.tabs[p[0]], no: Number(p[1]), tab: p[0] }; };
-    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { if (inp.dataset.skip) return; var x = tn(inp.dataset.tn); truckInfo(x.D, x.no)[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중)
+    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { if (inp.dataset.skip) return; var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); if (/^(car|driver|phone)$/.test(inp.dataset.tf)) blackWarn(t, x.no); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중)
     /* 엑셀·구글시트에서 차량정보~톤수를 복사해 붙여넣으면 칸마다 나눠 넣기 (여러 줄이면 다음 호차로 이어서) */
     $$('[data-tf]', box).forEach(function (inp) {
       inp.onpaste = function (e) {
@@ -7534,6 +7623,7 @@
         parseTsv(txt).filter(function (r) { return r.some(function (c) { return String(c).trim(); }); }).forEach(function (r, i) {
           var no = ns[start + i]; if (no == null) return; var t = truckInfo(x.D, no); n++;
           r.forEach(function (c, j) { var f = TRK_FIELDS[k0 + j]; if (f) t[f[0]] = String(c).trim(); });
+          blackWarn(t, no);
         });
         inp.dataset.skip = 1; dispQueueSave(x.tab); drawDispDay(true); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
       };
@@ -7555,7 +7645,7 @@
     });
     $$('[data-tf=car], [data-tf=driver], [data-tf=phone]', box).forEach(function (inp) {
       inp.setAttribute('autocomplete', 'off');
-      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { inp.dataset.skip = 1; /* 다시 그릴 때 칸이 사라지며 오는 늦은 '바뀜' 신호(직접 친 '김')는 무시 */ var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
+      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { inp.dataset.skip = 1; /* 다시 그릴 때 칸이 사라지며 오는 늦은 '바뀜' 신호(직접 친 '김')는 무시 */ var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); if (!blackWarn(t, x.no)) toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
       inp.addEventListener('keydown', driverSuggestKey);
       inp.addEventListener('blur', function () { setTimeout(closeDriverSuggest, 150); });
     });
@@ -7640,43 +7730,89 @@
     }).catch(function (err) { var el = $('#dpMBody'); if (el) el.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
   }
   /** 매입 단가표 (분석 권한) · 양식 받기 → 구글시트에서 복사해 붙여넣거나 엑셀 올리기 · 센터별 도착지 고치기 */
+  /* ── 매입 단가표 (분석 권한 · 업체별): 세로형 한 줄 = 출발 · 도착 · 톤수 · 단가 · 적용시작일 · 비고 ── */
+  var RATE_COLS = [['from', '출발', 10, '예) 인천'], ['to', '도착', 12, '예) 시흥'], ['ton', '톤수', 8, '예) 5톤'], ['price', '단가', 12, ''], ['start', '적용시작일', 12, ''], ['memo', '비고', 20, '']];
+  function rateTonTxt(v) { var t = String(v == null ? '' : v).replace(/\s/g, '').replace(/(t|T|ton|TON)$/, '톤'); return /^\d+(\.\d+)?$/.test(t) ? t + '톤' : t; }
+  function rateNum(v) { var n = Number(String(v == null ? '' : v).replace(/[,\s원]/g, '')); return n > 0 ? n : 0; }
+  /** 예전 가로형(출발 · 도착 · 매칭 · 거리 · 1톤 … 14톤 · 18톤)을 붙여넣어도 세로형으로 풀어요 */
+  function rateReadWide(rows) {
+    var nm = function (v) { return String(v || '').replace(/\s/g, ''); }, h = rows[0].map(nm), fi = h.indexOf('출발'), ti = h.indexOf('도착'), di = h.indexOf('거리'), si = h.indexOf('적용시작일');
+    var tons = []; h.forEach(function (x, j) { if (/^\d+(\.\d+)?톤$/.test(x)) tons.push([x, j]); });
+    if (fi === -1 || ti === -1 || !tons.length) return null;
+    var out = [], bad = 0;
+    rows.slice(1).forEach(function (r) { var f = String(r[fi] || '').trim(), t = String(r[ti] || '').trim(); if (!f || !t) return; tons.forEach(function (x) { var v = String(r[x[1]] || '').trim(); if (!v) return; var p = rateNum(v); if (!p) { bad++; return; } out.push({ from: f, to: t, ton: x[0], price: p, start: si === -1 ? '' : String(r[si] || '').trim(), memo: '', dist: di === -1 ? '' : dispNum(r[di]) }); }); });
+    out.warn = (bad ? '숫자가 아닌 단가 ' + bad + '칸은 뺐어요 · ' : '') + '가로형 단가표를 ' + out.length + '줄(톤수마다 한 줄)로 풀었어요';
+    return out;
+  }
   function openDispRates() {
-    var st = dispState(), parsed = null;
-    var head = ['출발', '도착', '매칭', '거리'].concat(RATE_TONS.map(function (t) { return t[0]; }));
-    modal({ wide: true, eyebrow: '배차시트 · 분석 권한자만', title: '매입 단가표',
-      body: '<p class="muted small" style="margin:0 0 8px">매입 = 착지 중 가장 비싼 구간 단가 + 경유지마다 ' + won(STOP_FEE) + '원(주소가 같은 하차지는 한 곳) · 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동 (예: 2파렛이라도 1,100kg이면 2.5톤)</p>' +
-        '<div class="actions" style="margin-bottom:8px"><button class="btn btn-sm" id="drTpl">양식 받기</button><label class="btn btn-sm">엑셀 올리기<input type="file" id="drFile" accept=".xlsx,.xls" hidden></label><span class="small muted" id="drNow"></span></div>' +
-        '<textarea class="input" id="drIn" rows="4" placeholder="또는 구글시트 단가표에서 제목 줄(출발·도착·매칭·거리·1톤…14톤)까지 복사해 붙여넣기"></textarea>' +
-        '<div class="actions" style="margin-top:6px"><span class="small" id="drInfo"></span><button class="btn btn-sm btn-primary" id="drSave" disabled>단가표 바꾸기</button></div>' +
-        '<h3 style="margin:16px 0 6px">센터별 도착지 <span class="muted small">주소의 시·군으로 자동 연결 · 안 맞으면 고쳐 두면 계속 기억해요</span></h3><div id="drMap" class="table-wrap" style="max-height:320px"></div>',
+    var st = dispState(), q = '', cur = null, today = todayYmd();
+    modal({ wide: true, cls: 'modal-xl', eyebrow: '배차시트 · 분석 권한자만 · ' + st.cust, title: '매입 단가표',
+      body: '<p class="muted small" style="margin:0 0 8px"><b>' + esc(st.cust) + '</b> 단가표예요. 매입 = 착지 중 가장 비싼 구간 단가 + 경유지마다 ' + won(STOP_FEE) + '원(주소가 같은 하차지는 한 곳) · 톤수는 호차 총 무게와 파렛(번들) 수 중 더 큰 쪽으로 자동' + (custDef().ton ? ' (' + esc(st.cust) + '는 ' + esc(custDef().ton) + ' 단가로 계산)' : '') + ' · 적용시작일이 있으면 그날부터 그 단가를 써요 (배차일 기준)</p>' +
+        '<div id="drOld"></div><div id="drImp"></div><div id="drBody" style="margin-top:12px"></div>' +
+        '<h3 style="margin:16px 0 6px">센터별 도착지 <span class="muted small">주소의 시·군으로 자동 연결 · 안 맞으면 고쳐 두면 계속 기억해요 (하차지 주소록의 "단가표 도착명"이 있으면 그것)</span></h3><div id="drMap" class="table-wrap" style="max-height:320px"></div>',
       foot: '<button class="btn" data-close>닫기</button>',
       onMount: function (m) {
-        var R = function () { return st.rates || { rates: [], map: {} }; };
-        var drawNow = function () { var r = R(); $('#drNow', m).textContent = '지금 ' + r.rates.length + '구간 · 출발 ' + Object.keys(r.rates.reduce(function (o, x) { o[x.from] = 1; return o; }, {})).join(', '); };
+        var R = function () { return st.rates || { rates: [], map: {} }; }, isOld = function () { return !R().rows; };
+        var refresh = function () { if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); };
+        var save = function (rows, mode, btn, msg, done) {
+          if (isOld()) return toast(OLD_SRV, 'err');
+          if (btn) busy(btn, true, '저장 중…');
+          api('dispatch.ratesSave', { cust: st.cust, mode: mode, rows: rows }).then(function (r) { st.rates = r; cur = null; toast(msg); if (done) done(); draw(); drawMap(); refresh(); })
+            .catch(function (err) { if (btn) busy(btn, false); toast(err.message, 'err'); });
+        };
+        var plain = function (x) { return { from: x.from, to: x.to, ton: x.ton, price: x.price, start: x.start || '', memo: x.memo || '', dist: x.dist || '' }; };
+        stdImport({ el: $('#drImp', m), name: '매입단가', file: '매입단가표_양식.xlsx', cols: RATE_COLS, read: rateReadWide, replace: true,
+          alias: { from: /^출발(지)?$/, to: /^도착(지)?$/, ton: /^(톤수|톤|차종)$/, price: /^(단가|금액|운임|매입단가)$/, start: /(적용)?시작일|적용일/ },
+          keep: function (o) { return o.from || o.to; },
+          check: function (out) { var bad = out.filter(function (o) { return !rateNum(o.price) || !o.ton; }); bad.forEach(function (o) { out.splice(out.indexOf(o), 1); }); out.forEach(function (o) { o.ton = rateTonTxt(o.ton); o.price = rateNum(o.price); }); return bad.length ? '단가·톤수가 빈 ' + bad.length + '줄은 뺐어요' : ''; },
+          add: function (items, btn, done) { save(items, 'add', btn, items.length + '줄을 더했어요 (같은 출발·도착·톤수·시작일은 바꿨어요).', done); },
+          replace: function (items, btn, done) { save(items, 'replace', btn, st.cust + ' 단가표를 ' + items.length + '줄로 바꿨어요.', done); },
+          hint: '한 줄에 톤수 하나 · 예전 가로형(출발·도착·…·1톤…14톤·18톤)을 붙여넣어도 알아서 읽어요 · 더하기: 같은 출발·도착·톤수·시작일만 바꿔요 · 바꾸기: ' + esc(st.cust) + ' 단가표를 통째로' });
+        var draw = function () {
+          $('#drOld', m).innerHTML = isOld() ? '<p class="err-text small">' + esc(OLD_SRV) + ' (지금은 보기만 돼요)</p>' : '';
+          var rows = rateRows().map(plain), tons = RATE_TONS.map(function (t) { return t[0]; });
+          rows.forEach(function (x) { if (tons.indexOf(x.ton) === -1) tons.push(x.ton); });
+          var used = tons.filter(function (t) { return rows.some(function (x) { return x.ton === t; }); }); if (!used.length) used = tons;
+          var by = {}, groups = []; rows.forEach(function (x) { var k = x.from + '|' + x.to + '|' + x.start; var g = by[k]; if (!g) { g = by[k] = { k: k, from: x.from, to: x.to, start: x.start, memo: '', p: {} }; groups.push(g); } g.p[x.ton] = x.price; if (x.memo) g.memo = x.memo; });
+          groups.sort(function (a, b) { return a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || (a.start < b.start ? -1 : a.start > b.start ? 1 : 0); });
+          var ql = q.toLowerCase(), list = groups.filter(function (g) { return !ql || (g.from + ' ' + g.to + ' ' + g.memo).toLowerCase().indexOf(ql) !== -1; });
+          var froms = {}; groups.forEach(function (g) { froms[g.from] = 1; });
+          var v = cur || { p: {} };
+          $('#drBody', m).innerHTML = '<div class="actions" style="margin-bottom:8px"><input class="input input-sm" id="drQ" placeholder="출발·도착 검색" value="' + esc(q) + '" style="max-width:260px"><span class="muted small">' + list.length + ' / ' + groups.length + '구간 · 단가 ' + rows.length + '칸 · 출발 ' + esc(Object.keys(froms).join(', ') || '–') + '</span><span class="spacer"></span><button type="button" class="btn btn-sm" id="drNew"' + (isOld() ? ' disabled' : '') + '>＋ 구간 더하기</button></div>' +
+            (cur ? '<div class="std-form"><label class="small">출발<input class="input input-sm" data-rf="from" value="' + esc(v.from || '') + '"></label><label class="small">도착<input class="input input-sm" data-rf="to" value="' + esc(v.to || '') + '"></label><label class="small">적용시작일<input class="input input-sm" type="date" data-rf="start" value="' + esc(v.start || '') + '"></label><label class="small">비고<input class="input input-sm" data-rf="memo" value="' + esc(v.memo || '') + '"></label>' +
+              tons.map(function (t) { return '<label class="small">' + esc(t) + '<input class="input input-sm num" inputmode="numeric" data-rt="' + esc(t) + '" value="' + (v.p[t] ? won(v.p[t]) : '') + '"></label>'; }).join('') + '<div class="actions"><button type="button" class="btn btn-sm" id="drCancel">취소</button><button type="button" class="btn btn-sm btn-primary" id="drSave">' + (cur.k ? '고치기' : '더하기') + '</button></div></div>' : '') +
+            '<div class="pa-list std-list"><table class="data te-tb std-tb"><thead><tr><th class="left">출발</th><th class="left">도착</th><th class="left">적용시작일</th>' + used.map(function (t) { return '<th class="num">' + esc(t) + '</th>'; }).join('') + '<th class="left">비고</th><th></th></tr></thead><tbody>' +
+            (list.length ? list.map(function (g) { return '<tr><td class="left"><b>' + esc(g.from) + '</b></td><td class="left">' + esc(g.to) + '</td><td class="left small">' + (g.start ? esc(g.start) + (g.start > today ? ' <span class="badge">예정</span>' : '') : '<span class="muted">처음부터</span>') + '</td>' + used.map(function (t) { return '<td class="num">' + (g.p[t] ? won(g.p[t]) : '<span class="muted">–</span>') + '</td>'; }).join('') + '<td class="left small">' + esc(g.memo) + '</td><td class="nowrap">' + (isOld() ? '' : '<button type="button" class="btn btn-sm" data-red="' + esc(g.k) + '">수정</button> <button type="button" class="btn btn-sm btn-ghost" data-rdel="' + esc(g.k) + '">삭제</button>') + '</td></tr>'; }).join('')
+              : '<tr><td colspan="' + (used.length + 5) + '" class="muted">' + (groups.length ? '맞는 구간이 없어요.' : '아직 없어요. 위 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table></div>';
+          keepTyping($('#drQ', m), function (val) { q = val; draw(); });
+          $('#drNew', m).onclick = function () { cur = { p: {} }; draw(); };
+          var rest = function (k) { return rows.filter(function (x) { return x.from + '|' + x.to + '|' + x.start !== k; }); };
+          $$('[data-red]', m).forEach(function (b) { b.onclick = function () { cur = by[b.dataset.red]; draw(); }; });
+          $$('[data-rdel]', m).forEach(function (b) { b.onclick = function () { var g = by[b.dataset.rdel]; if (!confirm(g.from + ' → ' + g.to + (g.start ? ' (' + g.start + '부터)' : '') + ' 단가를 지울까요?')) return; save(rest(g.k), 'replace', null, '지웠어요.'); }; });
+          if (cur) {
+            $('#drCancel', m).onclick = function () { cur = null; draw(); };
+            $('#drSave', m).onclick = function () {
+              var f = function (k) { return $('[data-rf="' + k + '"]', m).value.trim(); }, add = [];
+              if (!f('from') || !f('to')) return toast('출발·도착을 넣으세요.', 'err');
+              $$('[data-rt]', m).forEach(function (inp) { var p = rateNum(inp.value); if (p) add.push({ from: f('from'), to: f('to'), ton: inp.dataset.rt, price: p, start: f('start'), memo: f('memo'), dist: '' }); });
+              if (!add.length) return toast('톤수 칸에 단가를 하나 이상 넣으세요.', 'err');
+              save((cur.k ? rest(cur.k) : rows).concat(add), 'replace', this, cur.k ? '고쳤어요.' : '더했어요.');
+            };
+          }
+        };
         var drawMap = function () {
-          var fcs = {}; DISP_TABS.forEach(function (t) { var D = st.tabs && st.tabs[t[0]]; if (D) D.orders.forEach(function (o) { fcs[o.d.fc] = { addr: o.d.addr, from: rateFromName(o.d.from) }; }); });
+          var fcs = {}; DISP_TABS.forEach(function (t) { var D = st.tabs && st.tabs[t[0]]; if (D) D.orders.forEach(function (o) { fcs[o.d.fc] = { addr: o.d.addr, from: rateFromName(o.d.from), code: o.d.dest }; }); });
           Object.keys(R().map).forEach(function (k) { if (!fcs[k]) fcs[k] = { addr: '', from: '' }; });
-          var dests = {}; R().rates.forEach(function (x) { dests[x.to] = 1; });
+          var dests = {}; rateRows().forEach(function (x) { dests[x.to] = 1; });
           $('#drMap', m).innerHTML = Object.keys(fcs).length ? '<datalist id="drDl">' + Object.keys(dests).sort().map(function (d) { return '<option value="' + esc(d) + '">'; }).join('') + '</datalist><table class="data mini"><thead><tr><th class="left">센터명</th><th class="left">주소</th><th class="left">단가표 도착</th><th></th></tr></thead><tbody>' +
-            Object.keys(fcs).sort().map(function (fc) { var x = fcs[fc], dn = destName(fc, x.addr, x.from); return '<tr><td class="left">' + esc(fc) + '</td><td class="left small">' + esc(x.addr) + '</td><td class="left"><input class="input input-sm" list="drDl" data-fc="' + esc(fc) + '" value="' + esc(dn.name) + '" placeholder="' + esc(dn.guess ? '못 찾음 (' + dn.guess + ')' : '') + '" style="width:140px"> ' + (dn.name ? (dn.auto ? '<span class="small muted">자동</span>' : '<span class="small">고침</span>') : '<span class="small err-text">없음</span>') + '</td><td>' + (!dn.auto ? '<button class="btn btn-sm btn-ghost" data-fcx="' + esc(fc) + '">자동으로</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table>'
+            Object.keys(fcs).sort().map(function (fc) { var x = fcs[fc], dn = destName(fc, x.addr, x.from, x.code); return '<tr><td class="left">' + esc(fc) + '</td><td class="left small">' + esc(x.addr) + '</td><td class="left"><input class="input input-sm" list="drDl" data-fc="' + esc(fc) + '" value="' + esc(dn.name) + '" placeholder="' + esc(dn.guess ? '못 찾음 (' + dn.guess + ')' : '') + '" style="width:140px"> ' + (dn.name ? (dn.book ? '<span class="small muted">주소록</span>' : dn.auto ? '<span class="small muted">자동</span>' : '<span class="small">고침</span>') : '<span class="small err-text">없음</span>') + '</td><td>' + (!dn.auto && !dn.book ? '<button class="btn btn-sm btn-ghost" data-fcx="' + esc(fc) + '">자동으로</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table>'
             : '<p class="muted small">오늘 오더가 없어서 보여줄 센터가 없어요.</p>';
-          var save = function (fc, dest) { api('dispatch.mapSave', { fc: fc, dest: dest }).then(function (r) { st.rates = r; drawMap(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { toast(err.message, 'err'); }); };
-          $$('[data-fc]', m).forEach(function (inp) { inp.onchange = function () { save(inp.dataset.fc, inp.value.trim()); }; });
-          $$('[data-fcx]', m).forEach(function (b) { b.onclick = function () { save(b.dataset.fcx, ''); }; });
+          var saveMap = function (fc, dest) { api('dispatch.mapSave', { fc: fc, dest: dest }).then(function (r) { st.rates = r; drawMap(); refresh(); }).catch(function (err) { toast(err.message, 'err'); }); };
+          $$('[data-fc]', m).forEach(function (inp) { inp.onchange = function () { saveMap(inp.dataset.fc, inp.value.trim()); }; });
+          $$('[data-fcx]', m).forEach(function (b) { b.onclick = function () { saveMap(b.dataset.fcx, ''); }; });
         };
-        var useRows = function (rows) {
-          var norm = function (h) { return String(h || '').replace(/\s/g, ''); }, h = (rows[0] || []).map(norm), ix = {};
-          head.forEach(function (k) { ix[k] = h.indexOf(norm(k)); });
-          if (ix['출발'] === -1 || ix['도착'] === -1) { parsed = null; $('#drInfo', m).innerHTML = '<span class="err-text">제목 줄(출발·도착·1톤…)까지 같이 복사해 주세요.</span>'; $('#drSave', m).disabled = true; return; }
-          parsed = rows.slice(1).filter(function (r) { return String(r[ix['출발']] || '').trim() && String(r[ix['도착']] || '').trim(); }).map(function (r) { var p = {}; RATE_TONS.forEach(function (t) { if (ix[t[0]] !== -1) p[t[0]] = r[ix[t[0]]]; }); return { from: String(r[ix['출발']]).trim(), to: String(r[ix['도착']]).trim(), dist: ix['거리'] !== -1 ? dispNum(r[ix['거리']]) : '', p: p }; });
-          $('#drInfo', m).innerHTML = '<b>' + parsed.length + '구간</b> 읽음 · 단가표 바꾸기를 누르면 지금 단가표를 통째로 바꿔요';
-          $('#drSave', m).disabled = !parsed.length;
-        };
-        $('#drIn', m).oninput = function () { useRows(parseTsv(this.value)); };
-        $('#drFile', m).onchange = function () { var f = this.files[0]; if (!f) return; Promise.all([loadXlsx(), f.arrayBuffer()]).then(function (r) { var wb = r[0].read(r[1], { type: 'array' }); useRows(r[0].utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: '' })); }).catch(function (err) { toast(err.message, 'err'); }); this.value = ''; };
-        $('#drTpl', m).onclick = function () { downloadXlsx('매입단가표_양식.xlsx', [{ name: '단가표', widths: [8, 10, 14, 7, 10, 10, 10, 10, 10, 10, 10], rows: [head, ['인천', '시흥', '인천시흥', 40, '', '', '', '', '', '', '']] }]); };
-        $('#drSave', m).onclick = function () { var btn = this; busy(btn, true, '저장 중…'); api('dispatch.ratesSave', { rates: parsed }).then(function (r) { st.rates = r; busy(btn, false); btn.disabled = true; $('#drIn', m).value = ''; $('#drInfo', m).textContent = '바꿨어요.'; drawNow(); drawMap(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); }); };
-        loadDispRates(true).then(function () { drawNow(); drawMap(); });
+        $('#drBody', m).innerHTML = '<p class="muted"><span class="spinner dark"></span> 불러오는 중…</p>';
+        loadDispRates(true).then(function () { draw(); drawMap(); });
       } });
   }
   /* 기사 풀 자동완성 */
@@ -7698,39 +7834,52 @@
     else if (e.key === 'Enter') { e.preventDefault(); drvSug.pick(drvSug.list[drvSug.i]); }
     else if (e.key === 'Escape') closeDriverSuggest();
   }
-  /** 기사 풀 관리: 자동으로 쌓인 기사 + 직접 등록 · ★ 고정은 목록 맨 위 */
+  /** 기사 풀 관리: 자동으로 쌓인 기사 + 직접 등록 · ★ 고정은 목록 맨 위 · 모든 업체 탭에서 같이 써요 · 소속(직영/개인용차/협력사명)으로 거르기 */
+  var DRV_COLS = [['car', '차량번호', 12, '예) 12가3456'], ['driver', '운전원', 10, ''], ['phone', '연락처', 15, ''], ['ton', '톤수', 8, '예) 5톤'], ['org', '소속', 14, '예) 직영 / 개인용차 / 협력사명'], ['birth', '생년월일', 10, ''], ['black', '블랙', 6, '예) O'], ['memo', '비고', 20, '']];
+  var DRV_ALIAS = { car: /^(차량번호|차량정보|차번|차량)$/, driver: /^(운전원|기사|기사명|이름)$/, phone: /^(연락처|전화|전화번호|휴대폰)$/, org: /^(소속|운송사|협력사)$/, black: /^(블랙|출입금지|금지)$/, memo: /^(비고|메모)$/ };
+  function isBlackTxt(v) { return /^(o|ㅇ|1|y|yes|예|네|블랙|black|true|v|✓|✔|●|금지|출입금지)$/i.test(String(v == null ? '' : v).trim()); }
   function openDriverPool() {
-    var st = dispState(), cur = null, q = '';
-    modal({ wide: true, eyebrow: '배차시트', title: '기사 풀',
-      body: '<p class="muted small" style="margin:0 0 10px">호차에 차량정보를 넣으면 자동으로 쌓여요. 호차 카드의 차량정보·운전원·연락처 칸에 몇 글자만 치면 여기서 골라 넣을 수 있어요.</p>' +
-        '<div class="dpool-form" id="dvForm"></div><div class="actions" style="margin:12px 0 6px"><input class="input input-sm" id="dvQ" placeholder="검색 (차량번호·이름·연락처)" style="max-width:280px"><span class="spacer"></span><span class="small muted" id="dvCnt"></span></div><div class="table-wrap" style="max-height:52vh"><table class="data dpool"><thead><tr><th>★</th><th class="left">차량정보</th><th class="left">운전원</th><th class="left">연락처</th><th class="left">톤수</th><th class="left">메모</th>' + (isPartner() ? '' : '<th class="left">생년월일</th>') + '<th>횟수</th><th>마지막 배차</th><th></th></tr></thead><tbody id="dvBody"></tbody></table></div>',
+    var st = dispState(), cur = null, q = '', org = '', P = isPartner();
+    modal({ wide: true, cls: 'modal-xl', eyebrow: '배차시트 · 모든 업체 같이', title: '기사 풀',
+      body: '<p class="muted small" style="margin:0 0 10px">호차에 차량정보를 넣으면 자동으로 쌓여요. 호차의 차량정보·운전원·연락처 칸에 몇 글자만 치면 여기서 골라 넣을 수 있어요. <b>⛔ 블랙</b>(출입 금지) 기사를 어느 업체 탭에 넣어도 경고가 떠요.</p>' +
+        (P ? '' : '<div id="dvImp" style="margin-bottom:10px"></div>') + '<div class="dpool-form" id="dvForm"></div><div class="actions" style="margin:12px 0 6px"><select class="input input-sm" id="dvOrg" style="width:auto"></select><input class="input input-sm" id="dvQ" placeholder="검색 (차량번호·이름·연락처·소속)" style="max-width:280px"><span class="spacer"></span><span class="small muted" id="dvCnt"></span></div><div class="table-wrap" style="max-height:52vh"><table class="data dpool"><thead><tr><th>★</th><th class="left">차량정보</th><th class="left">운전원</th><th class="left">연락처</th><th class="left">톤수</th><th class="left">소속</th><th class="left">메모</th>' + (P ? '' : '<th class="left">생년월일</th>') + '<th>블랙</th><th>횟수</th><th>마지막 배차</th><th></th></tr></thead><tbody id="dvBody"></tbody></table></div>',
       foot: '<button class="btn" data-close>닫기</button>',
       onMount: function (m) {
         var save = function (id, v) { return api('drivers.save', { id: id || '', driver: v }).then(function (r) { st.drivers = r.drivers; drawList(); return r; }); };
+        if (!P) stdImport({ el: $('#dvImp', m), name: '기사', file: '기사풀_양식.xlsx', cols: DRV_COLS, alias: DRV_ALIAS, addLabel: '기사 풀에 올리기',
+          keep: function (o) { return o.car || o.driver; },
+          add: function (items, btn, done) { busy(btn, true, '올리는 중'); api('drivers.bulk', { rows: items.map(function (x) { return Object.assign({}, x, { black: isBlackTxt(x.black) }); }) }).then(function (r) { st.drivers = r.drivers; toast('기사 ' + r.added + '명을 더하고 ' + r.updated + '명을 바꿨어요.'); done(); drawList(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); }); },
+          hint: '같은 기사(차량번호, 없으면 이름+연락처)는 올린 내용으로 바꿔요 (배차 횟수·★ 고정은 그대로) · 블랙 칸: O·1·예 = 출입 금지' });
+        var orgs = function () { var o = {}; (st.drivers || []).forEach(function (v) { var k = v.org || ''; o[k] = (o[k] || 0) + 1; }); return o; };
         var drawForm = function () {
-          var v = cur || {};
-          $('#dvForm', m).innerHTML = '<div class="dpool-grid"><input class="input input-sm" id="dvCar" placeholder="차량정보" value="' + esc(v.car || '') + '"><input class="input input-sm" id="dvDrv" placeholder="운전원" value="' + esc(v.driver || '') + '"><input class="input input-sm" id="dvPh" placeholder="연락처" value="' + esc(v.phone || '') + '"><input class="input input-sm" id="dvTon" placeholder="톤수" value="' + esc(v.ton || '') + '"><input class="input input-sm" id="dvMemo" placeholder="메모 (예: 오전만, 리프트)" value="' + esc(v.memo || '') + '">' + (isPartner() ? '' : '<input class="input input-sm" id="dvBirth" placeholder="생년월일 (인천항 출입등록)" value="' + esc(v.birth || '') + '">') +
-            '<label class="small"><input type="checkbox" id="dvPin"' + (v.pin ? ' checked' : '') + '> ★ 고정</label>' + (cur ? '<button class="btn btn-sm" id="dvCancel">취소</button>' : '') + '<button class="btn btn-sm btn-primary" id="dvSave">' + (cur ? '고치기' : '기사 추가') + '</button></div>';
+          var v = cur || {}, ol = Object.keys(orgs()).filter(Boolean).sort();
+          $('#dvForm', m).innerHTML = '<div class="dpool-grid"><input class="input input-sm" id="dvCar" placeholder="차량정보" value="' + esc(v.car || '') + '"><input class="input input-sm" id="dvDrv" placeholder="운전원" value="' + esc(v.driver || '') + '"><input class="input input-sm" id="dvPh" placeholder="연락처" value="' + esc(v.phone || '') + '"><input class="input input-sm" id="dvTon" placeholder="톤수" value="' + esc(v.ton || '') + '"><input class="input input-sm" id="dvOrgIn" list="dvOl" placeholder="소속 (직영·개인용차·협력사명)" value="' + esc(v.org || '') + '"><datalist id="dvOl">' + ['직영', '개인용차'].concat(ol).filter(function (x, i, a) { return a.indexOf(x) === i; }).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist><input class="input input-sm" id="dvMemo" placeholder="메모 (예: 오전만, 리프트)" value="' + esc(v.memo || '') + '">' + (P ? '' : '<input class="input input-sm" id="dvBirth" placeholder="생년월일 (인천항 출입등록)" value="' + esc(v.birth || '') + '">') +
+            '<label class="small"><input type="checkbox" id="dvPin"' + (v.pin ? ' checked' : '') + '> ★ 고정</label>' + (P ? '' : '<label class="small" style="color:#C0392B"><input type="checkbox" id="dvBlack"' + (v.black ? ' checked' : '') + '> ⛔ 블랙</label>') + (cur ? '<button class="btn btn-sm" id="dvCancel">취소</button>' : '') + '<button class="btn btn-sm btn-primary" id="dvSave">' + (cur ? '고치기' : '기사 추가') + '</button></div>';
           if (cur) $('#dvCancel', m).onclick = function () { cur = null; drawForm(); };
           $('#dvSave', m).onclick = function () {
             var btn = this; busy(btn, true, '…');
-            save(cur && cur.id, { car: $('#dvCar', m).value, driver: $('#dvDrv', m).value, phone: $('#dvPh', m).value, ton: $('#dvTon', m).value, memo: $('#dvMemo', m).value, pin: $('#dvPin', m).checked, birth: $('#dvBirth', m) ? $('#dvBirth', m).value : undefined })
-              .then(function () { toast(cur ? '고쳤어요.' : '추가했어요.'); cur = null; drawForm(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+            save(cur && cur.id, { car: $('#dvCar', m).value, driver: $('#dvDrv', m).value, phone: $('#dvPh', m).value, ton: $('#dvTon', m).value, org: $('#dvOrgIn', m).value, memo: $('#dvMemo', m).value, pin: $('#dvPin', m).checked, birth: $('#dvBirth', m) ? $('#dvBirth', m).value : undefined, black: $('#dvBlack', m) ? $('#dvBlack', m).checked : undefined })
+              .then(function () { toast(cur ? '고쳤어요.' : '추가했어요.'); cur = null; drawForm(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
           };
         };
         var drawList = function () {
-          var qq = q.toLowerCase().replace(/\s/g, ''), all = st.drivers || [], l = all.filter(function (v) { return !qq || (v.car + v.driver + v.phone + v.memo).toLowerCase().replace(/\s/g, '').indexOf(qq) !== -1; });
-          $('#dvCnt', m).textContent = (qq ? l.length + ' / ' : '') + all.length + '명';
-          $('#dvBody', m).innerHTML = l.length ? l.map(function (v) { return '<tr><td><button class="dpool-pin' + (v.pin ? ' on' : '') + '" data-dvpin="' + esc(v.id) + '" title="고정">★</button></td><td class="left"><b>' + esc(v.car) + '</b></td><td class="left">' + esc(v.driver) + '</td><td class="left">' + esc(v.phone) + '</td><td class="left">' + esc(v.ton) + '</td><td class="left small">' + esc(v.memo) + '</td>' + (isPartner() ? '' : '<td class="small">' + esc(v.birth || '') + '</td>') + '<td class="num">' + (v.n || '') + '</td><td class="small">' + esc(v.last || '') + '</td><td><button class="btn btn-sm" data-dved="' + esc(v.id) + '">수정</button> <button class="btn btn-sm btn-ghost" data-dvdel="' + esc(v.id) + '">삭제</button></td></tr>'; }).join('')
-            : '<tr><td colspan="10" class="muted" style="text-align:center">' + (all.length ? '맞는 기사가 없어요.' : '아직 없어요. 호차에 차량정보를 넣거나 위에서 추가하세요.') + '</td></tr>';
+          var oc = orgs(), ok = Object.keys(oc).sort(function (a, b) { return !a - !b || a.localeCompare(b); });
+          if (org && !(org in oc) && org !== '__black') org = '';
+          $('#dvOrg', m).innerHTML = '<option value="">소속 전체 (' + (st.drivers || []).length + ')</option>' + ok.map(function (k) { return '<option value="' + esc(k || '__none') + '"' + ((k || '__none') === org ? ' selected' : '') + '>' + esc(k || '소속 없음') + ' (' + oc[k] + ')</option>'; }).join('') + '<option value="__black"' + (org === '__black' ? ' selected' : '') + '>⛔ 블랙만 (' + (st.drivers || []).filter(function (v) { return v.black; }).length + ')</option>';
+          var qq = q.toLowerCase().replace(/\s/g, ''), all = st.drivers || [], l = all.filter(function (v) { return (!org || (org === '__black' ? v.black : (v.org || '__none') === org)) && (!qq || (v.car + v.driver + v.phone + v.memo + (v.org || '')).toLowerCase().replace(/\s/g, '').indexOf(qq) !== -1); });
+          if (!org) l = l.slice().sort(function (a, b) { return !(a.org || '') - !(b.org || '') || String(a.org || '').localeCompare(String(b.org || '')); }); // 소속별로 모아서 (안에서는 ★·횟수 순서 그대로)
+          $('#dvCnt', m).textContent = (qq || org ? l.length + ' / ' : '') + all.length + '명';
+          $('#dvBody', m).innerHTML = l.length ? l.map(function (v) { return '<tr' + (v.black ? ' class="dpool-black"' : '') + '><td><button class="dpool-pin' + (v.pin ? ' on' : '') + '" data-dvpin="' + esc(v.id) + '" title="고정">★</button></td><td class="left"><b>' + esc(v.car) + '</b></td><td class="left">' + esc(v.driver) + '</td><td class="left">' + esc(v.phone) + '</td><td class="left">' + esc(v.ton) + '</td><td class="left small">' + esc(v.org || '') + '</td><td class="left small">' + esc(v.memo) + '</td>' + (P ? '' : '<td class="small">' + esc(v.birth || '') + '</td>') + '<td>' + (v.black ? '<b style="color:#C0392B">⛔</b>' : '') + '</td><td class="num">' + (v.n || '') + '</td><td class="small">' + esc(v.last || '') + '</td><td class="nowrap"><button class="btn btn-sm" data-dved="' + esc(v.id) + '">수정</button> <button class="btn btn-sm btn-ghost" data-dvdel="' + esc(v.id) + '">삭제</button></td></tr>'; }).join('')
+            : '<tr><td colspan="12" class="muted" style="text-align:center">' + (all.length ? '맞는 기사가 없어요.' : '아직 없어요. 호차에 차량정보를 넣거나 위에서 추가하세요.') + '</td></tr>';
           var byId = function (id) { return all.filter(function (v) { return v.id === id; })[0]; };
           $$('[data-dved]', m).forEach(function (b) { b.onclick = function () { cur = byId(b.dataset.dved); drawForm(); $('#dvCar', m).focus(); }; });
           $$('[data-dvpin]', m).forEach(function (b) { b.onclick = function () { var v = byId(b.dataset.dvpin); save(v.id, Object.assign({}, v, { pin: !v.pin })).catch(function (err) { toast(err.message, 'err'); }); }; });
           $$('[data-dvdel]', m).forEach(function (b) { b.onclick = function () { var v = byId(b.dataset.dvdel); if (!confirm((v.driver || v.car) + ' 기사를 풀에서 지울까요? (지난 배차 기록은 그대로예요)')) return; api('drivers.delete', { id: v.id }).then(function (r) { st.drivers = r.drivers; if (cur && cur.id === v.id) { cur = null; drawForm(); } drawList(); }).catch(function (err) { toast(err.message, 'err'); }); }; });
         };
         $('#dvQ', m).oninput = function () { q = this.value; drawList(); };
-        drawForm(); $('#dvBody', m).innerHTML = '<tr><td colspan="10"><span class="spinner dark"></span></td></tr>';
-        loadDrivers(true).then(drawList).catch(function (err) { $('#dvBody', m).innerHTML = '<tr><td colspan="10" class="err-text">' + esc(err.message) + '</td></tr>'; });
+        $('#dvOrg', m).onchange = function () { org = this.value; drawList(); };
+        drawForm(); $('#dvBody', m).innerHTML = '<tr><td colspan="12"><span class="spinner dark"></span></td></tr>';
+        loadDrivers(true).then(drawList).catch(function (err) { $('#dvBody', m).innerHTML = '<tr><td colspan="12" class="err-text">' + esc(err.message) + '</td></tr>'; });
       } });
   }
   /** 사진을 긴 변 1600px JPEG로 줄여 base64로 */
@@ -7743,20 +7892,31 @@
     });
   }
   var placePhotoCache = {};
+  /* 상차지 설정 (업체별): 상차지명 · 주소 · 담당자 · 연락처 · 상차시간 · 단가표 출발명 · 비고 + 사진 2장 */
+  var PLACE_COLS = [['name', '상차지명', 18, '예) 인천물류센터'], ['addr', '주소', 40, '예) 인천광역시 ○○구 ○○로 1'], ['manager', '담당자', 10, ''], ['contact', '연락처', 16, ''], ['time', '상차시간', 20, '예) 9:00~11:30 // 13:00~17:30'], ['rateFrom', '단가표 출발명', 12, '예) 인천'], ['memo', '비고', 20, '']];
+  var PLACE_ALIAS = { name: /^(상차지명?|출발센터|출발지|이름)$/, addr: /^(주소|상차지주소)$/, contact: /^(연락처|상차지연락처|전화)$/, time: /^(상차(가능)?시간|가능시간)$/, rateFrom: /단가표?출발/, memo: /^(비고|메모)$/ };
   function openPlaces() {
-    var st = dispState(), cur = null;
-    modal({ wide: true, eyebrow: '배차시트', title: '상차지 설정',
-      body: '<p class="muted small" style="margin:0 0 10px">오더의 "출발센터" 이름과 같은 상차지를 찾아 문자에 넣어요. (띄어쓰기·(주)는 무시)</p><div class="pl-grid"><div id="plList"></div><div id="plForm"></div></div>',
+    var st = dispState(), cur = null, q = '';
+    modal({ wide: true, cls: 'modal-xl', eyebrow: '배차시트 · ' + st.cust, title: '상차지 설정',
+      body: '<p class="muted small" style="margin:0 0 10px"><b>' + esc(st.cust) + '</b> 상차지예요. 오더의 "출발센터" 이름과 같은 상차지를 찾아 문자에 넣어요. (띄어쓰기·(주)는 무시)</p><div id="plImp"></div>' +
+        '<div class="adv-grid pl-wide" style="margin-top:12px"><div><div class="actions" style="margin-bottom:8px"><input class="input input-sm" id="plQ" placeholder="상차지명·주소·담당자 검색" style="max-width:280px"><span class="muted small" id="plCnt"></span><span class="spacer"></span><button type="button" class="btn btn-sm" id="plNew">＋ 새 상차지</button></div><div class="pa-list std-list" id="plList"></div></div><div id="plForm"></div></div>',
       foot: '<button class="btn" data-close>닫기</button>',
       onMount: function (m) {
+        var after = function () { if (state.view === 'dispatch' && st.view === 'day') { drawDispDay(); needGeo(); } };
+        stdImport({ el: $('#plImp', m), name: '상차지', file: '상차지_양식.xlsx', cols: PLACE_COLS, alias: PLACE_ALIAS, addLabel: '상차지에 올리기',
+          keep: function (o) { return o.name; },
+          add: function (items, btn, done) { busy(btn, true, '올리는 중'); api('loading.bulk', { cust: st.cust, rows: items }).then(function (r) { st.places = r.places; toast('상차지 ' + r.added + '곳을 더하고 ' + r.updated + '곳을 바꿨어요.'); done(); drawList(); after(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); }); },
+          hint: '같은 이름의 상차지는 올린 내용으로 바꿔요 (사진은 그대로)' });
+        $('#plNew', m).onclick = function () { cur = null; drawList(); drawForm(); $('#plN', m).focus(); };
+        keepTyping($('#plQ', m), function (val) { q = val; drawList(); });
         var drawForm = function () {
           var p = cur || {};
           $('#plForm', m).innerHTML = '<div class="field"><label>상차지명 *</label><input class="input" id="plN" value="' + esc(p.name || '') + '" placeholder="예) 인천물류센터 (오더의 출발센터와 같게)"></div>' +
-            '<div class="field"><label>상차지주소</label><input class="input" id="plA" value="' + esc(p.addr || '') + '"></div>' +
-            '<div class="field"><label>상차가능시간</label><input class="input" id="plT" value="' + esc(p.time || '') + '" placeholder="예) 9:00~11:30 // 13:00~17:30"></div>' +
-            '<div class="field"><label>상차지연락처 <span class="muted">(줄마다 한 명)</span></label><textarea class="input memo" id="plC" placeholder="예) 담당자 이름 / 032-000-0000">' + esc(p.contact || '') + '</textarea></div>' +
-            '<div class="field"><label>단가표 출발명 <span class="muted">(매입 단가표의 "출발" · 비우면 이름에서 "물류센터"를 뺀 것)</span></label><input class="input" id="plR" value="' + esc(p.rateFrom || '') + '" placeholder="예) 인천"></div>' +
-            '<div class="actions">' + (p.id ? '<button class="btn btn-danger btn-sm" id="plDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn btn-sm" id="plNew">새로 쓰기</button><button class="btn btn-sm btn-primary" id="plSave">저장</button></div>' +
+            '<div class="field"><label>주소</label><input class="input" id="plA" value="' + esc(p.addr || '') + '"></div>' +
+            '<div class="pl-two"><div class="field"><label>담당자</label><input class="input" id="plM" value="' + esc(p.manager || '') + '"></div><div class="field"><label>상차시간</label><input class="input" id="plT" value="' + esc(p.time || '') + '" placeholder="예) 9:00~11:30 // 13:00~17:30"></div></div>' +
+            '<div class="field"><label>연락처 <span class="muted">(여러 명이면 줄마다)</span></label><textarea class="input memo" id="plC" placeholder="예) 032-000-0000">' + esc(p.contact || '') + '</textarea></div>' +
+            '<div class="pl-two"><div class="field"><label>단가표 출발명 <span class="muted">(비우면 이름에서 "물류센터"를 뺀 것)</span></label><input class="input" id="plR" value="' + esc(p.rateFrom || '') + '" placeholder="예) 인천"></div><div class="field"><label>비고</label><input class="input" id="plO" value="' + esc(p.memo || '') + '"></div></div>' +
+            '<div class="actions">' + (p.id ? '<button class="btn btn-danger btn-sm" id="plDel" style="margin-right:auto">삭제</button>' : '') + '<button class="btn btn-sm btn-primary" id="plSave">' + (p.id ? '고치기' : '저장') + '</button></div>' +
             '<div class="field" style="margin-top:14px"><label>상차지 사진 <span class="muted">(2장까지 · 기사 링크의 상차지 카드에 보여요)</span></label>' +
             (p.id ? '<div class="pl-photos">' + (p.photos || []).map(function (ph) { return '<div class="pl-ph"><div class="pl-img" data-phimg="' + esc(ph.id) + '"><span class="spinner dark"></span></div><input class="input input-sm" data-phcap="' + esc(ph.id) + '" value="' + esc(ph.cap) + '" placeholder="설명 (예: 정문 말고 2번 게이트로)"><button class="btn btn-sm btn-danger" data-phdel="' + esc(ph.id) + '">사진 지우기</button></div>'; }).join('') +
               ((p.photos || []).length < 2 ? '<div class="pl-ph add"><input class="input input-sm" id="phCap" placeholder="설명 (예: 3번 도크 위치)"><label class="btn btn-sm">📷 사진 올리기<input type="file" accept="image/*" id="phFile" hidden></label></div>' : '') + '</div>'
@@ -7774,21 +7934,24 @@
             shrinkPhoto(file).then(function (b64) { return api('loading.photoAdd', { placeId: p.id, data: b64, cap: $('#phCap', m).value }); })
               .then(function (r) { afterPhoto(r); toast('사진을 올렸어요.'); }).catch(function (err) { toast(err.message, 'err'); drawForm(); });
           };
-          $('#plNew', m).onclick = function () { cur = null; drawForm(); };
           $('#plSave', m).onclick = function () {
-            var btn = this; busy(btn, true, '…');
-            api('loading.save', { id: p.id || '', place: { name: $('#plN', m).value, addr: $('#plA', m).value, time: $('#plT', m).value, contact: $('#plC', m).value, rateFrom: $('#plR', m).value } })
-              .then(function (r) { st.places = r.places; cur = r.places.filter(function (x) { return x.name === $('#plN', m).value.trim(); })[0] || null; drawList(); drawForm(); toast('저장했어요.'); if (state.view === 'dispatch' && st.view === 'day') { drawDispDay(); needGeo(); } })
+            var btn = this, nm = $('#plN', m).value.trim(); busy(btn, true, '…');
+            api('loading.save', { id: p.id || '', cust: st.cust, place: { name: nm, addr: $('#plA', m).value, time: $('#plT', m).value, contact: $('#plC', m).value, rateFrom: $('#plR', m).value, manager: $('#plM', m).value, memo: $('#plO', m).value } })
+              .then(function (r) { st.places = r.places; cur = mineOf(r.places).filter(function (x) { return x.name === nm; })[0] || null; drawList(); drawForm(); toast('저장했어요.'); after(); })
               .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
           };
-          var d = $('#plDel', m); if (d) d.onclick = function () { if (!confirm('"' + p.name + '" 상차지를 지울까요?')) return; api('loading.delete', { id: p.id }).then(function (r) { st.places = r.places; cur = null; drawList(); drawForm(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { toast(err.message, 'err'); }); };
+          var d = $('#plDel', m); if (d) d.onclick = function () { if (!confirm('"' + p.name + '" 상차지를 지울까요?')) return; api('loading.delete', { id: p.id }).then(function (r) { st.places = r.places; cur = null; drawList(); drawForm(); after(); }).catch(function (err) { toast(err.message, 'err'); }); };
         };
         var drawList = function () {
-          var l = st.places || [];
-          $('#plList', m).innerHTML = l.length ? l.map(function (p) { return '<button class="pl-it' + (cur && cur.id === p.id ? ' on' : '') + '" data-pl="' + esc(p.id) + '"><b>' + esc(p.name) + ((p.photos || []).length ? ' <span class="muted small">📷' + p.photos.length + '</span>' : '') + '</b><small>' + esc(p.addr || '주소 없음') + '</small></button>'; }).join('') : '<p class="muted small">아직 없어요. 오른쪽에서 추가하세요.</p>';
-          $$('[data-pl]', m).forEach(function (b) { b.onclick = function () { cur = l.filter(function (x) { return x.id === b.dataset.pl; })[0]; drawList(); drawForm(); }; });
+          var all = mineOf(st.places), ql = q.toLowerCase(), l = all.filter(function (p) { return !ql || PLACE_COLS.map(function (c) { return p[c[0]] || ''; }).join(' ').toLowerCase().indexOf(ql) !== -1; });
+          $('#plCnt', m).textContent = (ql ? l.length + ' / ' : '') + all.length + '곳';
+          $('#plList', m).innerHTML = '<table class="data te-tb std-tb"><thead><tr>' + PLACE_COLS.map(function (c) { return '<th class="left">' + esc(c[1]) + '</th>'; }).join('') + '<th>📷</th><th></th></tr></thead><tbody>' +
+            (l.length ? l.map(function (p) { return '<tr class="' + (cur && cur.id === p.id ? 'on' : '') + '">' + PLACE_COLS.map(function (c) { return '<td class="left' + (c[0] === 'name' ? '' : ' small') + '">' + (c[0] === 'name' ? '<b>' + esc(p.name) + '</b>' : multiline(p[c[0]] || '')) + '</td>'; }).join('') + '<td class="small">' + ((p.photos || []).length || '') + '</td><td class="nowrap"><button type="button" class="btn btn-sm" data-pl="' + esc(p.id) + '">수정</button> <button type="button" class="btn btn-sm btn-ghost" data-pldel="' + esc(p.id) + '">삭제</button></td></tr>'; }).join('')
+              : '<tr><td colspan="' + (PLACE_COLS.length + 2) + '" class="muted">' + (all.length ? '맞는 상차지가 없어요.' : '아직 없어요. 오른쪽에서 추가하거나 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table>';
+          $$('[data-pl]', m).forEach(function (b) { b.onclick = function () { cur = all.filter(function (x) { return x.id === b.dataset.pl; })[0]; drawList(); drawForm(); }; });
+          $$('[data-pldel]', m).forEach(function (b) { b.onclick = function () { var p = all.filter(function (x) { return x.id === b.dataset.pldel; })[0]; if (!confirm('"' + p.name + '" 상차지를 지울까요?')) return; api('loading.delete', { id: p.id }).then(function (r) { st.places = r.places; if (cur && cur.id === p.id) cur = null; drawList(); drawForm(); after(); }).catch(function (err) { toast(err.message, 'err'); }); }; });
         };
-        loadPlaces().then(function () { drawList(); drawForm(); }).catch(function (err) { $('#plList', m).innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
+        loadPlaces(true).then(function () { drawList(); drawForm(); }).catch(function (err) { $('#plList', m).innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
       } });
   }
 
