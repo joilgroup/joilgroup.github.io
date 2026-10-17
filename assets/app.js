@@ -6764,16 +6764,14 @@
       if (s.d.tel) out.push('연락처: ' + s.d.tel);
       s.rows.filter(function (o) { return sdsIsWf(o.d); }).slice(0, 1).forEach(function (o) { out.push('쿠팡 예약: ' + (o.d.rsv || '(미입력)') + (o.d.rsvCode ? ' / 코드 ' + o.d.rsvCode : '')); });
     });
-    var t = D.trucks.filter(function (x) { return x.no === no; })[0];
-    if (t && t.token) { out.push(''); out.push('📱 착지·길안내·인수증 올리기'); out.push(driverUrl(t.token)); }
-    return out.join('\n');
+    return out.join('\n'); // 삼다수는 기사 링크·지도 없이 문자만
   }
   /** 오더 표 칸: 하차지 · 문자 · PLT · 수량 · 주소·연락처(쿠팡이면 예약) */
   function sdsOrdCells(o, tab) {
     var d = o.d, dn = sdsDest(d, tab), ca = can('analysis');
     return '<td class="left">' + (dn ? '<b>' + esc(dn) + '</b>' : '<span class="err-text small"' + (ca ? '' : ' title="분석 권한자가 연결해요"') + '>⚠ 연결 필요</span>') + (ca ? ' <button type="button" class="dp-edit" data-sdsdest="' + esc(d.fc) + '">' + (dn ? '바꾸기' : '연결') + '</button>' : '') + '</td>' +
       '<td class="left small">' + esc(d.item) + '</td><td class="num"><b>' + won(dispNum(d.bundle)) + '</b></td><td class="left small">' + esc(sdsSizeText(d)) + '</td>' +
-      '<td class="left small"><div class="clip dp-addr" title="' + esc(d.memo || d.addr) + '">' + esc(d.addr) + '</div>' + (d.tel ? '<div class="muted">' + esc(d.tel) + '</div>' : '') + geoFlag(o) +
+      '<td class="left small"><div class="clip dp-addr" title="' + esc(d.memo || d.addr) + '">' + esc(d.addr) + '</div>' + (d.tel ? '<div class="muted">' + esc(d.tel) + '</div>' : '') +
       (sdsIsWf(d) ? '<div' + (d.rsv ? '' : ' style="color:var(--orange)"') + '>쿠팡 예약 ' + esc(d.rsv || '미입력') + (d.rsvCode ? ' / ' + esc(d.rsvCode) : '') + '</div>' : '') + '</td>';
   }
   /** 호차 표의 쿠팡 예약 칸 (예약시간·코드 직접 입력, 비어 있으면 주황 테두리) */
@@ -7039,7 +7037,7 @@
     });
   }
   function needGeo() {
-    var st = dispState(), want = {};
+    var st = dispState(), want = {}; if (isSds(st)) return; // 삼다수는 지도를 안 써요
     DISP_TABS.forEach(function (t) { var D = st.tabs && st.tabs[t[0]]; if (!D) return; D.orders.forEach(function (o) { if (o.d.addr) want[geoKey(o.d.addr)] = 1; var p = findPlace(o.d.from); if (p && p.addr) want[geoKey(p.addr)] = 1; }); });
     st.geoWait = st.geoWait || {};
     var miss = Object.keys(want).filter(function (a) { return !(a in st.geo) && !st.geoWait[a]; });
@@ -7832,7 +7830,7 @@
     var t = truckInfo(D, no), cost = truckCost(D, no), stops = cost ? cost.stops : truckStops(D, no), key = D.tab + '|' + no, sds = isSds();
     var rc = (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
     var nGot = stops.filter(function (s) { return got(s.fc).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
-    var rec = bestOrder(D, no), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
+    var rec = sds ? null : bestOrder(D, no), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
     var sti = Math.max(0, DISP_STATUS.indexOf(t.status || '배차전')), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', shade = kindShade(kind);
     // 착지마다 한 줄, 패키지가 있으면 그 착지에 패키지 줄을 따로 (예: 천안2 4번들 2,660 / 천안2 1번들 10패키지)
@@ -7853,7 +7851,7 @@
           (xw ? sdsRsvCell(D, s) : '') +
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
-            '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
+            '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button>' + (sds ? '' : '<button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button>') + '<button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
             '<span class="tt-hide">' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + '</span>' +
             (t.status === '회차' && !isPartner() ? '<button data-recopy="' + esc(key) + '" title="이 호차의 오더를 다시 배차하도록 복사">오더 복사</button>' : '') +
             (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>' +
@@ -8060,7 +8058,7 @@
     $$('[data-rec]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.rec), rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
     var copyText = function (txt, msg) { (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(msg); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('복사하지 못했어요. 미리보기에서 직접 복사하세요.', 'err'); } ta.remove(); }); };
     var noLink = function (x) { var t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; return !(t && t.token); };
-    $$('[data-copy]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.copy); if (noLink(x)) { st.dirty[x.tab] = 1; toast('기사 링크를 만드는 중이에요…'); dispSaveNow().then(function () { drawDispDay(); toast(noLink(x) ? '기사 링크가 안 만들어졌어요. Apps Script(Code.js)를 최신으로 새 버전 배포했는지 확인해 주세요.' : '기사 링크가 생겼어요. 문자 복사를 다시 눌러 주세요.', noLink(x) ? 'err' : ''); }); return; } copyText(truckMessage(x.D, x.no), x.tab + ' ' + x.no + '호차 문자를 복사했어요.'); }; });
+    $$('[data-copy]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.copy); if (!isSds() && noLink(x)) { st.dirty[x.tab] = 1; toast('기사 링크를 만드는 중이에요…'); dispSaveNow().then(function () { drawDispDay(); toast(noLink(x) ? '기사 링크가 안 만들어졌어요. Apps Script(Code.js)를 최신으로 새 버전 배포했는지 확인해 주세요.' : '기사 링크가 생겼어요. 문자 복사를 다시 눌러 주세요.', noLink(x) ? 'err' : ''); }); return; } copyText(truckMessage(x.D, x.no), x.tab + ' ' + x.no + '호차 문자를 복사했어요.'); }; });
     $$('[data-sdsdest]', box).forEach(function (b) { b.onclick = function () { openSdsDest(b.dataset.sdsdest, st.tab); }; });
     $$('[data-rsv]', box).forEach(function (inp) { inp.onchange = function () { // 쿠팡 예약시간·코드: 오더에 저장
       var p = inp.dataset.rsv.split('|'), X = st.tabs[p[0]], o = X && X.orders.filter(function (x) { return x.id === p[1]; })[0], k = inp.dataset.rk, v = inp.value.trim(), patch = {}; if (!o) return; patch[k] = v;
