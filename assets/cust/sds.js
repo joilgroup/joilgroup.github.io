@@ -7,7 +7,7 @@
   var dispPrep = H.dispPrep, dispRegion = H.dispRegion, dispSaveNow = H.dispSaveNow, dispSnap = H.dispSnap, dispState = H.dispState, drawDispDay = H.drawDispDay, drvBlack = H.drvBlack, esc = H.esc;
   var findPlace = H.findPlace, isPartner = H.isPartner, modal = H.modal, openOrderEdit = H.openOrderEdit, openOrderNote = H.openOrderNote, openTruckOrderEdit = H.openTruckOrderEdit, parseTsv = H.parseTsv, rateRows = H.rateRows;
   var toast = H.toast, truckCost = H.truckCost, truckCostCell = H.truckCostCell, truckInfo = H.truckInfo, truckNotes = H.truckNotes, truckOrders = H.truckOrders, truckStops = H.truckStops, won = H.won;
-  /* ───────── 삼다수: 메일 오더 표 → 하차지마다 18파렛트 = 1대 (구글시트 '직송 오더 데이터 처리하기'와 같은 규칙) ───────── */
+  /* ───────── 삼다수: 메일 오더 표 → 하차지마다 18파렛트 = 1대 (사용자의 구글시트 스크립트 '직송 오더 데이터 처리하기'와 같은 규칙) ───────── */
   var SDS_PLT = 18;
   var SDS_TABS = [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }];
   var SDS_SIZES = [['s2', '2L', 2], ['s1', '1L', 1], ['s05', '0.5L', 0.5], ['s03', '0.33L', 0.3]];
@@ -26,7 +26,7 @@
   var SDS_TEL = /0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4}/g;
   function sdsAddr(memo) {
     var s = String(memo || ''), i = s.search(SDS_TEL), a = (i === -1 ? s : s.slice(0, i)).replace(/\s+/g, ' ').trim().split(' ');
-    if (i > 0 && /[가-힣]/.test(s.charAt(i - 1)) && a.length > 2 && /^[가-힣]+$/.test(a[a.length - 1])) a.pop(); // '구문모010-…'처럼 번호에 붙은 이름은 무조건 빼요
+    if (i > 0 && /[가-힣]/.test(s.charAt(i - 1)) && a.length > 2 && /^[가-힣]+$/.test(a[a.length - 1])) a.pop(); // '홍길동010-…'처럼 번호에 붙은 이름은 무조건 빼요
     while (a.length > 2 && (/^(담당자?|연락처|번호|tel|TEL)[:：]?$/.test(a[a.length - 1]) || (/^[가-힣]{2,4}$/.test(a[a.length - 1]) && !/(층|동|호|로|길|리|읍|면|구|시|군|가|번지|도크|센터|빌딩|타워|문|앞)$/.test(a[a.length - 1])))) a.pop();
     return a.join(' ').replace(/[,\s]+$/, '');
   }
@@ -170,7 +170,7 @@
           SDS_TRK.map(function (f) { return '<td class="tt-in' + (r.blk && f[0] === 'car' ? ' tt-blk' : '') + '"><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
           '<td class="left"><b>' + esc(r.fcs.join(' / ')) + '</b>' + (r.item ? '<div class="small muted">' + esc(r.item) + '</div>' : '') + r.os.map(function (o) { return (o.noteIn && !isPartner() ? '<div class="tt-note in">[내부] ' + esc(o.noteIn) + '</div>' : '') + (o.noteDrv ? '<div class="tt-note drv">[기사] ' + esc(o.noteDrv) + '</div>' : ''); }).join('') + '</td>' +
           '<td><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자</button></td>' +
-          '<td>' + (r.blk ? '<b class="sds-blk" title="' + esc('블랙(출입 금지)' + (r.blk.memo ? ' · ' + r.blk.memo : '')) + '">⛔</b>' : '') + '</td>' +
+          '<td class="sds-bk">' + (r.blk ? '<b class="sds-blk" title="' + esc('블랙(출입 금지)' + (r.blk.memo ? ' · ' + r.blk.memo : '')) + '">⛔</b>' : '') + '</td>' +
           '<td class="tt-in">' + rsv('rsvCode', '코드') + '</td><td class="tt-in">' + rsv('rsv', '예약시간') + '</td>' +
           '<td class="tt-in">' + (xb ? '<input class="input input-sm sds-birth' + (ok && !(r.dv && r.dv.birth) ? ' sds-miss' : '') + '" data-birth="' + esc(key) + '" value="' + esc((r.dv && r.dv.birth) || '') + '" placeholder="예: 800101" title="인천항 출입등록용 · 기사 풀에 저장돼요">' : '<span class="small">' + esc((!isPartner() && r.dv && r.dv.birth) || '') + '</span>') + '</td>' +
           SDS_COLS.map(function (k) { return '<td class="num">' + (r.sz[k] ? won(r.sz[k]) : '') + '</td>'; }).join('') +
@@ -180,6 +180,14 @@
           '</tr></tbody>';
       }).join('') + '</table></div>';
   }
+  /** 블랙 표시만 바로 고치기 (줄 색 · 차량정보 칸 · ⛔ 칸) */
+  function blackMark(inp, v) {
+    var tr = inp.closest('tr'), car = tr && tr.querySelector('[data-tf=car]'), bk = tr && tr.querySelector('.sds-bk'); if (!car) return;
+    tr.classList.toggle('sds-black', !!v); car.parentNode.classList.toggle('tt-blk', !!v);
+    if (bk) bk.innerHTML = v ? '<b class="sds-blk" title="' + esc('블랙(출입 금지)' + (v.memo ? ' · ' + v.memo : '')) + '">⛔</b>' : '';
+  }
+  /** 경고 알림에 쓸 이름: 하차지 이름(없으면 대리점명) · 호차 번호는 삼다수 표에 없어서 안 써요 */
+  function blackLabel(D, no) { var r = sdsRow(D, no); return (r.dest.length ? r.dest : r.fcs).join(' / ') || '이 차'; }
   /** 엑셀로 복사 (삼다수 표와 같은 칸 순서 · 금액은 볼 수 있는 사람만 · 문자는 여러 줄 그대로) */
   function sheetRows(D, ns) {
     var showCost = sdsCostOk();
@@ -223,7 +231,7 @@
     ordHead: '<th class="left">대리점명</th><th class="left">하차지</th><th class="left">문자</th><th>PLT</th><th class="left">수량</th><th class="left">주소 · 연락처</th>',
     ordCells: sdsOrdCells,
     message: sdsMessage,
-    truckTable: truckTable, sheetRows: sheetRows, noOrderTable: true, trkW: SDS_TRK.length, trkFields: SDS_TRK,
+    truckTable: truckTable, sheetRows: sheetRows, blackMark: blackMark, blackLabel: blackLabel, noOrderTable: true, trkW: SDS_TRK.length, trkFields: SDS_TRK,
     truckLabel: function (D, no) { var os = truckOrders(D, no); return os.map(function (o) { return o.d.fc + ' ' + o.d.bundle + 'PLT'; }).join(' · ') || no + '호차'; },
     bind: bind
   };

@@ -6780,7 +6780,14 @@
     if (!c && !(d && p)) return null;
     return (dispState().drivers || []).filter(function (v) { return v.black && ((c && sp(v.car) === c) || (d && p && sp(v.driver) === d && dg(v.phone) === p)); })[0] || null;
   }
-  function blackWarn(t, no) { var v = drvBlack(t); if (v) toast('⛔ ' + (no ? no + '호차 · ' : '') + (v.driver || v.car) + ' 기사는 블랙(출입 금지)이에요' + (v.memo ? ' — ' + v.memo : '') + '. 다른 기사로 바꿔 주세요.', 'err'); return v; }
+  /** 블랙 경고: 이미 같은 블랙 기사였으면(운전원·연락처만 이어서 친 경우) 다시 띄우지 않아요 · lbl = '3호차' 또는 업체가 정한 이름 */
+  function blackWarn(t, lbl, was) { var v = drvBlack(t); if (v && !(was && was.id === v.id)) toast('⛔ ' + (lbl ? lbl + ' · ' : '') + (v.driver || v.car) + ' 기사는 블랙(출입 금지)이에요' + (v.memo ? ' — ' + v.memo : '') + '. 다른 기사로 바꿔 주세요.', 'err'); return v; }
+  /** 호차 줄의 블랙 표시만 바로 고치기 (다시 그리면 치던 칸에서 빠져나와서) */
+  function dispBlackMark(inp, v) {
+    var tb = inp.closest('tbody'), car = tb && tb.querySelector('[data-tf=car]'), td = car && car.parentNode, act = tb && tb.querySelector('.tt-act'), w = act && act.querySelector('.tt-blkw'); if (!td) return;
+    td.classList.toggle('tt-blk', !!v); if (v) td.title = '⛔ 블랙(출입 금지) 기사'; else td.removeAttribute('title');
+    if (v && act && !w) act.insertAdjacentHTML('afterbegin', '<div class="tt-blkw">⛔ 블랙 기사</div>'); if (!v && w) w.remove();
+  }
   /** 문자 머리말: 탭의 머리말(없으면 탭 이름 '-' 앞부분) + [출발센터] */
   function dispPrefix(D, from) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0], pre = (t && t[2]) || String(D.tab || '').split('-')[0] || dispState().cust.replace(/^쿠팡/, ''); return pre + '[' + String(from || '').replace(/물류센터|센터|물류/g, '') + ']'; }
   /** 기사 링크 주소: config.js의 DRIVER_URL(회사명이 안 드러나는 별도 주소)이 있으면 그것, 없으면 이 사이트의 drv.html */
@@ -7611,7 +7618,8 @@
       var mv = orders.splice(from, 1)[0]; orders.splice(to, 0, mv); orders.forEach(function (o, i) { o.seq = i + 1; }); redraw();
     });
     var tn = function (v) { var p = v.split('|'); return { D: st.tabs[p[0]], no: Number(p[1]), tab: p[0] }; };
-    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { if (inp.dataset.skip) return; var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); if (/^(car|driver|phone)$/.test(inp.dataset.tf)) blackWarn(t, x.no); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중)
+    var lblOf = function (x) { return C.blackLabel ? C.blackLabel(x.D, x.no) : x.no + '호차'; };
+    $$('[data-tf]', box).forEach(function (inp) { inp.onchange = function () { if (inp.dataset.skip) return; var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no), was = drvBlack(t); t[inp.dataset.tf] = inp.value.trim(); dispQueueSave(x.tab); if (/^(car|driver|phone)$/.test(inp.dataset.tf)) (C.blackMark || dispBlackMark)(inp, blackWarn(t, lblOf(x), was)); }; }); // 다시 그리지 않음 (다음 칸으로 넘어가며 치는 중) · 블랙 표시만 바로
     /* 엑셀·구글시트에서 차량정보~톤수를 복사해 붙여넣으면 칸마다 나눠 넣기 (여러 줄이면 다음 호차로 이어서) */
     $$('[data-tf]', box).forEach(function (inp) {
       inp.onpaste = function (e) {
@@ -7621,9 +7629,9 @@
         var x = tn(inp.dataset.tn), ns = dispTrucks(x.D), start = ns.indexOf(x.no), k0 = 0, n = 0;
         TRK_FIELDS.forEach(function (f, k) { if (f[0] === inp.dataset.tf) k0 = k; });
         parseTsv(txt).filter(function (r) { return r.some(function (c) { return String(c).trim(); }); }).forEach(function (r, i) {
-          var no = ns[start + i]; if (no == null) return; var t = truckInfo(x.D, no); n++;
+          var no = ns[start + i]; if (no == null) return; var t = truckInfo(x.D, no), was = drvBlack(t); n++;
           r.forEach(function (c, j) { var f = TRK_FIELDS[k0 + j]; if (f) t[f[0]] = String(c).trim(); });
-          blackWarn(t, no);
+          blackWarn(t, lblOf({ D: x.D, no: no }), was);
         });
         inp.dataset.skip = 1; dispQueueSave(x.tab); drawDispDay(true); toast(n > 1 ? x.no + '호차부터 ' + n + '대에 차량정보를 넣었어요.' : x.no + '호차에 차량정보를 넣었어요.');
       };
@@ -7645,7 +7653,7 @@
     });
     $$('[data-tf=car], [data-tf=driver], [data-tf=phone]', box).forEach(function (inp) {
       inp.setAttribute('autocomplete', 'off');
-      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { inp.dataset.skip = 1; /* 다시 그릴 때 칸이 사라지며 오는 늦은 '바뀜' 신호(직접 친 '김')는 무시 */ var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); if (!blackWarn(t, x.no)) toast(x.no + '호차에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
+      inp.addEventListener('input', function () { driverSuggest(inp, function (v) { inp.dataset.skip = 1; /* 다시 그릴 때 칸이 사라지며 오는 늦은 '바뀜' 신호(직접 친 '김')는 무시 */ var x = tn(inp.dataset.tn), t = truckInfo(x.D, x.no), was = drvBlack(t); t.car = v.car; t.driver = v.driver; t.phone = v.phone; if (v.ton) t.ton = v.ton; dispQueueSave(x.tab); drawDispDay(true); if (!blackWarn(t, lblOf(x), was)) toast(lblOf(x) + '에 ' + (v.driver || v.car) + ' 기사님을 넣었어요.'); }); });
       inp.addEventListener('keydown', driverSuggestKey);
       inp.addEventListener('blur', function () { setTimeout(closeDriverSuggest, 150); });
     });
@@ -7853,12 +7861,12 @@
         var orgs = function () { var o = {}; (st.drivers || []).forEach(function (v) { var k = v.org || ''; o[k] = (o[k] || 0) + 1; }); return o; };
         var drawForm = function () {
           var v = cur || {}, ol = Object.keys(orgs()).filter(Boolean).sort();
-          $('#dvForm', m).innerHTML = '<div class="dpool-grid"><input class="input input-sm" id="dvCar" placeholder="차량정보" value="' + esc(v.car || '') + '"><input class="input input-sm" id="dvDrv" placeholder="운전원" value="' + esc(v.driver || '') + '"><input class="input input-sm" id="dvPh" placeholder="연락처" value="' + esc(v.phone || '') + '"><input class="input input-sm" id="dvTon" placeholder="톤수" value="' + esc(v.ton || '') + '"><input class="input input-sm" id="dvOrgIn" list="dvOl" placeholder="소속 (직영·개인용차·협력사명)" value="' + esc(v.org || '') + '"><datalist id="dvOl">' + ['직영', '개인용차'].concat(ol).filter(function (x, i, a) { return a.indexOf(x) === i; }).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist><input class="input input-sm" id="dvMemo" placeholder="메모 (예: 오전만, 리프트)" value="' + esc(v.memo || '') + '">' + (P ? '' : '<input class="input input-sm" id="dvBirth" placeholder="생년월일 (인천항 출입등록)" value="' + esc(v.birth || '') + '">') +
+          $('#dvForm', m).innerHTML = '<div class="dpool-grid"><input class="input input-sm" id="dvCar" placeholder="차량정보" value="' + esc(v.car || '') + '"><input class="input input-sm" id="dvDrv" placeholder="운전원" value="' + esc(v.driver || '') + '"><input class="input input-sm" id="dvPh" placeholder="연락처" value="' + esc(v.phone || '') + '"><input class="input input-sm" id="dvTon" placeholder="톤수" value="' + esc(v.ton || '') + '"><input class="input input-sm" id="dvOrgIn" list="dvOl" placeholder="소속 (직영·개인용차·협력사명)" value="' + esc(v.org || '') + '"' + (P ? ' disabled title="소속은 직원만 바꿔요"' : '') + '><datalist id="dvOl">' + ['직영', '개인용차'].concat(ol).filter(function (x, i, a) { return a.indexOf(x) === i; }).map(function (x) { return '<option value="' + esc(x) + '">'; }).join('') + '</datalist><input class="input input-sm" id="dvMemo" placeholder="메모 (예: 오전만, 리프트)" value="' + esc(v.memo || '') + '">' + (P ? '' : '<input class="input input-sm" id="dvBirth" placeholder="생년월일 (인천항 출입등록)" value="' + esc(v.birth || '') + '">') +
             '<label class="small"><input type="checkbox" id="dvPin"' + (v.pin ? ' checked' : '') + '> ★ 고정</label>' + (P ? '' : '<label class="small" style="color:#C0392B"><input type="checkbox" id="dvBlack"' + (v.black ? ' checked' : '') + '> ⛔ 블랙</label>') + (cur ? '<button class="btn btn-sm" id="dvCancel">취소</button>' : '') + '<button class="btn btn-sm btn-primary" id="dvSave">' + (cur ? '고치기' : '기사 추가') + '</button></div>';
           if (cur) $('#dvCancel', m).onclick = function () { cur = null; drawForm(); };
           $('#dvSave', m).onclick = function () {
             var btn = this; busy(btn, true, '…');
-            save(cur && cur.id, { car: $('#dvCar', m).value, driver: $('#dvDrv', m).value, phone: $('#dvPh', m).value, ton: $('#dvTon', m).value, org: $('#dvOrgIn', m).value, memo: $('#dvMemo', m).value, pin: $('#dvPin', m).checked, birth: $('#dvBirth', m) ? $('#dvBirth', m).value : undefined, black: $('#dvBlack', m) ? $('#dvBlack', m).checked : undefined })
+            save(cur && cur.id, { car: $('#dvCar', m).value, driver: $('#dvDrv', m).value, phone: $('#dvPh', m).value, ton: $('#dvTon', m).value, org: P ? undefined : $('#dvOrgIn', m).value, memo: $('#dvMemo', m).value, pin: $('#dvPin', m).checked, birth: $('#dvBirth', m) ? $('#dvBirth', m).value : undefined, black: $('#dvBlack', m) ? $('#dvBlack', m).checked : undefined })
               .then(function () { toast(cur ? '고쳤어요.' : '추가했어요.'); cur = null; drawForm(); if (state.view === 'dispatch' && st.view === 'day') drawDispDay(); }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
           };
         };

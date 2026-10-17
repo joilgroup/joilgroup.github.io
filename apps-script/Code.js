@@ -2494,9 +2494,9 @@ function driverSave_(session, req) {
     f.sh.getRange(f.row, 2, 1, 6).setValues([[q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N']]);
     f.sh.getRange(f.row, 10, 1, 2).setValues([[session.name, now_()]]);
     if (x.birth !== undefined && session.role !== 'partner') f.sh.getRange(f.row, 12).setValue(q(x.birth)); // 안 보낸 화면(기사 풀 예전 화면·협력사)은 그대로 둬요
-    if (x.org !== undefined) f.sh.getRange(f.row, 13).setValue(q(x.org));
+    if (x.org !== undefined && session.role !== 'partner') f.sh.getRange(f.row, 13).setValue(q(x.org)); // 소속도 직원만 바꿔요 (협력사는 그대로 둠)
     if (x.black !== undefined && session.role !== 'partner') f.sh.getRange(f.row, 14).setValue(x.black ? 'Y' : ''); // 블랙은 직원만 정해요
-  } else headerSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_(), session.role === 'partner' ? '' : q(x.birth), q(x.org || (session.role === 'partner' ? session.name : '')), x.black && session.role !== 'partner' ? 'Y' : '']);
+  } else headerSheet_(SHEET_DRIVERS, DRIVER_HEADER).appendRow([newId_('V'), q(car), q(drv), q(x.phone), q(x.ton), q(x.memo), x.pin ? 'Y' : 'N', 0, '', session.name, now_(), session.role === 'partner' ? '' : q(x.birth), session.role === 'partner' ? q(session.name) : q(x.org), x.black && session.role !== 'partner' ? 'Y' : '']);
   return { drivers: driverList_() };
 }
 /** 기사 여러 명 올리기 (표준 양식: 차량번호 · 운전원 · 연락처 · 톤수 · 소속 · 생년월일 · 블랙 · 비고)
