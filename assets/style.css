@@ -1506,3 +1506,7 @@ table.data.dpool tr.dpool-black td { background: #FDECEA; }
 .sds-tt tr.sds-black td { background: #FDECEA; }
 .sds-tt .sds-blk { color: #C0392B; font-size: 16px; }
 .sds-tt td.sds-act { white-space: nowrap; }
+.sds-tt .sds-sz { text-align: center; width: 52px; min-width: 52px; font-variant-numeric: tabular-nums; }
+.sds-tt .sds-sh { background: rgba(31, 111, 127, .07); }
+.sds-tt th.sds-sh { background: #E0E9EB; }
+.sds-tt td.sds-amt { text-align: right; font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }

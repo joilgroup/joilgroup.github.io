@@ -6,7 +6,7 @@
   var $ = H.$, $$ = H.$$, api = H.api, busy = H.busy, can = H.can, destEntry = H.destEntry, dispKind = H.dispKind, dispNum = H.dispNum;
   var dispPrep = H.dispPrep, dispRegion = H.dispRegion, dispSaveNow = H.dispSaveNow, dispSnap = H.dispSnap, dispState = H.dispState, drawDispDay = H.drawDispDay, drvBlack = H.drvBlack, esc = H.esc;
   var findPlace = H.findPlace, isPartner = H.isPartner, modal = H.modal, openOrderEdit = H.openOrderEdit, openOrderNote = H.openOrderNote, openTruckOrderEdit = H.openTruckOrderEdit, parseTsv = H.parseTsv, rateRows = H.rateRows;
-  var toast = H.toast, truckCost = H.truckCost, truckCostCell = H.truckCostCell, truckInfo = H.truckInfo, truckNotes = H.truckNotes, truckOrders = H.truckOrders, truckStops = H.truckStops, won = H.won;
+  var toast = H.toast, truckCost = H.truckCost, truckInfo = H.truckInfo, truckNotes = H.truckNotes, truckOrders = H.truckOrders, truckStops = H.truckStops, won = H.won;
   /* ───────── 삼다수: 메일 오더 표 → 하차지마다 18파렛트 = 1대 (사용자의 구글시트 스크립트 '직송 오더 데이터 처리하기'와 같은 규칙) ───────── */
   var SDS_PLT = 18;
   var SDS_TABS = [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }];
@@ -142,10 +142,17 @@
   }
   var SDS_EDIT = [['bundle', '파렛트(PLT)'], ['item', '문자 (무라벨만·섞여있음 등)'], ['fc', '대리점명'], ['addr', '주소'], ['rsv', '쿠팡 예약시간'], ['rsvCode', '쿠팡 코드']];
   /* ── 삼다수 배차 표: 한 줄 = 차 한 대 (호차 번호·입차시간·톤수·상태 칸 없이 · 저장은 예전처럼 호차 단위) ──
-     구분 | 상차지 | 하차지주소 | PLT | 금액 | 차량정보 | 운전원 | 연락처 | 대리점명 | 문자 | 블랙 | 쿠팡예약코드 | 쿠팡예약시간 | 생년월일 | 0.33L | 0.5L | 1L | 2.0L */
+     구분 | 상차지 | 하차지주소 | PLT | 금액 | 차량정보 | 운전원 | 연락처 | 대리점명 | 문자 | 블랙 | 쿠팡예약코드 | 쿠팡예약시간 | 생년월일 | 0.3L | 0.5L | 1.0L | 2.0L */
   var SDS_TRK = [['car', '차량정보'], ['driver', '운전원'], ['phone', '연락처']];
-  var SDS_HEAD = ['구분', '상차지', '하차지주소', 'PLT', '금액', '차량정보', '운전원', '연락처', '대리점명', '문자', '블랙', '쿠팡예약코드', '쿠팡예약시간', '생년월일', '0.33L', '0.5L', '1L', '2.0L'];
-  var SDS_COLS = ['s03', 's05', 's1', 's2'];
+  var SDS_HEAD = ['구분', '상차지', '하차지주소', 'PLT', '금액', '차량정보', '운전원', '연락처', '대리점명', '문자', '블랙', '쿠팡예약코드', '쿠팡예약시간', '생년월일', '0.3L', '0.5L', '1.0L', '2.0L'];
+  var SDS_COLS = ['s03', 's05', 's1', 's2'], SDS_SHADE = { s05: 1, s2: 1 }; // 0.5L·2.0L 칸은 살짝 음영 (구별 쉽게)
+  /** 금액 칸: 톤수·포함 표시 없이 금액만 (계산 내역·단가 없음은 마우스 올리면) */
+  function sdsAmt(D, no, t, c) {
+    var ex = ['wait', 'support'].reduce(function (a, k) { return a + (Number(t[k]) || 0); }, 0), amt = c && c.total != null ? c.total + ex : (ex || null);
+    var tip = c ? [c.ton, c.miss && c.miss.length ? '단가 없음: ' + c.miss.join(', ') : ''].filter(Boolean).join(' · ') : '';
+    return '<td class="tt-cost sds-amt' + (amt == null ? ' muted' : '') + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' + (amt == null ? '–' : won(amt)) + '</td>';
+  }
+  function sdsSzTd(k, v, tag) { return '<' + tag + ' class="sds-sz' + (SDS_SHADE[k] ? ' sds-sh' : '') + '">' + v + '</' + tag + '>'; }
   function sdsCostOk() { return can('analysis') || isPartner(); } // 금액: 분석 권한자 · 협력사는 자기 탭만 (서버가 자기 탭만 보내요)
   /** 한 대(호차)의 줄 내용: 하차지가 둘 이상이면 줄바꿈으로 같이 */
   function sdsRow(D, no) {
@@ -156,7 +163,7 @@
   }
   function truckTable(D, ns) {
     var showCost = sdsCostOk(), xb = sdsBirthTab(D.tab) && !isPartner(), ca = can('analysis');
-    return '<div class="table-wrap dp-tt-wrap"><table class="dp-tt sds-tt"><thead><tr>' + SDS_HEAD.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '<th></th></tr></thead>' +
+    return '<div class="table-wrap dp-tt-wrap"><table class="dp-tt sds-tt"><thead><tr>' + SDS_HEAD.map(function (h, i) { var k = SDS_COLS[i - (SDS_HEAD.length - SDS_COLS.length)]; return k ? sdsSzTd(k, esc(h), 'th') : '<th>' + esc(h) + '</th>'; }).join('') + '<th></th></tr></thead>' +
       ns.map(function (no) {
         var r = sdsRow(D, no), t = r.t, key = D.tab + '|' + no, ok = String(t.car || t.driver || '').trim(), cost = showCost ? truckCost(D, no) : null;
         var rsv = function (f, ph) { return r.wf ? '<input class="input input-sm sds-rsv' + (r.wf.d[f] ? '' : ' sds-miss') + '" data-rsv="' + esc(D.tab + '|' + r.wf.id) + '" data-rk="' + f + '" value="' + esc(r.wf.d[f] || '') + '" placeholder="' + ph + '">' : ''; };
@@ -166,14 +173,14 @@
             (ca && !isPartner() ? ' <button type="button" class="dp-edit" data-sdsdest="' + esc(r.fcs[0] || '') + '" data-sdst="' + esc(D.tab) + '">' + (r.dest.length ? '바꾸기' : '연결') + '</button>' : '') +
             '<div class="clip" title="' + esc(r.os.map(function (o) { return o.d.memo || o.d.addr; }).join('\n')) + '">' + esc(r.addr.join(' / ')) + '</div>' + (r.tel.length ? '<div class="clip muted small">' + esc(r.tel.join(' / ')) + '</div>' : '') + '</td>' +
           '<td class="num"><b>' + won(r.plt) + '</b></td>' +
-          (showCost ? '<td class="tt-cost">' + truckCostCell(D, no, t, cost) + '</td>' : '<td class="muted">–</td>') +
+          (showCost ? sdsAmt(D, no, t, cost) : '<td class="muted">–</td>') +
           SDS_TRK.map(function (f) { return '<td class="tt-in' + (r.blk && f[0] === 'car' ? ' tt-blk' : '') + '"><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
           '<td class="left"><b>' + esc(r.fcs.join(' / ')) + '</b>' + (r.item ? '<div class="small muted">' + esc(r.item) + '</div>' : '') + r.os.map(function (o) { return (o.noteIn && !isPartner() ? '<div class="tt-note in">[내부] ' + esc(o.noteIn) + '</div>' : '') + (o.noteDrv ? '<div class="tt-note drv">[기사] ' + esc(o.noteDrv) + '</div>' : ''); }).join('') + '</td>' +
           '<td><button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자</button></td>' +
           '<td class="sds-bk">' + (r.blk ? '<b class="sds-blk" title="' + esc('블랙(출입 금지)' + (r.blk.memo ? ' · ' + r.blk.memo : '')) + '">⛔</b>' : '') + '</td>' +
           '<td class="tt-in">' + rsv('rsvCode', '코드') + '</td><td class="tt-in">' + rsv('rsv', '예약시간') + '</td>' +
           '<td class="tt-in">' + (xb ? '<input class="input input-sm sds-birth' + (ok && !(r.dv && r.dv.birth) ? ' sds-miss' : '') + '" data-birth="' + esc(key) + '" value="' + esc((r.dv && r.dv.birth) || '') + '" placeholder="예: 800101" title="인천항 출입등록용 · 기사 풀에 저장돼요">' : '<span class="small">' + esc((!isPartner() && r.dv && r.dv.birth) || '') + '</span>') + '</td>' +
-          SDS_COLS.map(function (k) { return '<td class="num">' + (r.sz[k] ? won(r.sz[k]) : '') + '</td>'; }).join('') +
+          SDS_COLS.map(function (k) { return sdsSzTd(k, r.sz[k] ? won(r.sz[k]) : '', 'td'); }).join('') +
           '<td class="tt-act sds-act"><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button><span class="tt-hide">' +
             '<button data-preview="' + esc(key) + '">문자보기</button>' + (isPartner() ? '' : '<button data-sdsedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-sdsnote="' + esc(key) + '">공지 쓰기</button>') +
             '<button data-ask="' + esc(key) + '">문의하기</button><button data-xl="' + esc(key) + '">차량정보 복사</button>' + (ca ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + (isPartner() ? '' : '<button data-sdsdel="' + esc(key) + '">오더 지우기</button>') + '</span></td>' +
