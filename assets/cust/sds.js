@@ -163,7 +163,8 @@
   }
   function truckTable(D, ns) {
     var showCost = sdsCostOk(), xb = sdsBirthTab(D.tab) && !isPartner(), ca = can('analysis');
-    return '<div class="table-wrap dp-tt-wrap"><table class="dp-tt sds-tt"><thead><tr>' + SDS_HEAD.map(function (h, i) { var k = SDS_COLS[i - (SDS_HEAD.length - SDS_COLS.length)]; return k ? sdsSzTd(k, esc(h), 'th') : '<th>' + esc(h) + '</th>'; }).join('') + '<th></th></tr></thead>' +
+    return (xb ? '<div class="actions" style="margin:0 0 8px"><button class="btn btn-sm" data-icpa="' + esc(D.tab) + '" title="인천항 임시출입 신청 프로그램에 넣을 기사 목록(이름·생년월일·연락처·차량번호)을 복사해요">🛂 출입등록 복사</button></div>' : '') +
+      '<div class="table-wrap dp-tt-wrap"><table class="dp-tt sds-tt"><thead><tr>' + SDS_HEAD.map(function (h, i) { var k = SDS_COLS[i - (SDS_HEAD.length - SDS_COLS.length)]; return k ? sdsSzTd(k, esc(h), 'th') : '<th>' + esc(h) + '</th>'; }).join('') + '<th></th></tr></thead>' +
       ns.map(function (no) {
         var r = sdsRow(D, no), t = r.t, key = D.tab + '|' + no, ok = String(t.car || t.driver || '').trim(), cost = showCost ? truckCost(D, no) : null;
         var rsv = function (f, ph) { return r.wf ? '<input class="input input-sm sds-rsv' + (r.wf.d[f] ? '' : ' sds-miss') + '" data-rsv="' + esc(D.tab + '|' + r.wf.id) + '" data-rk="' + f + '" value="' + esc(r.wf.d[f] || '') + '" placeholder="' + ph + '">' : ''; };
@@ -187,6 +188,26 @@
           '</tr></tbody>';
       }).join('') + '</table></div>';
   }
+  /* 인천항 임시출입 신청 프로그램(tools/icpa)용 기사 목록 · 생년월일 8자리, 휴대전화 010-0000-0000 (신청 사이트 형식) */
+  function icpaBirth(v) { var d = String(v || '').replace(/\D/g, ''); if (d.length === 8) return d; if (d.length !== 6) return ''; var yy = +d.slice(0, 2), cur = new Date().getFullYear() % 100; return (yy > cur ? '19' : '20') + d; }
+  function icpaPhone(v) { var d = String(v || '').replace(/\D/g, ''); return /^010\d{8}$/.test(d) ? d.slice(0, 3) + '-' + d.slice(3, 7) + '-' + d.slice(7) : ''; }
+  function icpaList(D) {
+    var nos = [], ok = [], miss = [];
+    D.orders.forEach(function (o) { var n = o.truck; if (n !== '' && n != null && nos.indexOf(n) === -1) nos.push(n); });
+    nos.forEach(function (no) {
+      var t = truckInfo(D, no), dv = sdsDriverOf(t) || {}, name = String(t.driver || dv.driver || '').trim(), it = { name: name, birth: icpaBirth(dv.birth), phone: icpaPhone(t.phone || dv.phone), car: String(t.car || dv.car || '').trim() };
+      if (!name && !it.car) return; // 아직 배차 안 된 줄
+      var why = [!name && '운전원', !it.birth && '생년월일', !it.phone && '연락처'].filter(Boolean);
+      if (why.length) miss.push((name || it.car) + '(' + why.join('·') + ')'); else ok.push(it);
+    });
+    return { ok: ok, miss: miss };
+  }
+  function icpaCopy(D) {
+    var r = icpaList(D); if (!r.ok.length) return toast('출입등록할 기사가 없어요.' + (r.miss.length ? ' 빈 칸: ' + r.miss.join(', ') : ''), 'err');
+    var txt = JSON.stringify({ joil: 'icpa', v: 1, date: D.date, list: r.ok }), done = function () { toast(r.ok.length + '명을 복사했어요. 바탕화면의 인천항 출입등록 프로그램을 실행하세요.' + (r.miss.length ? ' (빠짐: ' + r.miss.join(', ') + ')' : ''), r.miss.length ? 'err' : undefined); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { fallback(); }); else fallback();
+    function fallback() { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); done(); } catch (e) { toast('복사하지 못했어요.', 'err'); } ta.remove(); }
+  }
   /** 블랙 표시만 바로 고치기 (줄 색 · 차량정보 칸 · ⛔ 칸) */
   function blackMark(inp, v) {
     var tr = inp.closest('tr'), car = tr && tr.querySelector('[data-tf=car]'), bk = tr && tr.querySelector('.sds-bk'); if (!car) return;
@@ -207,6 +228,7 @@
   /** 삼다수 표의 버튼·입력칸: 하차지 이름 연결 · 쿠팡 예약 · 생년월일 */
   function bind(box, x0) {
     var st = x0.st, tn = x0.tn;
+    $$('[data-icpa]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.icpa]; if (X) icpaCopy(X); }; });
     $$('[data-sdsdest]', box).forEach(function (b) { b.onclick = function () { openSdsDest(b.dataset.sdsdest, b.dataset.sdst || st.tab); }; });
     var one = function (v) { var x = tn(v); return { x: x, os: truckOrders(x.D, x.no) }; };
     $$('[data-sdsedit]', box).forEach(function (b) { b.onclick = function () { var y = one(b.dataset.sdsedit); if (y.os.length === 1) openOrderEdit(y.x.D, y.os[0]); else openTruckOrderEdit(y.x.D, y.x.no); }; });

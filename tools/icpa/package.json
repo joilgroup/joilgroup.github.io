@@ -1,0 +1,6 @@
+{
+  "name": "joil-icpa",
+  "private": true,
+  "description": "인천항 임시출입 신청 자동 입력 (JOIL 삼다수 인천항 탭 → 출입등록 복사)",
+  "dependencies": { "playwright-core": "1.48.2" }
+}
