@@ -7089,13 +7089,14 @@
       else out.push('(상차지 설정에 "' + f + '" 정보가 없어요)');
       out.push('');
     });
-    // 하차지마다: 이름 / 번들 / 품목 → 주소 · 하차시간 · 도크 · 담당자 (BL은 기사 링크에서 봐요)
+    // 하차지마다: 이름 / 번들 / 품목 → BL(기사 링크와 같은 한 줄) → 주소 · 하차시간 · 도크 · 담당자
     stops.forEach(function (s, i) {
       var d = s.d, items = {}, order = [];
       s.rows.forEach(function (o) { var p = dispPkg(o.d.bundle), it = o.d.item || '-'; if (!(it in items)) { items[it] = { b: 0, p: 0 }; order.push(it); } if (p) items[it].p += p; else items[it].b += dispNum(o.d.bundle); });
       var amt = function (x) { return [x.b ? won(x.b) + '번들' : '', x.p ? won(x.p) + '패키지' : ''].filter(Boolean).join(' ') || '0번들'; };
       out.push(stops.length > 1 ? '하차지' + (i + 1) : '하차지');
       out.push(s.fc + ' / ' + won(s.b) + '번들' + (s.pkg ? '(' + won(s.pkg) + '패키지 포함)' : '') + ' / 품목:' + (order.length > 1 || items[order[0]].p ? order.map(function (it) { return it + '(' + amt(items[it]) + ')'; }).join(', ') : order[0]));
+      var bl = []; s.rows.forEach(function (o) { var v = String(o.d.bl || '').trim(); if (v && bl.indexOf(v) === -1) bl.push(v); }); if (bl.length) out.push('BL ' + bl.join(', '));
       [d.addr, d.hours, d.dock].forEach(function (x) { if (dispVal(x)) out.push(x); });
       var mg = [d.m1, d.m2, d.m3].filter(dispVal); if (mg.length) out.push(mg.join(' / '));
       out.push('');
