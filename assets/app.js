@@ -6758,6 +6758,8 @@
   function mineOf(list, cust) { cust = cust || dispState().cust; return (list || []).filter(function (x) { return x.cust == null || rowCust(x) === cust; }); }
   /** 상차지 찾기: 지금 업체 것 먼저, 없으면 다른 업체의 같은 이름 (예전 자료로 계산하던 운송비가 끊기지 않게) */
   function findPlace(name) { var n = custNorm(name), l = (dispState().places || []).filter(function (p) { return custNorm(p.name) === n; }); return mineOf(l)[0] || l[0] || null; }
+  /** 상차지 정보: 상차지 설정에 없으면 하차지 주소록에서 (역방향 — 출발이 FC일 때 주소만) */
+  function placeFor(from) { var p = findPlace(from); if (p) return p; var e = destEntry(from, from); return e ? { name: e.name || from, addr: e.addr } : null; }
   /** 하차지 주소록에서 찾기: 코드(도착지 코드)가 같은 것 → 없으면 하차지명이 같은 것 */
   function destEntry(fc, code) {
     var l = mineOf(dispState().dests), nm = function (v) { return String(v || '').replace(/\s|FC|센터/gi, '').toUpperCase(); }, c = String(code || '').trim().toUpperCase();
@@ -7083,7 +7085,7 @@
     truckNotes(D, no, 'drv').forEach(function (x) { out.push('⚠️ ' + (stops.length > 1 ? x.fc + ': ' : '') + x.text); });
     out.push('');
     froms.forEach(function (f, i) {
-      var p = findPlace(f);
+      var p = placeFor(f);
       out.push(froms.length > 1 ? '상차지' + (i + 1) : '상차지'); out.push(p ? p.name : f);
       if (p) { if (p.addr) out.push(p.addr); if (p.time) out.push('상차가능시간 = ' + p.time); if (p.manager || p.contact) out.push([p.manager, p.contact].filter(Boolean).join(' / ')); }
       else out.push('(상차지 설정에 "' + f + '" 정보가 없어요)');
@@ -7097,7 +7099,8 @@
       out.push(stops.length > 1 ? '하차지' + (i + 1) : '하차지');
       out.push(s.fc + ' / ' + won(s.b) + '번들' + (s.pkg ? '(' + won(s.pkg) + '패키지 포함)' : '') + ' / 품목:' + (order.length > 1 || items[order[0]].p ? order.map(function (it) { return it + '(' + amt(items[it]) + ')'; }).join(', ') : order[0]));
       var bl = []; s.rows.forEach(function (o) { var v = String(o.d.bl || '').trim(); if (v && bl.indexOf(v) === -1) bl.push(v); }); if (bl.length) out.push('BL ' + bl.join(', '));
-      [d.addr, d.hours, d.dock].forEach(function (x) { if (dispVal(x)) out.push(x); });
+      var daddr = dispVal(d.addr) ? d.addr : ((findPlace(s.fc) || {}).addr || ''); // 역방향: 도착이 창고면 상차지 설정 주소
+      [daddr, d.hours, d.dock].forEach(function (x) { if (dispVal(x)) out.push(x); });
       var mg = [d.m1, d.m2, d.m3].filter(dispVal); if (mg.length) out.push(mg.join(' / '));
       out.push('');
     });

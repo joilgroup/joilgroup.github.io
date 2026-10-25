@@ -87,7 +87,8 @@
   }
   function destFlag(o) {
     if (isPartner() || !myDests().length) return '';
-    var e = destOf(o); if (!e) return '<span class="dest-none" title="하차지 주소록(' + (destKind(o) === 'glove' ? '장갑' : 'FC도크') + ')에 이 코드·센터명이 없어요">주소록에 없음' + (o.d.dest ? ' (' + esc(o.d.dest) + ')' : '') + '</span>';
+    var e = destOf(o);
+    if (!e) { if (findPlace(o.d.fc)) return ''; return '<span class="dest-none" title="하차지 주소록(' + (destKind(o) === 'glove' ? '장갑' : 'FC도크') + ')에 이 코드·센터명이 없어요">주소록에 없음' + (o.d.dest ? ' (' + esc(o.d.dest) + ')' : '') + '</span>'; }
     if (!e.addr || destSame(e.addr, o.d.addr)) return '';
     return '<span class="dest-diff" title="' + esc('주소록(' + (bookKind(e) === 'glove' ? '장갑' : 'FC도크') + ' · ' + e.code + ' ' + e.name + '): ' + e.addr) + '">⚠ 주소록과 다름: ' + esc(e.addr) + '</span>';
   }
