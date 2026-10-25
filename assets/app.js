@@ -4268,18 +4268,22 @@
         var off = Math.max(0, Math.min(colPx * 2, String(ceo).length * 13 + 28 - 31));
         ws.addImage(img, { tl: { col: 5 + off / colPx, row: S0 - 0.25 }, ext: { width: 62, height: 62 }, editAs: 'oneCell' });
       }
-      // 견적 금액 상자
+      // 견적 금액 상자 (톤수 하나일 때만) · 그 아래 단위 줄
       var B = S0 + sup.length + 1;
-      ws.mergeCells(B, 1, B, N);
-      var bx = ws.getCell(B, 1);
-      bx.value = { richText: [{ text: '견적 금액    ', font: { bold: true, size: 11 } }, { text: d.sumText, font: { bold: true, size: 14 } }].concat(d.vat ? [{ text: '      (부가세 별도)', font: { size: 10, color: { argb: XL.muted } } }] : []) };
-      bx.border = { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } };
-      bx.alignment = { vertical: 'middle', indent: 1 };
-      ws.getRow(B).height = 34;
+      if (d.sumText) {
+        ws.mergeCells(B, 1, B, N);
+        var bx = ws.getCell(B, 1);
+        bx.value = { richText: [{ text: '견적 금액    ', font: { bold: true, size: 11 } }, { text: d.sumText, font: { bold: true, size: 14 } }].concat(d.vat ? [{ text: '      (부가세 별도)', font: { size: 10, color: { argb: XL.muted } } }] : []) };
+        bx.border = { top: { style: 'medium' }, left: { style: 'medium' }, bottom: { style: 'medium' }, right: { style: 'medium' } };
+        bx.alignment = { vertical: 'middle', indent: 1 };
+        ws.getRow(B).height = 34;
+      }
+      ws.mergeCells(B + 1, 1, B + 1, N); ws.getCell(B + 1, 1).value = d.unit; ws.getCell(B + 1, 1).font = { size: 10, color: { argb: XL.muted } }; ws.getCell(B + 1, 1).alignment = { horizontal: 'right' };
       // 금액 표
       var H = B + 2;
+      if (!d.rows.length) H = B; // 혼적만 있는 견적: 독차 표 없음
       var head = ['No', '상차지', '하차지', '거리'].concat(d.tons).concat(d.milkrun ? [d.mrLabel] : []);
-      for (var hc = 1; hc <= N; hc++) {
+      if (d.rows.length) for (var hc = 1; hc <= N; hc++) {
         var h = ws.getCell(H, hc); h.value = head[hc - 1] || ''; h.font = { bold: true, color: { argb: 'FF5A5246' } }; h.fill = XL.fill(XL.panel);
         h.border = { top: { style: 'thin', color: { argb: XL.ink } }, bottom: { style: 'thin', color: { argb: XL.ink } } }; h.alignment = { horizontal: hc <= 3 ? 'left' : 'right', vertical: 'middle', wrapText: true };
       }
@@ -4296,6 +4300,20 @@
         }
       });
       var r0 = H + 1 + d.rows.length + 1;
+      var sub = function (r, txt) { ws.mergeCells(r, 1, r, N); ws.getCell(r, 1).value = txt; ws.getCell(r, 1).font = bold; };
+      if (d.mix) { // 혼적 운송: 구간 · 파레트 · 파레트당 · 합계
+        sub(r0, '혼적 운송');
+        [['구간', '파레트', '파레트당', '합계'], [d.mix.route, d.mix.n, d.mix.p, d.mix.sum]].forEach(function (vals, k) {
+          var r = r0 + 1 + k; ws.mergeCells(r, 1, r, 3);
+          [[1, vals[0]], [4, vals[1]], [5, vals[2]], [6, vals[3]]].forEach(function (cv) {
+            var c = ws.getCell(r, cv[0]); c.value = cv[1]; if (typeof cv[1] === 'number') c.numFmt = '#,##0';
+            c.alignment = { horizontal: cv[0] === 1 ? 'left' : 'right', vertical: 'middle' };
+            if (!k) { c.font = { bold: true, color: { argb: 'FF5A5246' } }; c.fill = XL.fill(XL.panel); } else if (cv[0] === 6) c.font = bold;
+          });
+        });
+        r0 += 4;
+      }
+      if (d.cargo.length) { sub(r0, '화물 정보'); ws.mergeCells(r0 + 1, 1, r0 + 1, N); ws.getCell(r0 + 1, 1).value = d.cargo.map(function (x) { return x[0] + ' ' + x[1]; }).join('   ·   '); r0 += 3; }
       if (d.notes.length) {
         ws.getCell(r0, 1).value = '비고'; ws.getCell(r0, 1).font = bold;
         d.notes.forEach(function (n, i) { ws.mergeCells(r0 + 1 + i, 1, r0 + 1 + i, N); ws.getCell(r0 + 1 + i, 1).value = '· ' + n; ws.getCell(r0 + 1 + i, 1).font = { size: 10 }; });
@@ -4315,6 +4333,11 @@
    * src: { type: '단건'|'대량', items: [{ origin, dest, result }], tons, meta: { baseTon, roundTrip, diesel } }
    * 설정 창 → 미리보기(인쇄/PDF) · 엑셀
    */
+  var QD_CARS = [['', '표시 안 함'], ['카고', '카고'], ['윙', '윙바디'], ['탑', '탑'], ['냉장', '냉장·냉동']];
+  var QD_TERMS = ['상하차는 지게차 기준이며, 수작업 상하차는 별도 협의합니다.', '상하차 대기 시간이 길어지면 대기료가 별도로 발생합니다.', '경유지가 추가되면 경유비가 별도로 발생합니다.',
+    '야간·주말·공휴일·긴급 운송은 할증이 적용될 수 있습니다.', '유가 변동이 크면 단가를 조정할 수 있습니다.', '적재물배상 한도를 넘는 고가 화물은 별도 협의합니다.'];
+  /** 비고 한 줄: 앞에 붙은 기호(※ • · - *)는 빼요 (목록 기호와 겹치지 않게) */
+  function qdLine(l) { return String(l || '').trim().replace(/^[※•·\-*]+\s*/, ''); }
   function openQuoteDoc(src) {
     var pref = local('get', 'joil-qdoc') || {};
     var ok = src.items.filter(function (x) { return x.result; });
@@ -4325,8 +4348,10 @@
     var o = {
       biz: BIZ_LIST.indexOf(pref.biz) !== -1 ? pref.biz : BIZ_LIST[0], to: src.client || '', ref: '', date: today(),
       valid: pref.valid || '견적일로부터 30일', tons: defTons, milkrun: !!pref.milkrun && prefs().mr, vat: pref.vat !== false,
-      note: pref.note != null ? pref.note : (state.pub.quoteFooter || '')
+      note: pref.note != null ? pref.note : (state.pub.quoteFooter || ''),
+      car: pref.car || '', trip: pref.trip === '왕복' ? '왕복' : '편도', terms: pref.terms || [], cargo: {}, mixN: '', mixP: ''
     };
+    var one = src.type === '단건';
     modal({
       eyebrow: '견적서', title: '견적서 만들기 · ' + (src.type === '대량' ? won(ok.length) + '개 경로' : '1개 경로'),
       body:
@@ -4338,21 +4363,35 @@
         '<div class="field"><label>넣을 톤수 ' + (src.type === '대량' ? '<span class="muted">(가로 폭 때문에 최대 6개)</span>' : '') + '</label><div class="chips" id="qdTons">' + allTons.map(function (t) {
           return '<button type="button" class="chip' + (o.tons.indexOf(t) !== -1 ? ' on' : '') + '" data-t="' + esc(t) + '">' + esc(t) + '</button>';
         }).join('') + '</div></div>' +
+        '<div class="qd-two"><div class="field"><label>차종 <span class="muted">(표 머리에 "5톤 윙"처럼)</span></label><div class="segmented" id="qdCar">' + QD_CARS.map(function (c) { return '<button type="button" data-v="' + c[0] + '" class="' + (o.car === c[0] ? 'on' : '') + '">' + c[1] + '</button>'; }).join('') + '</div></div>' +
+        '<div class="field"><label>운행</label><div class="segmented" id="qdTrip">' + ['편도', '왕복'].map(function (v) { return '<button type="button" data-v="' + v + '" class="' + (o.trip === v ? 'on' : '') + '">' + v + '</button>'; }).join('') + '</div></div></div>' +
+        '<details class="qd-more"><summary>화물 정보' + (one ? ' · 혼적(파레트) 견적' : '') + ' <span class="muted">(선택 · 넣으면 견적서에 나와요)</span></summary>' +
+        '<div class="qd-two"><div class="field"><label>품목</label><input class="input" id="qdItem" placeholder="예) 카메라 장비"></div><div class="field"><label>수량</label><input class="input" id="qdQty" placeholder="예) 2~3파레트"></div></div>' +
+        '<div class="qd-two"><div class="field"><label>중량</label><input class="input" id="qdKg" placeholder="예) 파레트당 300~400kg"></div><div class="field"><label>규격</label><input class="input" id="qdSize" placeholder="예) 1100×1100×1800mm"></div></div>' +
+        (one ? '<div class="qd-two"><div class="field"><label>혼적 파레트 수</label><input class="input" id="qdMixN" inputmode="numeric" placeholder="예) 1"></div><div class="field"><label>혼적 파레트당 단가 (원)</label><input class="input" id="qdMixP" inputmode="numeric" placeholder="예) 150000"></div></div>' : '') +
+        '</details>' +
         '<div class="field' + (prefs().mr ? '' : ' hidden') + '"><label class="toggle"><input type="checkbox" id="qdMr"' + (o.milkrun ? ' checked' : '') + '><span class="track"></span>밀크런 유류비 + 통행료 함께 표시 (' + esc(src.meta.baseTon || '') + ' 기준)</label></div>' +
         '<div class="field"><label class="toggle"><input type="checkbox" id="qdVat"' + (o.vat ? ' checked' : '') + '><span class="track"></span>"부가세 별도" 표시</label></div>' +
-        '<div class="field"><label>비고</label><textarea class="input memo" id="qdNote" maxlength="1000">' + esc(o.note) + '</textarea></div>',
+        '<div class="field"><label>기본 조건 <span class="muted">(체크하면 비고에 들어가요)</span></label><div class="qd-terms">' + QD_TERMS.map(function (t, i) { return '<label class="qd-term"><input type="checkbox" data-term="' + i + '"' + (o.terms.indexOf(i) !== -1 ? ' checked' : '') + '> ' + esc(t) + '</label>'; }).join('') + '</div></div>' +
+        '<div class="field"><label>비고 <span class="muted">(직접 쓰기)</span></label><textarea class="input memo" id="qdNote" maxlength="1000">' + esc(o.note) + '</textarea></div>',
       foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="qdGo">미리보기</button>',
       onMount: function (m, close) {
         $$('#qdTons .chip', m).forEach(function (ch) { ch.onclick = function () { ch.classList.toggle('on'); }; });
         $$('#qdBiz button', m).forEach(function (b) { b.onclick = function () { $$('#qdBiz button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); }; });
+        ['#qdCar', '#qdTrip'].forEach(function (g) { $$(g + ' button', m).forEach(function (b) { b.onclick = function () { $$(g + ' button', m).forEach(function (x) { x.classList.toggle('on', x === b); }); }; }); });
         $('#qdGo', m).onclick = function () {
           o.biz = $('#qdBiz button.on', m).dataset.v; o.to = $('#qdTo', m).value.trim(); o.ref = $('#qdRef', m).value.trim();
           o.date = $('#qdDate', m).value || today(); o.valid = $('#qdValid', m).value.trim(); o.note = $('#qdNote', m).value;
           o.milkrun = $('#qdMr', m).checked; o.vat = $('#qdVat', m).checked;
           o.tons = $$('#qdTons .chip.on', m).map(function (x) { return x.dataset.t; });
-          if (!o.tons.length && !o.milkrun) return toast('톤수를 하나 이상 고르세요.', 'err');
+          o.car = $('#qdCar button.on', m).dataset.v; o.trip = $('#qdTrip button.on', m).dataset.v;
+          o.terms = $$('[data-term]', m).filter(function (x) { return x.checked; }).map(function (x) { return +x.dataset.term; });
+          o.cargo = { item: $('#qdItem', m).value.trim(), qty: $('#qdQty', m).value.trim(), kg: $('#qdKg', m).value.trim(), size: $('#qdSize', m).value.trim() };
+          o.mixN = one ? parseWon($('#qdMixN', m).value) : NaN; o.mixP = one ? parseWon($('#qdMixP', m).value) : NaN;
+          if (!(o.mixN > 0 && o.mixP > 0)) { o.mixN = 0; o.mixP = 0; }
+          if (!o.tons.length && !o.milkrun && !o.mixN) return toast('톤수를 하나 이상 고르거나 혼적 견적을 넣으세요.', 'err');
           if (src.type === '대량' && o.tons.length > 6) return toast('대량 견적서는 톤수를 6개까지 넣을 수 있어요.', 'err');
-          local('set', 'joil-qdoc', { biz: o.biz, valid: o.valid, milkrun: o.milkrun, vat: o.vat, note: o.note });
+          local('set', 'joil-qdoc', { biz: o.biz, valid: o.valid, milkrun: o.milkrun, vat: o.vat, note: o.note, car: o.car, trip: o.trip, terms: o.terms });
           var btn = this; busy(btn, true, '준비 중…');
           loadCompanies().catch(function () { return {}; }).then(function (cs) { close(); showQuoteDoc(src, o, (cs || {})[o.biz] || {}); });
         };
@@ -4371,25 +4410,32 @@
       return x && x.total != null ? adjPrice(src.adj, it.no || 1, t, x.total) : null;
     };
     var cell = function (v) { return v == null ? '<td class="num muted">별도 문의</td>' : '<td class="num">' + won(v) + '</td>'; };
+    var tlab = function (t) { return t + (o.car ? ' ' + o.car : ''); }; // 표 머리: "5톤 윙"
+    var km = function (v) { return won(Math.round(Number(v) || 0)) + 'km'; };
+    var unit = '(단위: 원 · ' + o.trip + ' · 대당' + (o.vat ? ' · 부가세 별도' : '') + ')';
+    var cargo = [['품목', o.cargo.item], ['수량', o.cargo.qty], ['중량', o.cargo.kg], ['규격', o.cargo.size]].filter(function (x) { return x[1]; });
+    var mix = o.mixN ? { n: o.mixN, p: o.mixP, sum: o.mixN * o.mixP, route: ok[0].result.origin.address + ' → ' + ok[0].result.dest.address } : null;
     var bodyHtml;
     var mrLabel = '유류비+통행료 (' + (src.meta.baseTon || '') + (src.meta.roundTrip ? ' 왕복' : ' 편도') + ')';
     if (src.type === '단건') {
       var r = ok[0].result;
-      bodyHtml = '<table class="data rpt qd-table"><thead><tr><th class="left">구간</th><th>운행거리</th>' + o.tons.map(function (t) { return '<th>' + esc(t) + '</th>'; }).join('') + (o.milkrun ? '<th>' + esc(mrLabel) + '</th>' : '') + '</tr></thead><tbody>' +
-        '<tr><td class="left"><span class="pin from"></span>' + esc(r.origin.address) + '<br><span class="pin to"></span>' + esc(r.dest.address) + '</td><td class="num">약 ' + r.distanceKm + 'km</td>' +
-        o.tons.map(function (t) { return cell(priceOf(ok[0], t)); }).join('') + (o.milkrun ? cell(r.milkrun.total) : '') + '</tr></tbody></table>';
+      bodyHtml = o.tons.length || o.milkrun ? '<table class="data rpt qd-table"><thead><tr><th class="left">구간</th><th>운행거리</th>' + o.tons.map(function (t) { return '<th>' + esc(tlab(t)) + '</th>'; }).join('') + (o.milkrun ? '<th>' + esc(mrLabel) + '</th>' : '') + '</tr></thead><tbody>' +
+        '<tr><td class="left"><span class="pin from"></span>' + esc(r.origin.address) + '<br><span class="pin to"></span>' + esc(r.dest.address) + '</td><td class="num">' + km(r.distanceKm) + '</td>' +
+        o.tons.map(function (t) { return cell(priceOf(ok[0], t)); }).join('') + (o.milkrun ? cell(r.milkrun.total) : '') + '</tr></tbody></table>' : '';
     } else {
-      bodyHtml = '<table class="data rpt qd-table"><thead><tr><th>No</th><th class="left">상차지</th><th class="left">하차지</th><th>거리</th>' + o.tons.map(function (t) { return '<th>' + esc(t) + '</th>'; }).join('') + (o.milkrun ? '<th>' + esc(mrLabel) + '</th>' : '') + '</tr></thead><tbody>' +
+      bodyHtml = '<table class="data rpt qd-table"><thead><tr><th>No</th><th class="left">상차지</th><th class="left">하차지</th><th>거리</th>' + o.tons.map(function (t) { return '<th>' + esc(tlab(t)) + '</th>'; }).join('') + (o.milkrun ? '<th>' + esc(mrLabel) + '</th>' : '') + '</tr></thead><tbody>' +
         ok.map(function (x, i) {
           var rr = x.result;
-          return '<tr><td class="num muted">' + (i + 1) + '</td><td class="left">' + esc(rr.origin.address) + '</td><td class="left">' + esc(rr.dest.address) + '</td><td class="num">' + rr.distanceKm + 'km</td>' +
+          return '<tr><td class="num muted">' + (i + 1) + '</td><td class="left">' + esc(rr.origin.address) + '</td><td class="left">' + esc(rr.dest.address) + '</td><td class="num">' + km(rr.distanceKm) + '</td>' +
             o.tons.map(function (t) { return cell(priceOf(x, t)); }).join('') + (o.milkrun ? cell(rr.milkrun.total) : '') + '</tr>';
         }).join('') + '</tbody></table>';
     }
     var noteLines = [];
     if (o.vat && !/부가세/.test(o.note || '')) noteLines.push('위 금액은 부가세 별도입니다.');
     if (o.milkrun) noteLines.push('유류비는 경유 ' + won(src.meta.diesel ? src.meta.diesel.price : '') + '원/L 기준이며 유가 변동에 따라 달라질 수 있습니다.');
-    String(o.note || '').split('\n').forEach(function (l) { if (l.trim()) noteLines.push(l.trim()); });
+    o.terms.forEach(function (i) { if (QD_TERMS[i]) noteLines.push(QD_TERMS[i]); });
+    String(o.note || '').split('\n').forEach(function (l) { l = qdLine(l); if (l) noteLines.push(l); });
+    var sumOne = src.type === '단건' && o.tons.length === 1 && !o.milkrun && !mix && priceOf(ok[0], o.tons[0]) != null ? '일금 ' + won(priceOf(ok[0], o.tons[0])) + '원정 (' + tlab(o.tons[0]) + ')' : '';
     var supplier = [['상호', coName], ['대표자', co.ceo], ['사업자번호', co.bizNo], ['주소', co.addr], ['전화', [co.tel, co.fax ? '팩스 ' + co.fax : ''].filter(Boolean).join(' · ')], ['담당', [co.manager, co.email].filter(Boolean).join(' · ')]];
     var missing = !co.name;
     var html =
@@ -4410,8 +4456,10 @@
         return '<tr>' + (i === 0 ? '<th rowspan="' + supplier.length + '" class="qd-vert">공<br>급<br>자</th>' : '') + '<th>' + s[0] + '</th><td>' + esc(s[1] || '') +
           (s[0] === '대표자' && co.stamp ? '<span class="qd-seal-wrap"><span class="qd-seal-txt">(인)</span><img class="qd-seal" src="' + esc(co.stamp) + '" alt=""></span>' : (s[0] === '대표자' ? ' <span class="muted">(인)</span>' : '')) + '</td></tr>';
       }).join('') + '</tbody></table></div>' +
-      '<div class="qd-sum"><span>견적 금액</span><b>' + (src.type === '단건' && o.tons.length === 1 && priceOf(ok[0], o.tons[0]) != null ? '일금 ' + won(priceOf(ok[0], o.tons[0])) + '원정 (' + esc(o.tons[0]) + ')' : '아래 표 참조') + '</b>' + (o.vat ? '<small>부가세 별도</small>' : '') + '</div>' +
-      bodyHtml +
+      (sumOne ? '<div class="qd-sum"><span>견적 금액</span><b>' + esc(sumOne) + '</b>' + (o.vat ? '<small>부가세 별도</small>' : '') + '</div>' : '<div class="qd-gap"></div>') +
+      (cargo.length ? '<div class="qd-cargo"><h3>화물 정보</h3><div class="qd-cargo-l">' + cargo.map(function (x) { return '<span><em>' + x[0] + '</em>' + esc(x[1]) + '</span>'; }).join('') + '</div></div>' : '') +
+      (bodyHtml || mix ? '<p class="qd-unit">' + esc(unit) + '</p>' : '') + bodyHtml +
+      (mix ? '<h3 class="qd-sub">혼적 운송</h3><table class="data rpt qd-table"><thead><tr><th class="left">구간</th><th>파레트</th><th>파레트당</th><th>합계</th></tr></thead><tbody><tr><td class="left">' + esc(mix.route) + '</td><td class="num">' + won(mix.n) + '</td><td class="num">' + won(mix.p) + '</td><td class="num"><b>' + won(mix.sum) + '</b></td></tr></tbody></table>' : '') +
       (noteLines.length ? '<div class="qd-note"><h3>비고</h3><ul>' + noteLines.map(function (l) { return '<li>' + esc(l) + '</li>'; }).join('') + '</ul></div>' : '') +
       (co.bank ? '<div class="qd-bank"><span>입금 계좌</span> ' + esc(co.bank) + '</div>' : '') +
       '<footer class="qd-foot"><b>' + esc(coName) + '</b>' + (co.addr ? ' · ' + esc(co.addr) : '') + (co.tel ? ' · ' + esc(co.tel) : '') + '</footer></div>';
@@ -4425,13 +4473,12 @@
     $('#qdClose').onclick = close;
     $('#qdPrint').onclick = function () { window.print(); };
     $('#qdX').onclick = function () {
-      var one = src.type === '단건' && o.tons.length === 1 && priceOf(ok[0], o.tons[0]) != null;
       quoteDocXlsx(this, {
-        no: no, date: o.date, valid: o.valid, to: o.to, ref: o.ref, vat: o.vat, tons: o.tons, milkrun: o.milkrun, mrLabel: mrLabel,
+        no: no, date: o.date, valid: o.valid, to: o.to, ref: o.ref, vat: o.vat, tons: o.tons.map(tlab), milkrun: o.milkrun, mrLabel: mrLabel, unit: unit, cargo: cargo, mix: mix,
         supplier: supplier.map(function (x) { return [x[0], x[1] || '']; }), stamp: co.stamp || '', bank: co.bank || '', notes: noteLines,
-        sumText: one ? '일금 ' + won(priceOf(ok[0], o.tons[0])) + '원정 (' + o.tons[0] + ')' : '아래 표 참조',
+        sumText: sumOne,
         footer: [coName, co.addr, co.tel].filter(Boolean).join(' · '),
-        rows: ok.map(function (x) { var rr = x.result; return { from: rr.origin.address, to: rr.dest.address, km: rr.distanceKm, prices: o.tons.map(function (t) { return priceOf(x, t); }), mr: rr.milkrun.total }; }),
+        rows: !o.tons.length && !o.milkrun ? [] : ok.map(function (x) { var rr = x.result; return { from: rr.origin.address, to: rr.dest.address, km: Math.round(Number(rr.distanceKm) || 0), prices: o.tons.map(function (t) { return priceOf(x, t); }), mr: rr.milkrun.total }; }),
         fileName: '견적서_' + (o.to || coName).replace(/[\\/:*?"<>|]/g, '_') + '_' + o.date + '.xlsx'
       });
     };
@@ -8833,7 +8880,10 @@
         '계산 결과, 조회기록 상세, 견적모음 상세에서 <b>견적서</b> 버튼을 누르세요.',
         '보내는 사업자(조일물류·명일로지스·조일로지스)를 고르면 그 회사의 상호·사업자번호·주소·직인이 들어갑니다.',
         '미리보기에서 <b>인쇄 / PDF 저장</b>을 누르고 인쇄 창의 대상을 <b>PDF로 저장</b>으로 바꾸면 PDF 파일이 됩니다. <b>엑셀</b>로도 받을 수 있어요.',
-        '대량 결과로 만들면 경로별 표가 들어갑니다. 가로 폭 때문에 톤수는 6개까지 넣을 수 있어요.'
+        '대량 결과로 만들면 경로별 표가 들어갑니다. 가로 폭 때문에 톤수는 6개까지 넣을 수 있어요.',
+        '<b>차종</b>(카고·윙바디·탑·냉장)을 고르면 표 머리가 "5톤 윙"처럼 나와요. <b>편도/왕복</b>은 표 위 단위 줄에 표시돼요.',
+        '<b>화물 정보</b>(품목·수량·중량·규격)를 넣으면 견적서에 따로 칸이 생겨요. 1개 경로 견적은 <b>혼적</b> 파레트 수와 파레트당 단가를 넣으면 "혼적 운송" 표가 같이 나와요.',
+        '<b>기본 조건</b>을 체크하면 비고에 들어가고, 고른 조건은 다음에도 기억해요. 톤수를 하나만 넣으면 "견적 금액" 상자에 금액이 크게 나와요.'
       ]],
       ['history', '조회기록 · 견적모음', [
         '모든 조회는 그때 금액 그대로 자동 보관됩니다(기본 90일). <b>상세보기</b>로 그때 결과를 다시 볼 수 있어요.',

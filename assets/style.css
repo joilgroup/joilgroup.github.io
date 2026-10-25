@@ -570,6 +570,18 @@ table.data.qd-table .pin { margin-right: 4px; }
 .qd-note { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 10px; }
 .qd-note h3 { font-size: 13.5px; margin: 0 0 6px; }
 .qd-note ul { margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.7; }
+.qd-gap { height: 18px; }
+.qd-unit { margin: 6px 0 4px; text-align: right; font-size: 11.5px; color: var(--muted); }
+.qd-sub { font-size: 13.5px; margin: 16px 0 4px; }
+.qd-cargo { margin: 4px 0 10px; padding: 8px 12px; background: var(--panel-2); border-radius: 6px; }
+.qd-cargo h3 { font-size: 12.5px; margin: 0 0 4px; }
+.qd-cargo-l { display: flex; flex-wrap: wrap; gap: 4px 22px; font-size: 13px; }
+.qd-cargo-l em { font-style: normal; color: var(--muted); margin-right: 6px; }
+.qd-more { margin: 4px 0 12px; }
+.qd-more summary { cursor: pointer; font-weight: 700; font-size: 13px; margin-bottom: 8px; }
+.qd-terms { display: grid; gap: 4px; font-size: 12.5px; }
+.qd-term { display: flex; gap: 6px; align-items: flex-start; cursor: pointer; }
+.qd-term input { margin-top: 3px; }
 .qd-bank { margin-top: 12px; font-size: 13px; }
 .qd-bank span { font-weight: 700; margin-right: 6px; }
 .qd-foot { margin-top: 26px; padding-top: 10px; border-top: 2px solid var(--ink); font-size: 12px; text-align: center; color: var(--ink-2); }
