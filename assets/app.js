@@ -7414,6 +7414,31 @@
     return '<select class="input input-sm dp-stsel s' + DISP_STATUS.indexOf(v) + '" data-st="' + esc(D.tab) + '|' + no + '" title="호차 상태">' + DISP_STATUS.filter(function (x) { return !(isPartner() && x === '정보넘김' && v !== '정보넘김'); }).map(function (x) { return '<option' + (x === v ? ' selected' : '') + (isPartner() && x === '정보넘김' ? ' disabled' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   }
 
+  /** 오더 날짜 변경: 고른 오더를 다른 날짜의 같은 탭으로 옮겨요 (호차는 풀려요 · 서버가 예전이면 복사 후 지우기) */
+  function openMoveOrders(D, list, label) {
+    if (!list.length) return toast('날짜를 바꿀 오더를 체크하세요.', 'err');
+    var fcs = list.map(function (o) { return o.d.fc; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; });
+    modal({ eyebrow: D.tab + ' · ' + D.date + (label ? ' · ' + label : ''), title: '오더 날짜 변경',
+      body: '<p class="muted small" style="margin:0 0 10px">오더 ' + list.length + '줄(' + esc(fcs.join(', ')) + ')을 고른 날짜의 <b>' + esc(D.tab) + '</b> 탭으로 옮겨요. 호차 묶음은 풀리니 옮긴 날짜에서 다시 묶어 주세요.</p>' +
+        '<div class="field"><label>옮길 날짜</label><input class="input" type="date" id="mvDate" value="' + esc(dAdd(D.date, 1)) + '" style="max-width:200px"></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="mvGo">옮기기</button>',
+      onMount: function (m, close) {
+        $('#mvGo', m).onclick = function () {
+          var btn = this, to = $('#mvDate', m).value, ids = list.map(function (o) { return o.id; }), req = { cust: D.key, date: D.date, ids: ids, toDate: to };
+          if (!to) return toast('날짜를 고르세요.', 'err'); if (to === D.date) return toast('지금과 같은 날짜예요.', 'err');
+          busy(btn, true, '옮기는 중');
+          dispSaveNow().then(function () {
+            return api('dispatch.moveOrders', req).catch(function (err) { // 서버(Code.js)가 예전이면: 복사 후 원래 날짜에서 지우기
+              if (!/알 수 없는 요청/.test(err.message || '')) throw err;
+              return api('dispatch.copyOrders', req).then(function (r) { return api('dispatch.deleteOrders', { cust: D.key, date: D.date, ids: ids }).then(function () { return { moved: r.copied, toDate: to }; }); });
+            });
+          }).then(function (r) {
+            close(); var st = dispState(); st.sel = {}; toast(r.moved + '줄을 ' + to + ' ' + D.tab + '(으)로 옮겼어요.');
+            st.tabs = null; renderDispatch();
+          }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      } });
+  }
   /** 회차 오더 다시 배차: 날짜를 골라 그 날 같은 탭에 호차 미배정으로 복사 */
   function openReCopy(D, no) {
     var list = truckOrders(D, no);
@@ -7520,7 +7545,7 @@
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '>' + (blk ? '<div class="tt-blkw">⛔ 블랙 기사</div>' : '') + '<button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
             '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
-            '<span class="tt-hide"><button data-xlrow="' + esc(key) + '">엑셀로 복사</button>' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + '</span>' +
+            '<span class="tt-hide"><button data-xlrow="' + esc(key) + '">엑셀로 복사</button>' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-tdate="' + esc(key) + '">날짜 변경</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + '</span>' +
             (t.status === '회차' && !isPartner() ? '<button data-recopy="' + esc(key) + '" title="이 호차의 오더를 다시 배차하도록 복사">오더 복사</button>' : '') +
             (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>' +
           (showCost ? '<td class="tt-cost"' + rs + '>' + truckCostCell(D, no, t, cost) + '</td>' : '') +
@@ -7596,7 +7621,7 @@
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details>') + '</div>' +
       '<div class="card"' + (isPartner() || C.noOrderTable ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + (C.orderHead ? C.orderHead(orders, tb, tk) : orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg') + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + (C.orderWarn ? C.orderWarn(orders) : '') + '</h3></div>' +
         '<div class="actions"' + (isPartner() ? ' style="display:none"' : '') + '>' + (C.orderButtons ? C.orderButtons(D) : '') + '<button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
-        '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
+        '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm" id="dpMove" title="체크한 오더를 다른 날짜로 옮겨요">날짜 변경</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
         (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"' + (isPartner() ? ' disabled' : '') + '></th><th>호차</th>' + (C.ordHead || '<th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th>') + '<th class="left">공지</th></tr></thead><tbody>' +
           orders.map(function (o) {
             var on = !!st.sel[o.id], t = o.truck;
@@ -7659,6 +7684,7 @@
     };
     $('#dpTo').onchange = function () { var v = Number(this.value); if (!v) return; var l = picked(); if (!l.length) { this.value = ''; return; } l.forEach(function (o) { o.truck = v; }); st.sel = {}; redraw(); };
     $('#dpUngroup').onclick = function () { var l = picked(); if (!l.length) return; l.forEach(function (o) { o.truck = ''; }); st.sel = {}; redraw(); };
+    $('#dpMove').onclick = function () { openMoveOrders(D, picked()); };
     $('#dpDel').onclick = function () {
       var l = picked(); if (!l.length) return; if (!confirm('체크한 오더 ' + l.length + '줄을 지울까요? (다시 붙여넣으면 다시 들어와요)')) return;
       dispSaveNow().then(function () { return api('dispatch.deleteOrders', { cust: D.key, date: st.date, ids: l.map(function (o) { return o.id; }) }); })
@@ -7712,6 +7738,7 @@
     $$('[data-tmove]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tmove); openTruckMove(x.D, x.no, function () { redraw(x.tab); }); }; });
     $$('[data-ask]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.ask); openTruckAsk(x.D, x.no, function (txt) { copyText(txt, '문의 내용을 복사했어요. 카톡방에 붙여넣으세요.'); }); }; });
     $$('[data-xlall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.xlall]; if (!X) return; var rows = (C.sheetRows || dispSheetRows)(X, dispTrucks(X)); copyTable(rows, X.tab + ' ' + dispTrucks(X).length + '대(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; });
+    $$('[data-tdate]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tdate); openMoveOrders(x.D, truckOrders(x.D, x.no), lblOf(x)); }; }); // 호차 전체 날짜 변경 (삼다수 표도)
     $$('[data-xlrow]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xlrow), rows = (C.sheetRows || dispSheetRows)(x.D, [x.no]); copyTable(rows, x.D.tab + ' ' + x.no + '호차(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; }); // 한 호차만 (탭 전체 복사와 같은 칸)
     $$('[data-xl]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xl), t = truckInfo(x.D, x.no); copyText(TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\r\n]+/g, ' '); }).join('\t'), x.no + '호차 차량정보 5칸을 복사했어요. 엑셀에 붙여넣으세요.'); }; });
     $$('[data-rec]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.rec), rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
@@ -8952,6 +8979,7 @@
       '계약 만료일을 넣으면 30일 전부터 홈 "만료 임박"과 달력, 주간 요약에 나와요.'
     ]]);
     if (hq) sec.push(['dispatch', '배차시트', [
+      '<b>날짜 변경</b>: "이 오더는 내일로" 같은 요청은 오더 표에서 체크하고 <b>날짜 변경</b>을 누르거나, 호차 줄 오른쪽 클릭(⋯) 메뉴의 <b>날짜 변경</b>으로 호차 전체를 옮겨요. 같은 탭의 고른 날짜로 옮겨지고 호차 묶음은 풀려요.',
       '<b>하차지 주소록</b>: 센터 코드(Sap Code)·센터명·주소를 엑셀에서 복사해 붙여넣어 등록해요(FC도크 일반 / 장갑 따로). 오더의 도착지 코드로 찾아서(없으면 센터명) 오더 주소가 다르면 오더 표 주소 아래에 "⚠ 주소록과 다름"을 띄워요. 띄어쓰기·괄호·도크 표기 차이는 무시하고, 층이나 A동처럼 양쪽에 적힌 층·동이 다르면 경고해요. Item에 "장갑"이 들어간 오더는 장갑 목록으로 비교해요.',
       '<b>✨ AI 한번에 짜기</b>: 호차가 안 정해진 오더 전체를 한 번에 짜서 보여줘요(가까운 착지끼리 차례로 합치기). 하차지가 서로 가까우면(5km, 같은 구·시 10km) 한 대에 4곳까지 묶어요. 호차마다 지도를 보고 ▲▼로 순서를 바꾸거나 ✕로 착지를 뺄 수 있어요. 뺀 착지는 [자동 / 새 호차 혼자 / 새 N에 넣기] 중 골라 [빠진 착지 다시 짜기]를 누르면 반영돼요(뺀 호차로는 다시 안 들어가요). [모두 적용]을 눌러야 실제 호차가 생겨요.',
       '<b>✨ AI 도움</b>: 호차가 안 정해진 오더를 한 대씩 추천해요. 상차지가 같은 착지끼리, 한 대에 3곳까지, 합칠 때는 16번들(11톤)까지(17~18번들 착지는 혼자 한 대, 18번들 넘으면 오더 단위로 나눠 여러 대), 착지끼리 직선 5km(같은 시·군이면 10km) 이내이거나 가는 길 위에 있는 곳만 묶어요. 같이 묶을 곳이 없는 착지(혼자 가야 하는 곳)를 먼저 추천하고, 추천 창의 지도를 보며 ▲▼로 하차 순서를 바꿀 수 있어요. 차량 대수가 줄고 운임이 싼 쪽(단가표 기준)과 지난 2달 같이 보낸 조합을 먼저 추천해요. [수락]하면 새 호차로 묶이고, [다른 추천]으로 다음 후보를 볼 수 있어요.',

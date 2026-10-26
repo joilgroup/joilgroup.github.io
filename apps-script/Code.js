@@ -156,7 +156,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -200,6 +200,7 @@ function handle_(req) {
     case 'dispatch.deleteOrders': return dispTouched_(req, dispDeleteOrders_(session, req));
     case 'dispatch.note': return dispTouched_(req, dispNote_(req));
     case 'dispatch.copyOrders': var cpr = dispCopyOrders_(session, req); dispTouch_(req.cust, req.toDate); return dispTouched_(req, cpr);
+    case 'dispatch.moveOrders': var mvr = dispMoveOrders_(session, req); dispTouch_(req.cust, req.toDate); return dispTouched_(req, mvr);
     case 'dispatch.editOrder': return dispTouched_(req, dispEditOrder_(session, req));
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
@@ -2161,6 +2162,24 @@ function dispCopyOrders_(session, req) {
     });
     sh.getRange(sh.getLastRow() + 1, 1, out.length, DISP_ORD_HEADER.length).setValues(out);
     return { copied: out.length, toDate: to };
+  } finally { lock.releaseLock(); }
+}
+/** 오더 날짜 옮기기: 같은 업체(탭)의 다른 날짜로 · 호차는 풀고 그 날 맨 뒤 순서 · 가져오기 키의 날짜도 바꿔서 다시 붙여넣어도 겹치지 않게 */
+function dispMoveOrders_(session, req) {
+  var cust = dispCust_(req.cust), date = dispDate_(req.date), to = dispDate_(req.toDate), ids = {}; (req.ids || []).forEach(function (x) { ids[String(x)] = 1; });
+  if (to === date) throw new Error('지금과 같은 날짜예요.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), last = sh.getLastRow(); if (last < 2) throw new Error('옮길 오더를 찾을 수 없어요.');
+    var v = sh.getRange(2, 1, last - 1, 7).getValues(), maxSeq = 0, hit = [];
+    v.forEach(function (r, i) { if (String(r[1]) !== cust) return; var d0 = textDate_(r[2]); if (d0 === to) maxSeq = Math.max(maxSeq, Number(r[6]) || 0); if (d0 === date && ids[String(r[0])]) hit.push(i); });
+    if (!hit.length) throw new Error('옮길 오더를 찾을 수 없어요.');
+    hit.forEach(function (i, k) {
+      var r = v[i], d = parseJson_(r[4], {}), key = String(r[3]); d.date = to; d.movedFrom = date; d.movedBy = session.name;
+      if (key.indexOf(date + '|') === 0) key = to + key.slice(date.length);
+      sh.getRange(i + 2, 3, 1, 5).setValues([["'" + to, key, JSON.stringify(d), '', maxSeq + k + 1]]);
+    });
+    return { moved: hit.length, toDate: to };
   } finally { lock.releaseLock(); }
 }
 /** 오더 고치기: 정해진 칸만 (호차·순서·가져오기 키는 그대로) */

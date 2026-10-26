@@ -291,7 +291,7 @@
   }
   function handle(req) {
     if (/^dispatch\./.test(req.action || '')) { var fr = load(); if (fr) store = fr; } // 다른 창(다른 계정)에서 바꾼 것도 보이게
-    if (/^dispatch\.(save|import|deleteOrders|copyOrders|editOrder|note)$/.test(req.action) && req.cust) { // 바뀐 시각 (15초 확인용)
+    if (/^dispatch\.(save|import|deleteOrders|copyOrders|moveOrders|editOrder|note)$/.test(req.action) && req.cust) { // 바뀐 시각 (15초 확인용)
       var dsn = Date.now(), dsk = store.dstamp || (store.dstamp = {}); [req.date, req.toDate].concat((req.rows || []).map(function (r) { return r.date; })).forEach(function (d) { if (d) dsk[req.cust + '|' + d] = dsn; });
     }
     if (req.action === 'login') {
@@ -558,6 +558,13 @@
         var cmax = 0; wk('dispOrd').forEach(function (o) { if (o.cust === req.cust && o.date === req.toDate) cmax = Math.max(cmax, o.seq); });
         csrc.forEach(function (o, i) { var nd = JSON.parse(JSON.stringify(o.d)); nd.date = req.toDate; nd.reFrom = req.date + ' ' + (o.truck === '' ? '' : o.truck + '호차'); wk('dispOrd').push({ id: calId('D') + i, cust: req.cust, date: req.toDate, key: o.key + '#재' + Date.now() + i, d: nd, truck: '', seq: cmax + i + 1, by: me.name, at: today() }); });
         save(); return { copied: csrc.length, toDate: req.toDate };
+      case 'dispatch.moveOrders':
+        if (req.toDate === req.date) fail('지금과 같은 날짜예요.');
+        var mids = {}; (req.ids || []).forEach(function (x) { mids[x] = 1; });
+        var msrc = wk('dispOrd').filter(function (o) { return mids[o.id] && o.cust === req.cust && o.date === req.date; }); if (!msrc.length) fail('옮길 오더를 찾을 수 없어요.');
+        var mmax = 0; wk('dispOrd').forEach(function (o) { if (o.cust === req.cust && o.date === req.toDate) mmax = Math.max(mmax, o.seq); });
+        msrc.forEach(function (o, i) { o.date = req.toDate; o.d.date = req.toDate; o.d.movedFrom = req.date; o.truck = ''; o.seq = mmax + i + 1; if (String(o.key).indexOf(req.date + '|') === 0) o.key = req.toDate + String(o.key).slice(req.date.length); });
+        save(); return { moved: msrc.length, toDate: req.toDate };
       case 'dispatch.note':
         var no_ = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
         no_.noteIn = String(req.noteIn || '').trim(); no_.noteDrv = String(req.noteDrv || '').trim(); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));

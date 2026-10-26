@@ -183,7 +183,7 @@
           '<td class="tt-in">' + (xb ? '<input class="input input-sm sds-birth' + (ok && !(r.dv && r.dv.birth) ? ' sds-miss' : '') + '" data-birth="' + esc(key) + '" value="' + esc((r.dv && r.dv.birth) || '') + '" placeholder="예: 800101" title="인천항 출입등록용 · 기사 풀에 저장돼요">' : '<span class="small">' + esc((!isPartner() && r.dv && r.dv.birth) || '') + '</span>') + '</td>' +
           SDS_COLS.map(function (k) { return sdsSzTd(k, r.sz[k] ? won(r.sz[k]) : '', 'td'); }).join('') +
           '<td class="tt-act sds-act"><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button><span class="tt-hide">' +
-            '<button data-preview="' + esc(key) + '">문자보기</button>' + (isPartner() ? '' : '<button data-sdsedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-sdsnote="' + esc(key) + '">공지 쓰기</button>') +
+            '<button data-preview="' + esc(key) + '">문자보기</button>' + (isPartner() ? '' : '<button data-sdsedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-sdsnote="' + esc(key) + '">공지 쓰기</button><button data-tdate="' + esc(key) + '">날짜 변경</button>') +
             '<button data-ask="' + esc(key) + '">문의하기</button><button data-xl="' + esc(key) + '">차량정보 복사</button>' + (ca ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') + (isPartner() ? '' : '<button data-sdsdel="' + esc(key) + '">오더 지우기</button>') + '</span></td>' +
           '</tr></tbody>';
       }).join('') + '</table></div>';
