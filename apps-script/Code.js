@@ -1948,7 +1948,8 @@ function ownerCover_(cal, from, to) {
 var SHEET_DISP_ORD = '배차오더';
 var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시', '내부공지', '기사공지'];
 var SHEET_DISP_TRK = '배차호차';
-var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원'];
+var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원', '합차'];
+/* 합차: 같은 날짜·같은 업체의 다른 탭 호차를 같은 차로 묶어요. 연결된 호차의 '합차' 칸 = 기준 호차의 링크코드 (호차 번호는 바뀔 수 있어서) */
 var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경'];
 /** 예전 상태 이름 맞추기: 배차중 → 배차전(빈 값), 차량변경 → 정보변경 */
 function dispStatus_(v) { v = dispTxt_(v); return v === '배차중' ? '' : v === '차량변경' ? '정보변경' : v; }
@@ -1963,7 +1964,7 @@ function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
 function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]), noteIn: dispTxt_(r[9]), noteDrv: dispTxt_(r[10]) }; }
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
-function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0 }; }
+function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join: dispTxt_(r[16]) }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
 function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
 function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
@@ -1973,7 +1974,41 @@ function dispDay_(cust, date) {
   // 이 업체에 오더가 있는 날짜 (날짜 이동용, 최근 120일)
   var since = ymd_(new Date(Date.now() - 120 * 86400000)), days = {};
   rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).forEach(function (r) { if (String(r[1]) === cust) { var d = textDate_(r[2]); if (d >= since) days[d] = (days[d] || 0) + 1; } });
-  return { orders: dispOrders_(cust, eq), trucks: dispTrucks_(cust, eq), days: days, receipts: dispReceipts_(cust, date) };
+  return { orders: dispOrders_(cust, eq), trucks: dispJoinMark_(cust, dispTrucks_(cust, eq)), days: days, receipts: dispReceipts_(cust, date) };
+}
+function dispCo_(key) { return String(key || '').replace(/\/.*$/, ''); }
+/** 합차로 묶인 호차들 (같은 날짜·같은 업체 · 기준 호차 먼저) · 기준 호차가 없어졌거나 혼자면 빈 목록 */
+function dispJoinGroup_(all, t) {
+  var base = t.join || t.token; if (!base) return [];
+  var g = all.filter(function (x) { return x.date === t.date && dispCo_(x.cust) === dispCo_(t.cust) && x.token && (x.token === base || x.join === base); });
+  if (g.length < 2 || !g.some(function (x) { return x.token === base; })) return [];
+  return g.sort(function (a, b) { return (a.token === base ? 0 : 1) - (b.token === base ? 0 : 1); });
+}
+/** 화면 표시용: 호차마다 같이 묶인 다른 탭 호차 (탭 이름 · 호차 · 기준 여부만 — 협력사에게도 이것만 가요) */
+function dispJoinMark_(cust, trucks) {
+  var raw = rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER); if (!raw.some(function (r) { return r[16]; })) return trucks; // 합차가 하나도 없으면 그냥
+  var co = dispCo_(cust), all = raw.filter(function (r) { return dispCo_(r[0]) === co; }).map(dispTrkRow_);
+  var tabs = dispTabs_(co), name = function (k) { var suf = String(k).slice(co.length), t = tabs.filter(function (x) { return x.suf === suf; })[0]; return t ? t.name : k; };
+  trucks.forEach(function (t) {
+    var g = dispJoinGroup_(all, t), base = t.join || t.token; if (!g.length) return;
+    t.jn = g.filter(function (x) { return !(x.cust === t.cust && x.no === t.no); }).map(function (x) { return { tab: name(x.cust), no: x.no, base: x.token === base }; });
+  });
+  return trucks;
+}
+/** 합차: 이 저장에서 바뀐 차량정보·상태를 같은 차로 묶인 다른 탭 호차에도 넣어요 (협력사나 다른 화면에서 고쳐도 양쪽이 같게) */
+var DISP_JOIN_KEYS = ['car', 'driver', 'phone', 'time', 'ton', 'status'];
+function dispJoinSync_(cust, date, chg) {
+  if (!chg.length) return;
+  var ts = dispTrkSheet_(); if (ts.getLastRow() < 2) return;
+  var v = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(), all = v.map(function (r, i) { var t = dispTrkRow_(r); t.row = i + 2; t.raw = r; return t; }), touched = {};
+  chg.forEach(function (c) {
+    var me = all.filter(function (x) { return x.cust === cust && x.date === date && x.token === c.token; })[0]; if (!me) return;
+    dispJoinGroup_(all, me).forEach(function (x) {
+      if (x.cust === cust) return;
+      c.keys.forEach(function (k) { var col = k === 'status' ? 12 : 3 + DISP_TRK_FIELDS.indexOf(k), val = String(me.raw[col]); if (String(x.raw[col]) === val) return; x.raw[col] = val; ts.getRange(x.row, col + 1).setValue("'" + val); touched[x.cust] = 1; }); // ' = 전화번호 앞 0이 안 없어지게
+    });
+  });
+  Object.keys(touched).forEach(function (k) { dispTouch_(k, date); });
 }
 /* ───────────── 협력사 계정: 배차시트만 (견적·분석·배차검색·관리자 등은 전부 막음) ───────────── */
 var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
@@ -2017,6 +2052,7 @@ function dispScrub_(out, session) {
     if (!r) return r;
     if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; });
     if (partner) (r.orders || []).forEach(function (o) { o.noteIn = ''; });
+    if (partner) (r.trucks || []).forEach(function (t) { t.join = ''; }); // 합차는 표시(jn)만 · 다른 탭 호차의 링크코드는 안 보내요
     return r;
   };
   if (out && out.byKey) Object.keys(out.byKey).forEach(function (k) { one(out.byKey[k]); }); else one(out);
@@ -2056,7 +2092,7 @@ function dispTabsSave_(req) {
 function dispMonth_(cust, ym) {
   cust = dispCust_(cust); ym = String(ym || ''); if (!/^\d{4}-\d{2}$/.test(ym)) throw new Error('월을 확인하세요.');
   var inM = function (d) { return d.slice(0, 7) === ym; };
-  return { orders: dispOrders_(cust, inM), trucks: dispTrucks_(cust, inM) };
+  return { orders: dispOrders_(cust, inM), trucks: dispJoinMark_(cust, dispTrucks_(cust, inM)) };
 }
 /** rows: [{ date, key, d }] · 같은 업체·키는 건너뜀 */
 /** 예전 키는 순번이 두 번째 칸에 있었어요(8칸) → 빼고 비교 */
@@ -2085,7 +2121,7 @@ function dispTouch_(cust, date) { try { var n = String(Date.now()); PropertiesSe
 function dispTouched_(req, out) { dispTouch_(req.cust, req.date); return out; }
 function dispStamps_(keys, date) { date = dispDate_(date); var pr = PropertiesService.getScriptProperties(), o = {}; (keys || []).slice(0, 20).forEach(function (k) { o[k] = Number(pr.getProperty(dispStampKey_(String(k), date))) || 0; }); return o; }
 /** 바뀐 칸만 보낸 저장(patch)을 지금 서버에 있는 호차들과 합쳐서 전체 목록으로 만들어요 (다른 사람이 바꾼 칸은 그대로 둠) */
-var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support']);
+var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support', 'join']);
 function dispMerge_(cust, date, req) {
   var ts = dispTrkSheet_(), cv = ts.getLastRow() >= 2 ? ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues() : [];
   var list = cv.filter(function (r) { return String(r[0]) === cust && textDate_(r[1]) === date; }).map(dispTrkRow_), used = [];
@@ -2095,7 +2131,7 @@ function dispMerge_(cust, date, req) {
   var pt = (req.trucks || []).slice().sort(function (a, b) { return (a.token ? 0 : 1) - (b.token ? 0 : 1); }); // 링크 코드 있는 호차부터 (번호가 밀린 경우)
   pt.forEach(function (p) {
     var x = byTok(p.token) || byNo(Number(p.from != null ? p.from : p.no));
-    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0 }; list.push(x); }
+    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0, join: '' }; list.push(x); }
     used.push(x); x.no = Math.max(1, Math.round(Number(p.no)) || 1);
     var set = p.set || {}; DISP_PATCH_KEYS.forEach(function (k) { if (set[k] !== undefined) x[k] = set[k]; });
   });
@@ -2104,6 +2140,7 @@ function dispMerge_(cust, date, req) {
 function dispSave_(session, req) {
   var cust = dispCust_(req.cust), date = dispDate_(req.date), lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
+    var pset = req.patch ? req.trucks || [] : []; // 합차 전파용: 이번에 바뀐 칸
     if (req.patch) req = { orders: req.orders, trucks: dispMerge_(cust, date, req) };
     var sh = cacheSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), want = {};
     if (session.role !== 'partner') (req.orders || []).forEach(function (o) { want[String(o.id)] = o; });
@@ -2121,7 +2158,7 @@ function dispSave_(session, req) {
     if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = 0; i < tv.length; i++) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { var on = Number(tv[i][2]); if (tv[i][11]) tokens[on] = String(tv[i][11]); olds[on] = dispTrkRow_(tv[i]); hit.push(i); } }
     var trucks = req.trucks || [];
     // 협력사: 이미 있는 호차의 차량정보 5칸·상태만 (호차 추가·메모·비용은 그대로)
-    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, status: g.status != null && (g.status !== '정보넘김' || o.status === '정보넘김') ? g.status : o.status }; }); }
+    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, join: o.join, status: g.status != null && (g.status !== '정보넘김' || o.status === '정보넘김') ? g.status : o.status }; }); }
     // 호차 번호가 바뀌어도(끼워넣기로 밀림) 기사링크·비용·인수증은 그 호차를 따라가게: 화면이 보낸 링크 코드로 예전 호차를 찾아요
     var byTok = {}; Object.keys(olds).forEach(function (n) { if (olds[n].token) byTok[olds[n].token] = olds[n]; });
     var claimed = {}; trucks.forEach(function (t) { if (t.token && byTok[t.token]) claimed[t.token] = 1; });
@@ -2133,7 +2170,8 @@ function dispSave_(session, req) {
       claimed[tok] = 1; if (mine && mine.no !== no) moved[mine.no] = no;
       var stt = DISP_STATUS.indexOf(dispStatus_(t.status)) !== -1 ? dispStatus_(t.status) : ''; if (stt === '배차전') stt = '';
       var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
-      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3);
+      var jn = String(t.join !== undefined ? t.join || '' : o.join || ''); if (!/^[0-9a-f]{20}$/.test(jn) || jn === tok) jn = ''; // 예전 화면은 합차 칸을 안 보내요 → 그대로 둠
+      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3).concat([jn ? "'" + jn : '']);
     });
     if (hit.length && hit[hit.length - 1] - hit[0] === hit.length - 1) {
       var top = hit[0] + 2, k = Math.min(hit.length, add.length);
@@ -2143,6 +2181,7 @@ function dispSave_(session, req) {
     } else for (var h = hit.length - 1; h >= 0; h--) ts.deleteRow(hit[h] + 2);
     if (add.length) ts.getRange(ts.getLastRow() + 1, 1, add.length, DISP_TRK_HEADER.length).setValues(add);
     if (Object.keys(moved).length) dispReceiptsMove_(cust, date, moved);
+    dispJoinSync_(cust, date, pset.map(function (p) { return { token: p.token, keys: DISP_JOIN_KEYS.filter(function (k) { return p.set && p.set[k] !== undefined; }) }; }).filter(function (c) { return c.token && c.keys.length; }));
     try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ }
     var out = dispDay_(cust, date); out.drivers = driverList_(); out.stamp = dispTouch_(cust, date); return out;
   } finally { lock.releaseLock(); }
@@ -2363,13 +2402,16 @@ function drvFind_(t) {
   if (!hit) throw new Error('링크를 찾을 수 없어요. 배차 담당자에게 문의하세요.');
   return dispTrkRow_(hit); // 보기는 기한 없음 (사진 올리기만 배차일 60일까지)
 }
+/** 합차: 이 링크의 호차와 같은 차로 묶인 호차들 (기준 호차 먼저) · 묶인 게 없으면 자기만 */
+function drvGroup_(tr) { var g = dispJoinGroup_(rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER).map(dispTrkRow_), tr); return g.length ? g : [tr]; }
 function drvGet_(t) {
-  var tr = drvFind_(t);
-  var orders = dispOrders_(tr.cust, function (d) { return d === tr.date; }).filter(function (o) { return o.truck === tr.no; });
+  var tr = drvFind_(t), grp = drvGroup_(tr), many = grp.length > 1, orders = [];
+  // 합차면 묶인 호차의 착지까지 (착지마다 어느 호차 것인지 tk로 · 인수증은 그 호차에 올라가요)
+  grp.forEach(function (g) { dispOrders_(g.cust, function (d) { return d === tr.date; }).forEach(function (o) { if (o.truck === g.no) { o.g = g; orders.push(o); } }); });
   var stops = [], by = {};
   orders.forEach(function (o) {
-    var d = o.d || {}, k = d.fc || '-', v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
-    var s = by[k] || (by[k] = { fc: k, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
+    var d = o.d || {}, k = (many ? o.g.token + '|' : '') + (d.fc || '-'), v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
+    var s = by[k] || (by[k] = { fc: d.fc || '-', tk: o.g.token, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
     if (!stops.some(function (x) { return x === s; })) stops.push(s);
     // 번들 칸이 'N패키지'면 같은 착지끼리 모아 24패키지 = 1번들
     var pm = String(d.bundle || '').match(/(\d+(?:\.\d+)?)\s*패키지/), it = d.item || '-';
@@ -2378,18 +2420,29 @@ function drvGet_(t) {
     s.kg += Number(String(d.kg || '').replace(/[,\s]/g, '')) || 0; if (d.bl && s.bl.indexOf(d.bl) === -1) s.bl.push(d.bl);
   });
   stops.forEach(function (s) { if (!s.pkg) return; s.bundle += Math.ceil(s.pkg / 24); Object.keys(s.pkgItems).forEach(function (it) { s.items[it + ' ' + s.pkgItems[it] + '패키지'] = Math.ceil(s.pkgItems[it] / 24); }); delete s.pkgItems; });
-  var from = orders[0] && orders[0].d.from, place = loadingFind_(tr.cust.replace(/\/.*$/, ''), from);
-  var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : [])); } catch (e) { /* 지도 없이 */ }
-  stops.forEach(function (s) { var g = geo[String(s.addr).replace(/\s+/g, ' ').trim()]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
-  var rc = dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no; }), notes = [], seen = {};
+  var co = tr.cust.replace(/\/.*$/, ''), from = orders[0] && orders[0].d.from, place = loadingFind_(co, from), froms = [from];
+  // 합차인데 상차지가 다르면 다른 상차지도 (같으면 한 번만)
+  var more = []; orders.forEach(function (o) { var f = o.d.from; if (!f || froms.indexOf(f) !== -1) return; froms.push(f); var p = loadingFind_(co, f); more.push(p ? p : { name: f }); });
+  var gk = function (a) { return String(a || '').replace(/\s+/g, ' ').trim(); };
+  var geo = {}; try { geo = dispGeo_(stops.map(function (s) { return s.addr; }).concat(place && place.addr ? [place.addr] : []).concat(more.map(function (p) { return p.addr; }).filter(Boolean))); } catch (e) { /* 지도 없이 */ }
+  stops.forEach(function (s) { var g = geo[gk(s.addr)]; if (g) { s.lat = g.lat; s.lng = g.lng; } });
+  var rc = [], notes = [], seen = {};
+  grp.forEach(function (g) { dispReceipts_(g.cust, tr.date).forEach(function (x) { if (x.no === g.no) rc.push({ fc: x.fc, at: x.at, tk: g.token }); }); });
   orders.forEach(function (o) { var k = (o.d.fc || '') + '|' + o.noteDrv; if (o.noteDrv && !seen[k]) { seen[k] = 1; notes.push({ fc: o.d.fc || '', text: o.noteDrv }); } });
-  return { notes: notes, date: tr.date, no: tr.no, cust: tr.cust.replace(/\/.*$/, ''), car: tr.car, driver: tr.driver, from: from || '', place: place ? { name: place.name, addr: place.addr, time: place.time, contact: [place.manager, place.contact].filter(Boolean).join(' / '), photos: place.photos || [], lat: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lat, lng: (geo[String(place.addr).replace(/\s+/g, ' ').trim()] || {}).lng } : null, stops: stops, receipts: rc.map(function (x) { return { fc: x.fc, at: x.at }; }) };
+  var pl = function (p) { return { name: p.name, addr: p.addr || '', time: p.time || '', contact: [p.manager, p.contact].filter(Boolean).join(' / '), photos: p.photos || [], lat: (geo[gk(p.addr)] || {}).lat, lng: (geo[gk(p.addr)] || {}).lng }; };
+  var b = grp[0];
+  return { notes: notes, date: tr.date, no: b.no, cust: co, car: b.car, driver: b.driver, from: from || '', place: place ? pl(place) : null, more: more.map(pl), stops: stops, receipts: rc };
 }
 function drvUpload_(req) {
-  var tr = drvFind_(req.t), fc = String(req.fc || '');
-  if (tr.date < ymd_(new Date(Date.now() - 60 * 86400000))) throw new Error('배차일로부터 60일이 지나 사진을 올릴 수 없어요. 배차 담당자에게 보내 주세요.');
-  var orders = dispOrders_(tr.cust, function (d) { return d === tr.date; }).filter(function (o) { return o.truck === tr.no && (o.d.fc || '-') === fc; });
-  if (!orders.length) throw new Error('이 호차의 착지가 아니에요.');
+  var tr0 = drvFind_(req.t), fc = String(req.fc || ''), tr = null, orders = [];
+  if (tr0.date < ymd_(new Date(Date.now() - 60 * 86400000))) throw new Error('배차일로부터 60일이 지나 사진을 올릴 수 없어요. 배차 담당자에게 보내 주세요.');
+  // 합차: 착지가 속한 호차에 올려요 (tk가 없으면 그 착지가 있는 첫 호차)
+  drvGroup_(tr0).some(function (g) {
+    if (req.tk && g.token !== String(req.tk)) return false;
+    orders = dispOrders_(g.cust, function (d) { return d === tr0.date; }).filter(function (o) { return o.truck === g.no && (o.d.fc || '-') === fc; });
+    if (orders.length) tr = g; return !!orders.length;
+  });
+  if (!tr) throw new Error('이 호차의 착지가 아니에요.');
   if (dispReceipts_(tr.cust, tr.date).filter(function (x) { return x.no === tr.no && x.fc === fc; }).length >= 10) throw new Error('한 착지에 10장까지 올릴 수 있어요.');
   var bytes = Utilities.base64Decode(String(req.data || '')); if (!bytes.length) throw new Error('사진이 비어 있어요.'); if (bytes.length > 6 * 1024 * 1024) throw new Error('사진이 너무 커요.');
   var name = (tr.date + '_' + tr.cust.replace(/\//g, '-') + '_' + tr.no + '호차_' + fc + '_' + Utilities.formatDate(new Date(), TZ, 'HHmmss')).replace(/[\\/:*?"<>|]/g, '_') + '.jpg';
@@ -2576,7 +2629,7 @@ function placePhotoDelete_(id) {
 }
 /** 기사 링크에서 상차지 사진 보기: 그 호차의 상차지 사진만 */
 function drvPhoto_(req) {
-  var d = drvGet_(req.t), ok = d.place && (d.place.photos || []).some(function (x) { return x.id === String(req.id); });
+  var d = drvGet_(req.t), ok = [d.place].concat(d.more || []).some(function (p) { return p && (p.photos || []).some(function (x) { return x.id === String(req.id); }); });
   if (!ok) throw new Error('사진을 찾을 수 없어요.');
   return placePhoto_(req.id);
 }

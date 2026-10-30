@@ -1336,6 +1336,9 @@ body.dp-noselect, body.dp-noselect * { user-select: none !important; }
 .tt-no small { display: block; color: #555; font-size: 12.5px; line-height: 1.35; margin-top: 2px; }
 .tt-no .tt-rc { margin-top: 4px; color: #888; }
 .tt-no .tt-rc.ok { color: #1E7B34; font-weight: 700; }
+/* 합차: 다른 탭 호차와 같은 차 */
+.tt-no .tt-join { display: block; margin-top: 4px; padding: 1px 6px; border-radius: 8px; background: #EAF1FB; color: #2A5DB0; font-weight: 700; font-size: 11.5px; white-space: normal; }
+.tt-joinc { color: #2A5DB0; font-weight: 700; }
 .tt-st { text-align: center; }
 .tt-fc b { font-weight: 700; }
 .tt-addr .clip { max-width: 300px; }
