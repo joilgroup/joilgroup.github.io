@@ -7592,18 +7592,19 @@
       (miss ? '<div class="err-text small">단가 없음: ' + esc(cost.miss.join(', ')) + '</div>' : '') + '</div>';
   }
   /** 엑셀로 복사: 착지마다 한 줄 (패키지는 따로 한 줄) · 구분 출발센터 날짜 도착지 주소 번들 무게 차량정보 운전원 연락처 입차시간 톤수 상태 도착지특이사항 문자 안내사항 오더코드
-      문자(여러 줄)는 호차 첫 줄에만 · 번들·무게는 숫자만 */
+      문자(여러 줄)는 호차 첫 줄에만 · 번들·무게는 숫자만 · 상태는 첫 줄만(그 뒤는 경유/빈칸) */
   function dispSheetRows(D, ns) {
     var out = [], kind = dispKind(D), C = custDef();
     ns.forEach(function (no) {
-      var t = truckInfo(D, no), stops = truckStops(D, no), msg = truckMessage(D, no), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', first = true;
+      var t = truckInfo(D, no), stops = truckStops(D, no), msg = truckMessage(D, no), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', first = true, seen = [];
       stops.forEach(function (s) {
+        var ak = advAddrKey(s.d.addr || s.fc), via = seen.indexOf(ak) === -1; seen.push(ak); // 상태 칸: 첫 줄만 호차 상태 · 그 뒤는 주소가 다르면 '경유', 같은 주소면 빈칸 (경유비 계산과 같은 기준)
         var notes = []; s.rows.forEach(function (o) { if (o.noteDrv && notes.indexOf(o.noteDrv) === -1) notes.push(o.noteDrv); });
         var lines = []; if (s.n0 || !s.pkg) lines.push({ b: s.b0, kg: s.kg0 }); if (s.pkg) lines.push({ b: Math.ceil(s.pkg / PKG_PER_BUNDLE), kg: s.pkg + '패키지' });
         lines.forEach(function (ln) {
           out.push([kind, (findPlace(s.d.from) || {}).name || s.d.from || '', D.date, C.destName ? C.destName(s.d, D.tab) || s.fc : s.fc, s.d.addr || '', String(ln.b || 0), String(ln.kg || 0),
-            t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '', t.status || '배차전', s.d.hours || '', first ? msg : '', notes.join(' / '), code]);
-          first = false;
+            t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '', first ? t.status || '배차전' : via ? '경유' : '', s.d.hours || '', first ? msg : '', notes.join(' / '), code]);
+          first = false; via = false;
         });
       });
     });
