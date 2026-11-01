@@ -7606,6 +7606,7 @@
     var out = [], kind = dispKind(D), C = custDef();
     ns.forEach(function (no) {
       var t = truckInfo(D, no), ji = joinInfo(D, no), J = ji && ji.base && ji.g ? joinView(D, no) : null; // 합차 기준 호차: 묶인 탭 착지도 같이 (구분·오더코드는 그 탭 것)
+      if (ji && !ji.base) return; // 합차로 묶인 호차는 기준 호차 복사에 들어가요 (두 번 들어가면 중복 청구)
       var stops = J ? truckStops(J.D, J.no) : truckStops(D, no), msg = truckMessage(D, no), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', first = true, seen = [];
       stops.forEach(function (s) {
         var otb = J && s.rows[0] && s.rows[0].tab !== D.tab ? s.rows[0].tab : '', og = otb && J.g.filter(function (x) { return x.D.tab === otb; })[0];
@@ -7850,9 +7851,11 @@
     $$('[data-tedit]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tedit); openTruckOrderEdit(x.D, x.no); }; });
     $$('[data-tmove]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tmove); openTruckMove(x.D, x.no, function () { redraw(x.tab); }); }; });
     $$('[data-ask]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.ask); openTruckAsk(x.D, x.no, function (txt) { copyText(txt, '문의 내용을 복사했어요. 카톡방에 붙여넣으세요.'); }); }; });
-    $$('[data-xlall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.xlall]; if (!X) return; var rows = (C.sheetRows || dispSheetRows)(X, dispTrucks(X)); copyTable(rows, X.tab + ' ' + dispTrucks(X).length + '대(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; });
+    $$('[data-xlall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.xlall]; if (!X) return; var ns = dispTrucks(X), nj = ns.filter(function (n) { var j = joinInfo(X, n); return j && !j.base; }).length, rows = (C.sheetRows || dispSheetRows)(X, ns), jt = nj ? ' (합차로 묶인 ' + nj + '대는 기준 호차 쪽 복사에 들어가서 뺐어요)' : '';
+      if (!rows.length) return toast('복사할 줄이 없어요.' + jt, 'err');
+      copyTable(rows, X.tab + ' ' + (ns.length - nj) + '대(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.' + jt); }; });
     $$('[data-tdate]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tdate); openMoveOrders(x.D, truckOrders(x.D, x.no), lblOf(x)); }; }); // 호차 전체 날짜 변경 (삼다수 표도)
-    $$('[data-xlrow]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xlrow), rows = (C.sheetRows || dispSheetRows)(x.D, [x.no]); copyTable(rows, x.D.tab + ' ' + x.no + '호차(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; }); // 한 호차만 (탭 전체 복사와 같은 칸)
+    $$('[data-xlrow]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xlrow), rows = (C.sheetRows || dispSheetRows)(x.D, [x.no]); var xj = joinInfo(x.D, x.no); if (!rows.length && xj && !xj.base) return toast('합차로 묶인 호차예요. 기준 호차(' + xj.others.filter(function (o) { return o.base; }).map(joinName).join('') + ')에서 복사하면 이 줄도 같이 들어가요.', 'err'); copyTable(rows, x.D.tab + ' ' + x.no + '호차(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; }); // 한 호차만 (탭 전체 복사와 같은 칸)
     $$('[data-xl]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xl), t = truckInfo(x.D, x.no); copyText(TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\r\n]+/g, ' '); }).join('\t'), x.no + '호차 차량정보 5칸을 복사했어요. 엑셀에 붙여넣으세요.'); }; });
     $$('[data-rec]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.rec), rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
     var copyText = function (txt, msg) { (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(msg); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('복사하지 못했어요. 미리보기에서 직접 복사하세요.', 'err'); } ta.remove(); }); };
