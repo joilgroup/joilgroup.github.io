@@ -114,6 +114,45 @@
   /* 업무 매뉴얼 · 문의 기록 · 업무 담당표 (데모: localStorage, 첨부는 메모리) */
   var manFiles = {};
   function wk(k) { store[k] = store[k] || []; return store[k]; }
+  /* 업무 기록 (서버 workOp_ 와 같은 규칙) */
+  function nowSec() { var d = new Date(); return today() + ':' + pad(d.getSeconds()); }
+  function ymdNow() { return today().slice(0, 10); }
+  function workWho(me, uid) { uid = String(uid || ''); if (!uid || uid === me.id) return me.id; if (me.role !== 'admin') fail('다른 사람의 업무 기록은 볼 수 없습니다.'); return uid; }
+  function workList(me, req) {
+    var uid = workWho(me, req.uid), date = req.date || ymdNow();
+    var items = wk('work').filter(function (x) { return x.by === uid && (x.st !== '완료' || String(x.done).slice(0, 10) === date); }).map(function (x) { return { id: x.id, text: x.text, st: x.st, ord: x.ord, at: x.at, start: x.start, done: x.done }; });
+    var out = { items: items, date: date, uid: uid, stamp: (store.workStamp || {})[uid] || '' };
+    if (me.role === 'admin') out.users = store.users.filter(function (u) { return u.role !== 'partner' && u.active !== false; }).map(function (u) { return { id: u.id, name: u.name }; });
+    return out;
+  }
+  function workOp(me, req) {
+    var all = wk('work'), items = all.filter(function (x) { return x.by === me.id; }), now = nowSec(), op = String(req.op || '');
+    var find = function (id) { return items.filter(function (x) { return x.id === String(id || ''); })[0]; };
+    var waits = function () { return items.filter(function (x) { return x.st === '대기'; }); };
+    var minOrd = function () { return waits().reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; };
+    if (op === 'add') {
+      var text = String(req.text || '').trim().slice(0, 500); if (!text) fail('내용을 넣으세요.');
+      var id = /^K[0-9a-z]{6,24}$/.test(String(req.id || '')) && !find(req.id) ? String(req.id) : calId('K');
+      all.push({ id: id, text: text, st: '대기', ord: waits().reduce(function (m, x) { return Math.max(m, x.ord); }, 0) + 1, at: now, start: '', done: '', by: me.id });
+    } else if (op === 'order') {
+      var ids = (req.ids || []).map(String), rest = waits().filter(function (x) { return ids.indexOf(x.id) === -1; });
+      ids.map(find).filter(function (x) { return x && x.st === '대기'; }).concat(rest).forEach(function (x, i) { x.ord = i + 1; });
+    } else {
+      var it = find(req.id);
+      if (!it) { if (op === 'delete') return workList(me, req); fail('항목을 찾을 수 없습니다. 새로고침해 보세요.'); }
+      if (op === 'edit') { var t = String(req.text || '').trim().slice(0, 500); if (!t) fail('내용을 넣으세요.'); it.text = t; }
+      else if (op === 'status') {
+        if (req.st === '진행 중') { items.forEach(function (x) { if (x.st === '진행 중' && x !== it) { x.ord = minOrd(); x.st = '대기'; } }); it.st = '진행 중'; it.start = now; it.done = ''; }
+        else if (req.st === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = '대기'; it.done = ''; } }
+        else if (req.st === '완료') { it.st = '완료'; it.done = now; }
+        else fail('상태를 확인하세요.');
+      } else if (op === 'delete') store.work = all.filter(function (x) { return x !== it; });
+      else fail('알 수 없는 요청입니다: work.' + op);
+    }
+    store.workStamp = store.workStamp || {}; store.workStamp[me.id] = String(Date.now());
+    save(); return workList(me, req);
+  }
+
   function demoManuals() { return wk('manuals').slice().sort(function (a, b) { return (a.cust ? 0 : 1) - (b.cust ? 0 : 1) || a.cust.localeCompare(b.cust) || a.title.localeCompare(b.title); }); }
   function demoInqs() { return wk('inqs').slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; }); }
   function demoOwners() { return { owners: wk('owners').slice(), log: wk('ownerLog').slice(-80).reverse() }; }
@@ -341,6 +380,10 @@
     if (/^notes\./.test(req.action)) needPerm(me, 'analysis');
     if (/^reqs\./.test(req.action)) needPerm(me, 'quote');
     switch (req.action) {
+      case 'work.list': case 'work.stamp': case 'work.op': var wf = load(); if (wf) { store.work = wf.work || []; store.workStamp = wf.workStamp || {}; } // 다른 창(폰 대신)에서 적은 것도 보이게
+        if (req.action === 'work.op') return workOp(me, req);
+        if (req.action === 'work.list') return workList(me, req);
+        return { stamp: (store.workStamp || {})[workWho(me, req.uid)] || '' };
       case 'analysis.index':
         anLog.unshift({ at: today(), id: me.id, name: me.name, n: anIndex.length });
         return { index: anIndex.slice(), mapping: anMap.slice(), businesses: ['조일물류', '명일로지스', '조일로지스'], rules: JSON.parse(JSON.stringify(anRules)), notes: notesSorted() };

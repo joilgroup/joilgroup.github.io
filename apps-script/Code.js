@@ -140,6 +140,9 @@ function handle_(req) {
     case 'cal.leaveDelete': return leaveDelete_(session, req.id);
     case 'staff.list': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return { staff: calStaff_(), accounts: listUsers_().map(function (u) { return { id: String(u.id), name: String(u.name), active: u.active }; }) };
     case 'staff.save': if (session.role !== 'admin') throw new Error('관리자만 사용할 수 있습니다.'); return staffSave_(session, req);
+    case 'work.list': return workList_(session, req);
+    case 'work.stamp': return { stamp: workStamp_(workWho_(session, req.uid)) };
+    case 'work.op': return workOp_(session, req);
     case 'notice.list': return { notices: noticesList_() };
     case 'notice.save': return noticeSave_(session, req);
     case 'notice.delete': return noticeDelete_(session, req.id);
@@ -1904,6 +1907,77 @@ function inqDelete_(session, id) {
   var f = findRow_(SHEET_INQ, INQ_HEADER, id); if (!f) throw new Error('문의 기록을 찾을 수 없습니다.');
   if (String(f.raw[7]) !== session.id && session.role !== 'admin') throw new Error('응대한 사람이나 관리자만 지울 수 있습니다.');
   f.sh.deleteRow(f.row); return inqList_();
+}
+
+/* ───────────── 업무 기록 (개인용: 작성자 = 로그인 아이디, 관리자는 다른 사람 것 보기만) ───────────── */
+var SHEET_WORK = '업무기록';
+var WORK_HEADER = ['ID', '내용', '상태', '대기순서', '등록시간', '시작시간', '완료시간', '작성자'];
+function workWho_(session, uid) {
+  uid = String(uid || '');
+  if (!uid || uid === session.id) return session.id;
+  if (session.role !== 'admin') throw new Error('다른 사람의 업무 기록은 볼 수 없습니다.');
+  return uid;
+}
+function workStamp_(uid) { return PropertiesService.getScriptProperties().getProperty('WK_' + uid) || ''; }
+/** 이 사람의 줄만 (줄 번호 포함) */
+function workRows_(uid) {
+  var sh = cacheSheet_(SHEET_WORK, WORK_HEADER), n = sh.getLastRow() - 1;
+  var out = [];
+  if (n < 1) return { sh: sh, items: out };
+  sh.getRange(2, 1, n, WORK_HEADER.length).getValues().forEach(function (r, i) {
+    if (r[0] === '' || dispTxt_(r[7]) !== uid) return;
+    out.push({ id: String(r[0]), text: dispTxt_(r[1]), st: String(r[2]), ord: Number(r[3]) || 0, at: dispTxt_(fmt_(r[4])), start: dispTxt_(fmt_(r[5])), done: dispTxt_(fmt_(r[6])), row: i + 2 });
+  });
+  return { sh: sh, items: out };
+}
+function workList_(session, req) {
+  var uid = workWho_(session, req.uid), date = req.date ? checkDate_(req.date) : ymd_(new Date());
+  var items = workRows_(uid).items.filter(function (x) { return x.st !== '완료' || x.done.slice(0, 10) === date; })
+    .map(function (x) { return { id: x.id, text: x.text, st: x.st, ord: x.ord, at: x.at, start: x.start, done: x.done }; });
+  var out = { items: items, date: date, uid: uid, stamp: workStamp_(uid) };
+  if (session.role === 'admin') out.users = listUsers_().filter(function (u) { return u.role !== 'partner' && u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
+  return out;
+}
+/** 추가·상태·수정·순서·삭제. 진행 중은 한 사람에 하나 → 다른 진행 중은 대기 맨 위로 */
+function workOp_(session, req) {
+  var uid = session.id, op = String(req.op || ''), now = now_();
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var w = workRows_(uid), items = w.items, sh = w.sh, ch = [];
+    var find = function (id) { return items.filter(function (x) { return x.id === String(id || ''); })[0]; };
+    var waits = function () { return items.filter(function (x) { return x.st === '대기'; }); };
+    var minOrd = function () { return waits().reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; };
+    var mark = function (x) { if (ch.indexOf(x) === -1) ch.push(x); };
+    if (op === 'add') {
+      var text = String(req.text || '').trim().slice(0, 500); if (!text) throw new Error('내용을 넣으세요.');
+      var id = /^K[0-9a-z]{6,24}$/.test(String(req.id || '')) && !find(req.id) ? String(req.id) : newId_('K');
+      var ord = waits().reduce(function (m, x) { return Math.max(m, x.ord); }, 0) + 1;
+      sh.appendRow([id, "'" + text, '대기', ord, "'" + now, '', '', "'" + uid]);
+    } else if (op === 'order') {
+      var ids = (req.ids || []).map(String), rest = waits().filter(function (x) { return ids.indexOf(x.id) === -1; });
+      ids.map(find).filter(function (x) { return x && x.st === '대기'; }).concat(rest).forEach(function (x, i) { if (x.ord !== i + 1) { x.ord = i + 1; mark(x); } });
+    } else {
+      var it = find(req.id);
+      if (!it) { if (op === 'delete') return workList_(session, req); throw new Error('항목을 찾을 수 없습니다. 새로고침해 보세요.'); }
+      if (op === 'edit') {
+        var t = String(req.text || '').trim().slice(0, 500); if (!t) throw new Error('내용을 넣으세요.');
+        it.text = t; mark(it);
+      } else if (op === 'status') {
+        var to = String(req.st || '');
+        if (to === '진행 중') {
+          items.forEach(function (x) { if (x.st === '진행 중' && x !== it) { x.ord = minOrd(); x.st = '대기'; mark(x); } });
+          it.st = to; it.start = now; it.done = ''; mark(it);
+        } else if (to === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = to; it.done = ''; mark(it); } }
+        else if (to === '완료') { it.st = to; it.done = now; mark(it); }
+        else throw new Error('상태를 확인하세요.');
+      } else if (op === 'delete') {
+        sh.deleteRow(it.row);
+      } else throw new Error('알 수 없는 요청입니다: work.' + op);
+    }
+    ch.forEach(function (x) { sh.getRange(x.row, 2, 1, 6).setValues([["'" + x.text, x.st, x.ord, "'" + x.at, x.start ? "'" + x.start : '', x.done ? "'" + x.done : '']]); });
+    PropertiesService.getScriptProperties().setProperty('WK_' + uid, String(Date.now()));
+  } finally { lock.releaseLock(); }
+  return workList_(session, req);
 }
 
 var SHEET_OWNERS = '업무담당';

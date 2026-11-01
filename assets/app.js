@@ -7,7 +7,7 @@
   var app = document.getElementById('app');
 
   var state = {
-    token: storage('get', 'joil-token'),
+    token: storage('get', 'joil-token') || local('get', 'joil-keep'),
     user: null,
     pub: null,
     view: 'home',
@@ -57,7 +57,7 @@
     return (u.perms || ['quote']).indexOf(perm) !== -1;
   }
   function isPartner() { return !!(state.user && state.user.role === 'partner'); }
-  function defaultView() { return isPartner() ? 'dispatch' : can('quote') || can('analysis') || can('search') ? 'home' : 'none'; }
+  function defaultView() { return isPartner() ? 'dispatch' : can('quote') || can('analysis') || can('search') ? 'home' : 'work'; }
   function $(sel, root) { return (root || document).querySelector(sel); }
   function $$(sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
 
@@ -65,7 +65,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map'];
+  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
   var TIMEOUT_MS = 25000;
   var inflight = {};
 
@@ -237,7 +237,8 @@
     state.info = { tab: 'diesel', range: 90, diesel: null, news: null, weather: null, newsKw: '', newsQ: '' };
     state.an = newAnState();
     state.cal = newCalState(); state.notices = null; state.custs = null; state.custView = null; state.srch = null; state.manuals = null; state.inqs = null; state.owners = null; state.manView = null; state.inqView = null; state.rptView = null; state.disp = null;
-    storage('del', 'joil-token');
+    storage('del', 'joil-token'); local('set', 'joil-keep', null);
+    var wm = state.work && state.work.mini; state.work = null; if (wm) wkSt().mini = true; // 작은 창은 다시 로그인해도 작은 창
     routing.last = null;
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { /* 무시 */ }
   }
@@ -279,6 +280,8 @@
     info: { get: function () { var i = state.info; return i.tab === 'news' ? pick({ k: i.newsKw }) : {}; }, set: function (o) { state.info.newsKw = o.k || ''; } },
     dispatch: { get: function () { var d = state.disp; if (!d) return {}; return pick({ c: d.cust !== DISP_CUSTS[0] ? d.cust : '', v: d.view !== 'day' ? d.view : '', d: d.view === 'day' ? d.date : '', t: d.view === 'day' && d.tab !== DISP_TABS[0][0] ? d.tab : '', m: d.view === 'month' ? d.ym : '' }); },
       set: function (o) { var d = dispState(); if (o.c) d.cust = o.c; d.view = o.v || 'day'; d.tab = o.t || DISP_TABS[0][0]; if (o.d && o.d !== d.date) { d.date = o.d; d.tabs = null; } if (o.m) d.ym = o.m; } },
+    work: { get: function () { var w = wkSt(); return pick({ d: w.date !== today() ? w.date : '', u: w.uid, m: w.mini ? 1 : '' }); },
+      set: function (o) { var w = wkSt(), d = o.d || today(), u = o.u || ''; if (d !== w.date || u !== w.uid) { w.date = d; w.uid = u; w.data = null; } w.mini = !!o.m; } },
     inq: { get: function () { var i = state.inqView || {}; return pick({ s: i.st, q: i.q, m: i.mine ? 1 : 0 }); }, set: function (o) { var i = state.inqView = state.inqView || { limit: 100 }; i.st = o.s || ''; i.q = o.q || ''; i.mine = !!o.m; } },
     cal: { get: function () { var c = state.cal; return c.tab === 'leave' ? pick({ y: c.year, o: c.otm, p: c.person }) : c.tab === 'weekly' ? pick({ w: c.wk }) : c.tab === 'tasks' ? pick({ m: c.mine ? 1 : 0 }) : pick({ ym: c.ym, m: c.mine ? 1 : 0 }); },
       set: function (o) { var c = state.cal; if (o.y) c.year = o.y; if (o.o) c.otm = o.o; c.person = o.p || ''; if (o.w) c.wk = o.w; if (o.ym) c.ym = o.ym; c.mine = !!o.m; } }
@@ -347,6 +350,7 @@
     var q = can('quote'), any = q || can('analysis') || can('search'), out = [];
     var grp = function (g, label, items) { items = items.filter(Boolean); if (items.length === 1) out.push(items[0]); else if (items.length) out.push({ g: g, label: label, items: items }); };
     if (any) out.push(['home', '홈']);
+    out.push(['work', '업무 기록']);
     if (q) grp('quote', '견적', [['calc', '단건 계산'], ['bulk', '대량 계산'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록']]);
     grp('data', '업체·자료', [q && ['dispatch', '배차시트'], can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['manual', '업무 매뉴얼'], q && ['owners', '업무 담당표'], q && ['inq', '문의 기록'], q && ['rates', '업체단가'], q && ['docs', '서류함']]);
     if (any) grp('info', '일정·정보', [['cal', '일정'], ['info', '물류정보']]);
@@ -367,6 +371,7 @@
     if (!state.user) return renderLogin();
     if (state.pub && (state.view !== 'help' || isPartner()) && !allViews().some(function (n) { return n[0] === state.view; })) state.view = defaultView();
     if (!state.pub) { app.innerHTML = '<div class="login-wrap"><div class="muted">불러오는 중…</div></div>'; return; }
+    if (state.view === 'work' && wkSt().mini) { document.title = '업무 기록'; app.innerHTML = '<main id="main" class="wk-mini-main"></main>'; renderWork(); syncRoute(); return; }
     app.innerHTML =
       '<header class="topbar"><div class="stripe-bar"></div><div class="row">' +
       '<div class="brand"><span class="logo"></span><span class="brand-txt"><b>JOIL</b><small>조일그룹 견적·실적 시스템</small></span></div>' +
@@ -458,6 +463,7 @@
     else if (state.view === 'owners') renderOwners();
     else if (state.view === 'dispatch') renderDispatch();
     else if (state.view === 'report') renderReport();
+    else if (state.view === 'work') renderWork();
     else renderCalc();
     var mainEl = $('#main'); if (mainEl) mainEl.classList.toggle('wide', state.view === 'dispatch');
     syncRoute();
@@ -473,6 +479,7 @@
       '<form id="loginForm">' +
       '<div class="field"><label for="lid">아이디</label><input class="input" id="lid" autocomplete="username" required></div>' +
       '<div class="field"><label for="lpw">비밀번호</label><input class="input" id="lpw" type="password" autocomplete="current-password" required></div>' +
+      '<label class="chk login-keep"><input type="checkbox" id="lkeep"' + (local('get', 'joil-keepOn') ? ' checked' : '') + '> 이 기기에서 로그인 유지</label>' +
       '<div class="section-gap"></div>' +
       '<button class="btn btn-primary btn-lg" type="submit">로그인</button>' +
       '<p class="hint" style="text-align:center;margin:16px 0 0">계정이 없으면 관리자에게 발급을 요청하세요.</p>' +
@@ -485,7 +492,8 @@
       api('login', { id: $('#lid').value, password: $('#lpw').value }).then(function (r) {
         state.token = r.token; state.user = r.user;
         storage('set', 'joil-token', r.token);
-        state.view = defaultView();
+        local('set', 'joil-keep', $('#lkeep').checked ? r.token : null); local('set', 'joil-keepOn', $('#lkeep').checked);
+        state.view = state.work && state.work.mini ? 'work' : defaultView();
         return afterLogin(r.settings);
       }).catch(function (err) {
         busy(btn, false);
@@ -9144,6 +9152,192 @@
     $$('.help-rail button').forEach(function (b) { b.onclick = function () { var t = $('#help-' + b.dataset.sec); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }; });
     $$('.help-sec [data-open]').forEach(function (b) { b.onclick = function () { state.view = b.dataset.open === 'quotes' ? 'history' : b.dataset.open; render(); window.scrollTo(0, 0); }; });
   }
+
+  /* ───────── 업무 기록 (개인용: 지금 하는 일 · 대기 · 완료) ─────────
+   * 누르면 화면부터 바꾸고 저장은 뒤에서 차례로. 30초마다 바뀐 시각만 확인해 PC·폰을 맞춰요. */
+  var WK_POLL_MS = 30000, wkTimer = null;
+  function wkSt() { return state.work = state.work || { date: today(), uid: '', users: null, data: null, pending: 0, q: Promise.resolve(), open: '', edit: '', mini: false, err: '', seq: 0, day: today() }; }
+  function wkMine() { var w = wkSt(); return !w.uid || w.uid === state.user.id; }
+  function wkNow() { var d = new Date(), p = function (n) { return ('0' + n).slice(-2); }; return today() + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()); }
+  function wkHm(t) { t = String(t || ''); return !t ? '' : t.slice(0, 10) === today() ? t.slice(11, 16) : t.slice(5, 10).replace('-', '/') + ' ' + t.slice(11, 16); }
+  function wkFor(t) { var m = Math.floor((Date.now() - new Date(String(t).replace(' ', 'T'))) / 60000); return isNaN(m) || m < 0 ? '' : m < 60 ? m + '분째' : Math.floor(m / 60) + '시간 ' + (m % 60) + '분째'; }
+  function wkDay(d) { var x = new Date(d + 'T00:00:00'); return d.slice(5).replace('-', '/') + '(' + '일월화수목금토'.charAt(x.getDay()) + ')'; }
+  function wkShift(d, n) { var x = new Date(d + 'T12:00:00'); x.setDate(x.getDate() + n); return x.getFullYear() + '-' + ('0' + (x.getMonth() + 1)).slice(-2) + '-' + ('0' + x.getDate()).slice(-2); }
+
+  function wkLoad() {
+    var w = wkSt(), my = ++w.seq;
+    return api('work.list', { date: w.date, uid: w.uid || undefined }).then(function (r) {
+      if (r.users) w.users = r.users;
+      if (my !== w.seq || w.pending) return;
+      w.data = r; w.err = ''; wkUsers(); wkBody();
+    }).catch(function (e) { if (my !== w.seq) return; w.err = e.message; wkBody(); });
+  }
+  /** 서버 workOp_ 와 같은 규칙으로 화면 먼저 바꾸기 */
+  function wkApply(items, op, p) {
+    var now = wkNow(), find = function (id) { return items.filter(function (x) { return x.id === id; })[0]; };
+    var waits = function () { return items.filter(function (x) { return x.st === '대기'; }); };
+    var minOrd = function () { return waits().reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; };
+    if (op === 'add') { items.push({ id: p.id, text: p.text, st: '대기', ord: waits().reduce(function (m, x) { return Math.max(m, x.ord); }, 0) + 1, at: now, start: '', done: '' }); return items; }
+    if (op === 'order') { p.ids.forEach(function (id, i) { var x = find(id); if (x) x.ord = i + 1; }); return items; }
+    var it = find(p.id); if (!it) return items;
+    if (op === 'edit') it.text = p.text;
+    else if (op === 'delete') return items.filter(function (x) { return x !== it; });
+    else if (p.st === '진행 중') { items.forEach(function (x) { if (x.st === '진행 중' && x !== it) { x.ord = minOrd(); x.st = '대기'; } }); it.st = p.st; it.start = now; it.done = ''; }
+    else if (p.st === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = p.st; it.done = ''; } }
+    else if (p.st === '완료') { it.st = p.st; it.done = now; }
+    return items;
+  }
+  function wkOp(op, p) {
+    var w = wkSt(); if (!wkMine()) return;
+    if (w.data) w.data.items = wkApply(w.data.items.slice(), op, p); // 아직 못 불러왔으면 저장만 하고 서버 결과로 그림
+    if (op !== 'order') w.open = '';
+    w.edit = ''; w.seq++; wkBody();
+    w.pending++;
+    w.q = w.q.then(function () { return api('work.op', Object.assign({ op: op, date: w.date }, p)); }).then(function (r) {
+      w.pending--;
+      if (w.pending || w.uid || w.edit) return;
+      if (r.date === w.date) { w.data = r; wkBody(); } else wkLoad();
+    }, function (e) {
+      w.pending--;
+      toast(e.message, 'err');
+      if (!w.pending) wkLoad(); // 서버 상태로 되돌리기
+    });
+  }
+
+  function renderWork() {
+    var w = wkSt(), adm = state.user.role === 'admin', mine = wkMine();
+    $('#main').innerHTML = '<div class="wk' + (w.mini ? ' mini' : '') + '">' +
+      '<div class="wk-head"><b>업무 기록</b>' + (w.mini ? '<span class="muted small">' + esc(state.user.name) + '</span>' : '') +
+      (adm ? '<select class="input wk-user" id="wkUser" title="관리자: 다른 직원 기록 보기"></select>' : '') +
+      '<span class="spacer"></span>' +
+      (w.mini ? '' : '<button type="button" class="btn btn-sm" id="wkMini" title="모니터 한쪽에 띄워 두는 좁은 창">작은 창으로 열기</button>') + '</div>' +
+      (mine ? '<input class="input wk-in" id="wkIn" maxlength="500" placeholder="할 일을 적고 Enter" autocomplete="off" enterkeyhint="done">' : '<div class="wk-ro" id="wkRo"></div>') +
+      '<div id="wkBody"></div></div>';
+    wkUsers();
+    var inp = $('#wkIn');
+    if (inp) {
+      inp.focus();
+      inp.onkeydown = function (e) {
+        if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return; // 한글 조합 중 Enter는 무시
+        e.preventDefault();
+        var t = inp.value.trim(); if (!t) return;
+        inp.value = '';
+        wkOp('add', { id: 'K' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text: t.slice(0, 500) });
+      };
+    }
+    var us = $('#wkUser'); if (us) us.onchange = function () { w.uid = us.value === state.user.id ? '' : us.value; w.data = null; w.open = w.edit = ''; renderWork(); syncRoute(); };
+    var mb = $('#wkMini'); if (mb) mb.onclick = function () {
+      var win = window.open(location.pathname + location.search + '#/work?' + encodeURIComponent(JSON.stringify({ m: 1 })), 'joilWork', 'width=380,height=780');
+      if (!win) toast('팝업이 막혀 있어요. 주소창 오른쪽에서 이 사이트 팝업을 허용해 주세요.', 'err');
+    };
+    wkBody();
+    if (!w.data) wkLoad();
+    clearInterval(wkTimer); wkTimer = setInterval(wkTick, WK_POLL_MS);
+  }
+  function wkUsers() {
+    var w = wkSt(), us = $('#wkUser'), ro = $('#wkRo');
+    var list = w.users || [{ id: state.user.id, name: state.user.name }];
+    if (w.uid && !list.some(function (u) { return u.id === w.uid; })) list = list.concat([{ id: w.uid, name: w.uid }]);
+    if (us) us.innerHTML = list.map(function (u) { var me = u.id === state.user.id; return '<option value="' + esc(u.id) + '"' + ((me ? !w.uid : u.id === w.uid) ? ' selected' : '') + '>' + esc(me ? '내 기록' : u.name) + '</option>'; }).join('');
+    if (ro) { var u = list.filter(function (x) { return x.id === w.uid; })[0]; ro.textContent = (u ? u.name : w.uid) + '님의 기록 (보기만)'; }
+  }
+  function wkBody() {
+    var w = wkSt(), box = $('#wkBody'); if (!box) return;
+    if (!w.data) { box.innerHTML = '<div class="wk-empty' + (w.err ? ' err' : '') + '">' + esc(w.err || '불러오는 중…') + '</div>'; return; }
+    var mine = wkMine(), items = w.data.items, isToday = w.date === today();
+    var cur = items.filter(function (x) { return x.st === '진행 중'; })[0];
+    var wait = items.filter(function (x) { return x.st === '대기'; }).sort(function (a, b) { return a.ord - b.ord || (a.at < b.at ? -1 : 1); });
+    var done = items.filter(function (x) { return x.st === '완료' && String(x.done).slice(0, 10) === w.date; }).sort(function (a, b) { return a.done < b.done ? -1 : 1; });
+    var qb = function (a, x, label, title) { return mine ? '<button type="button" class="wk-b" data-a="' + a + '" data-id="' + esc(x.id) + '" title="' + title + '">' + label + '</button>' : ''; };
+    var more = function (x) { return mine ? '<button type="button" class="wk-b wk-more' + (w.open === x.id ? ' on' : '') + '" data-a="open" data-id="' + esc(x.id) + '" title="수정·삭제·순서">⋯</button>' : ''; };
+    var menu = function (x) {
+      if (!mine || w.open !== x.id || w.edit === x.id) return '';
+      var bs = [x.st !== '진행 중' && ['go', '▶ 진행'], x.st !== '대기' && ['wait', '⏸ 대기로'], x.st !== '완료' && ['done', '✓ 완료'], x.st === '대기' && ['up', '▲ 위로'], x.st === '대기' && ['down', '▼ 아래로'], ['edit', '수정'], ['del', '삭제']].filter(Boolean);
+      return '<div class="wk-menu">' + bs.map(function (b) { return '<button type="button" class="btn btn-sm' + (b[0] === 'del' ? ' wk-del' : '') + '" data-a="' + b[0] + '" data-id="' + esc(x.id) + '">' + b[1] + '</button>'; }).join('') + '</div>';
+    };
+    var text = function (x) { return w.edit === x.id ? '<input class="input wk-ed" data-id="' + esc(x.id) + '" value="' + esc(x.text) + '" maxlength="500">' : '<span class="wk-t">' + esc(x.text) + '</span>'; };
+    var li = function (x, meta, quick, sub) {
+      return '<li class="wk-it' + (w.open === x.id ? ' open' : '') + '" data-id="' + esc(x.id) + '"' + (mine && x.st === '대기' && w.edit !== x.id ? ' draggable="true"' : '') + '>' +
+        '<div class="wk-row" data-a="open" data-id="' + esc(x.id) + '">' + meta + '<div class="wk-main">' + text(x) + (sub ? '<small class="wk-sub">' + esc(sub) + '</small>' : '') + '</div>' + quick + more(x) + '</div>' + menu(x) + '</li>';
+    };
+    box.innerHTML =
+      '<section class="wk-cur' + (cur ? '' : ' none') + '"><div class="wk-lbl">지금 하는 일</div>' +
+      (cur ? '<div class="wk-cur-t">' + text(cur) + '</div>' +
+        '<div class="wk-cur-m">시작 ' + esc(wkHm(cur.start)) + ' · <span id="wkFor">' + esc(wkFor(cur.start)) + '</span></div>' +
+        (mine ? '<div class="wk-cur-b">' + qb('done', cur, '✓ 완료', '완료로') + qb('wait', cur, '⏸ 대기로', '대기 맨 위로') + more(cur) + '</div>' + menu(cur) : '')
+        : '<div class="wk-none">진행 중인 일이 없어요' + (mine && wait.length ? ' · 대기에서 ▶를 누르세요' : '') + '</div>') + '</section>' +
+      '<section class="wk-sec"><div class="wk-sh">대기 <span class="n">' + wait.length + '</span></div>' +
+      (wait.length ? '<ul class="wk-list" id="wkWait">' + wait.map(function (x, i) { return li(x, '<span class="wk-no">' + (i + 1) + '</span>', qb('go', x, '▶', '진행 시작') + qb('done', x, '✓', '바로 완료'), wkHm(x.at) + ' 등록'); }).join('') + '</ul>'
+        : '<div class="wk-empty">대기 중인 일이 없어요</div>') + '</section>' +
+      '<section class="wk-sec"><div class="wk-sh">완료 <span class="n">' + done.length + '</span><span class="spacer"></span>' +
+      '<button type="button" class="wk-b" data-a="prev" title="전날">◀</button><span class="wk-date">' + esc(wkDay(w.date)) + '</span>' +
+      '<button type="button" class="wk-b" data-a="next" title="다음 날"' + (isToday ? ' disabled' : '') + '>▶</button>' +
+      (isToday ? '' : '<button type="button" class="btn btn-sm" data-a="today">오늘</button>') + '</div>' +
+      (done.length ? '<ul class="wk-list done">' + done.map(function (x) { return li(x, '<span class="wk-tm">' + esc(String(x.done).slice(11, 16)) + '</span>', '', x.start ? '시작 ' + wkHm(x.start) : ''); }).join('') + '</ul>'
+        : '<div class="wk-empty">' + (isToday ? '오늘' : '이날') + ' 완료한 일이 없어요</div>') + '</section>';
+    var ed = $('.wk-ed', box);
+    if (ed) {
+      ed.focus(); ed.select();
+      var fin = function (save) {
+        if (w.edit !== ed.dataset.id) return;
+        var x = items.filter(function (y) { return y.id === ed.dataset.id; })[0], t = ed.value.trim();
+        if (save && x && t && t !== x.text) wkOp('edit', { id: x.id, text: t.slice(0, 500) }); else { w.edit = ''; wkBody(); }
+      };
+      ed.onkeydown = function (e) { if (e.isComposing || e.keyCode === 229) return; if (e.key === 'Enter') { e.preventDefault(); fin(true); } if (e.key === 'Escape') fin(false); };
+      ed.onblur = function () { fin(true); };
+    }
+    box.onclick = function (e) {
+      if (e.target.closest('input')) return;
+      var el = e.target.closest('[data-a]'); if (!el || !box.contains(el) || el.disabled) return;
+      var a = el.dataset.a, id = el.dataset.id, x = items.filter(function (y) { return y.id === id; })[0];
+      if (a === 'prev' || a === 'next' || a === 'today') { w.date = a === 'today' ? today() : wkShift(w.date, a === 'prev' ? -1 : 1); if (w.date > today()) w.date = today(); w.open = ''; wkLoad(); wkBody(); syncRoute(); return; }
+      if (!mine || !x) return;
+      e.stopPropagation();
+      if (a === 'open') { w.open = w.open === id ? '' : id; wkBody(); }
+      else if (a === 'go') wkOp('status', { id: id, st: '진행 중' });
+      else if (a === 'wait') wkOp('status', { id: id, st: '대기' });
+      else if (a === 'done') wkOp('status', { id: id, st: '완료' });
+      else if (a === 'edit') { w.edit = id; wkBody(); }
+      else if (a === 'del') { if (confirm('이 항목을 삭제할까요?\n\n' + x.text)) wkOp('delete', { id: id }); }
+      else if (a === 'up' || a === 'down') {
+        var ids = wait.map(function (y) { return y.id; }), i = ids.indexOf(id), j = a === 'up' ? i - 1 : i + 1;
+        if (i === -1 || j < 0 || j >= ids.length) return;
+        ids.splice(i, 1); ids.splice(j, 0, id); wkOp('order', { ids: ids });
+      }
+    };
+    // PC: 대기 목록 끌어서 순서 바꾸기 (폰은 ⋯ → ▲▼)
+    var ul = $('#wkWait', box), drag = '';
+    if (ul && mine) {
+      ul.ondragstart = function (e) { var l = e.target.closest && e.target.closest('li[draggable]'); if (!l) return; drag = l.dataset.id; l.classList.add('dragging'); try { e.dataTransfer.setData('text/plain', drag); e.dataTransfer.effectAllowed = 'move'; } catch (er) { /* 무시 */ } };
+      ul.ondragend = function () { drag = ''; $$('li', ul).forEach(function (l) { l.classList.remove('dragging', 'over-top', 'over-bot'); }); };
+      ul.ondragover = function (e) {
+        var l = e.target.closest && e.target.closest('li'); if (!drag || !l) return;
+        e.preventDefault();
+        var r = l.getBoundingClientRect(), top = e.clientY < r.top + r.height / 2;
+        $$('li', ul).forEach(function (o) { o.classList.remove('over-top', 'over-bot'); });
+        if (l.dataset.id !== drag) l.classList.add(top ? 'over-top' : 'over-bot');
+      };
+      ul.ondrop = function (e) {
+        var l = e.target.closest && e.target.closest('li'); if (!drag || !l) return;
+        e.preventDefault();
+        var r = l.getBoundingClientRect(), top = e.clientY < r.top + r.height / 2, ids = wait.map(function (y) { return y.id; }).filter(function (y) { return y !== drag; });
+        if (l.dataset.id === drag) return;
+        ids.splice(ids.indexOf(l.dataset.id) + (top ? 0 : 1), 0, drag);
+        drag = ''; wkOp('order', { ids: ids });
+      };
+    }
+  }
+  function wkTick() {
+    var w = state.work;
+    if (!state.user || state.view !== 'work' || !w || !$('#wkBody')) { clearInterval(wkTimer); wkTimer = null; return; }
+    var el = $('#wkFor'), cur = w.data && w.data.items.filter(function (x) { return x.st === '진행 중'; })[0];
+    if (el && cur) el.textContent = wkFor(cur.start);
+    if (w.day !== today()) { if (w.date === w.day) { w.date = today(); w.data = null; } w.day = today(); wkLoad(); return; } // 자정 넘으면 오늘로
+    if (document.hidden || w.pending || w.edit || !w.data) return;
+    api('work.stamp', { uid: w.uid || undefined }).then(function (r) { if (w.data && r.stamp !== w.data.stamp && !w.pending && !w.edit) wkLoad(); }).catch(function () { /* 다음에 다시 */ });
+  }
+  document.addEventListener('visibilitychange', function () { if (!document.hidden && state.view === 'work' && state.work) wkTick(); });
+  window.addEventListener('focus', function () { if (state.view === 'work' && state.work) wkTick(); });
 
   /* ───────── 시작 ───────── */
 
