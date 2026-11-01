@@ -7605,14 +7605,17 @@
   function dispSheetRows(D, ns) {
     var out = [], kind = dispKind(D), C = custDef();
     ns.forEach(function (no) {
-      var t = truckInfo(D, no), stops = truckStops(D, no), msg = truckMessage(D, no), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', first = true, seen = [];
+      var t = truckInfo(D, no), ji = joinInfo(D, no), J = ji && ji.base && ji.g ? joinView(D, no) : null; // 합차 기준 호차: 묶인 탭 착지도 같이 (구분·오더코드는 그 탭 것)
+      var stops = J ? truckStops(J.D, J.no) : truckStops(D, no), msg = truckMessage(D, no), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', first = true, seen = [];
       stops.forEach(function (s) {
+        var otb = J && s.rows[0] && s.rows[0].tab !== D.tab ? s.rows[0].tab : '', og = otb && J.g.filter(function (x) { return x.D.tab === otb; })[0];
+        var sk = og ? dispKind(og.D) : kind, scode = og ? dispCode(og.D, D.date, s.d.from, og.no) : code;
         var ak = advAddrKey(s.d.addr || s.fc), via = seen.indexOf(ak) === -1; seen.push(ak); // 상태 칸: 첫 줄만 호차 상태 · 그 뒤는 주소가 다르면 '경유', 같은 주소면 빈칸 (경유비 계산과 같은 기준)
         var notes = []; s.rows.forEach(function (o) { if (o.noteDrv && notes.indexOf(o.noteDrv) === -1) notes.push(o.noteDrv); });
         var lines = []; if (s.n0 || !s.pkg) lines.push({ b: s.b0, kg: s.kg0 }); if (s.pkg) lines.push({ b: Math.ceil(s.pkg / PKG_PER_BUNDLE), kg: s.pkg + '패키지' });
         lines.forEach(function (ln) {
-          out.push([kind, (findPlace(s.d.from) || {}).name || s.d.from || '', D.date, C.destName ? C.destName(s.d, D.tab) || s.fc : s.fc, s.d.addr || '', String(ln.b || 0), String(ln.kg || 0),
-            t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '', first ? t.status || '배차전' : via ? '경유' : '', s.d.hours || '', first ? msg : '', notes.join(' / '), code]);
+          out.push([sk, (findPlace(s.d.from) || {}).name || s.d.from || '', D.date, C.destName ? C.destName(s.d, D.tab) || s.fc : s.fc, s.d.addr || '', String(ln.b || 0), String(ln.kg || 0),
+            t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '', first ? t.status || '배차전' : via ? '경유' : '', s.d.hours || '', first ? msg : '', notes.join(' / '), scode]);
           first = false; via = false;
         });
       });
