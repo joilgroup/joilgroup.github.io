@@ -142,7 +142,7 @@
       if (!it) { if (op === 'delete') return workList(me, req); fail('항목을 찾을 수 없습니다. 새로고침해 보세요.'); }
       if (op === 'edit') { var t = String(req.text || '').trim().slice(0, 500); if (!t) fail('내용을 넣으세요.'); it.text = t; }
       else if (op === 'status') {
-        if (req.st === '진행 중') { items.forEach(function (x) { if (x.st === '진행 중' && x !== it) { x.ord = minOrd(); x.st = '대기'; } }); it.st = '진행 중'; it.start = now; it.done = ''; }
+        if (req.st === '진행 중') { if (it.st !== '진행 중') { it.ord = items.filter(function (x) { return x.st === '진행 중'; }).reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; it.st = '진행 중'; it.start = it.start || now; it.done = ''; } }
         else if (req.st === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = '대기'; it.done = ''; } }
         else if (req.st === '완료') { it.st = '완료'; it.done = now; }
         else fail('상태를 확인하세요.');

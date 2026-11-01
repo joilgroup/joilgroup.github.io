@@ -1938,7 +1938,7 @@ function workList_(session, req) {
   if (session.role === 'admin') out.users = listUsers_().filter(function (u) { return u.role !== 'partner' && u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
   return out;
 }
-/** 추가·상태·수정·순서·삭제. 진행 중은 한 사람에 하나 → 다른 진행 중은 대기 맨 위로 */
+/** 추가·상태·수정·순서·삭제. 진행 중은 여러 개 가능(최근 시작이 위), 시작시간은 처음 시작한 시간 그대로 */
 function workOp_(session, req) {
   var uid = session.id, op = String(req.op || ''), now = now_();
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
@@ -1965,8 +1965,7 @@ function workOp_(session, req) {
       } else if (op === 'status') {
         var to = String(req.st || '');
         if (to === '진행 중') {
-          items.forEach(function (x) { if (x.st === '진행 중' && x !== it) { x.ord = minOrd(); x.st = '대기'; mark(x); } });
-          it.st = to; it.start = now; it.done = ''; mark(it);
+          if (it.st !== to) { it.ord = items.filter(function (x) { return x.st === to; }).reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; it.st = to; it.start = it.start || now; it.done = ''; mark(it); }
         } else if (to === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = to; it.done = ''; mark(it); } }
         else if (to === '완료') { it.st = to; it.done = now; mark(it); }
         else throw new Error('상태를 확인하세요.');

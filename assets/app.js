@@ -9182,7 +9182,7 @@
     var it = find(p.id); if (!it) return items;
     if (op === 'edit') it.text = p.text;
     else if (op === 'delete') return items.filter(function (x) { return x !== it; });
-    else if (p.st === '진행 중') { items.forEach(function (x) { if (x.st === '진행 중' && x !== it) { x.ord = minOrd(); x.st = '대기'; } }); it.st = p.st; it.start = now; it.done = ''; }
+    else if (p.st === '진행 중') { if (it.st !== p.st) { it.ord = items.filter(function (x) { return x.st === p.st; }).reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; it.st = p.st; it.start = it.start || now; it.done = ''; } }
     else if (p.st === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = p.st; it.done = ''; } }
     else if (p.st === '완료') { it.st = p.st; it.done = now; }
     return items;
@@ -9245,7 +9245,7 @@
     var w = wkSt(), box = $('#wkBody'); if (!box) return;
     if (!w.data) { box.innerHTML = '<div class="wk-empty' + (w.err ? ' err' : '') + '">' + esc(w.err || '불러오는 중…') + '</div>'; return; }
     var mine = wkMine(), items = w.data.items, isToday = w.date === today();
-    var cur = items.filter(function (x) { return x.st === '진행 중'; })[0];
+    var curs = items.filter(function (x) { return x.st === '진행 중'; }).sort(function (a, b) { return a.ord - b.ord; }); // 여러 개 가능, 최근 시작이 위
     var wait = items.filter(function (x) { return x.st === '대기'; }).sort(function (a, b) { return a.ord - b.ord || (a.at < b.at ? -1 : 1); });
     var done = items.filter(function (x) { return x.st === '완료' && String(x.done).slice(0, 10) === w.date; }).sort(function (a, b) { return a.done < b.done ? -1 : 1; });
     var qb = function (a, x, label, title) { return mine ? '<button type="button" class="wk-b" data-a="' + a + '" data-id="' + esc(x.id) + '" title="' + title + '">' + label + '</button>' : ''; };
@@ -9261,13 +9261,15 @@
         '<div class="wk-row" data-a="open" data-id="' + esc(x.id) + '">' + meta + '<div class="wk-main">' + text(x) + (sub ? '<small class="wk-sub">' + esc(sub) + '</small>' : '') + '</div>' + quick + more(x) + '</div>' + menu(x) + '</li>';
     };
     box.innerHTML =
-      '<section class="wk-cur' + (cur ? '' : ' none') + '"><div class="wk-lbl">지금 하는 일</div>' +
-      (cur ? '<div class="wk-cur-t">' + text(cur) + '</div>' +
-        '<div class="wk-cur-m">시작 ' + esc(wkHm(cur.start)) + ' · <span id="wkFor">' + esc(wkFor(cur.start)) + '</span></div>' +
-        (mine ? '<div class="wk-cur-b">' + qb('done', cur, '✓ 완료', '완료로') + qb('wait', cur, '⏸ 대기로', '대기 맨 위로') + more(cur) + '</div>' + menu(cur) : '')
+      '<section class="wk-cur' + (curs.length ? '' : ' none') + '"><div class="wk-lbl">지금 하는 일' + (curs.length > 1 ? ' <span class="n">' + curs.length + '</span>' : '') + '</div>' +
+      (curs.length ? curs.map(function (cur) {
+        return '<div class="wk-cur-one"><div class="wk-cur-t">' + text(cur) + '</div>' +
+          '<div class="wk-cur-m">시작 ' + esc(wkHm(cur.start)) + ' · <span class="wk-for" data-s="' + esc(cur.start) + '">' + esc(wkFor(cur.start)) + '</span></div>' +
+          (mine ? '<div class="wk-cur-b">' + qb('done', cur, '✓ 완료', '완료로') + qb('wait', cur, '⏸ 대기로', '대기 맨 위로') + more(cur) + '</div>' + menu(cur) : '') + '</div>';
+      }).join('')
         : '<div class="wk-none">진행 중인 일이 없어요' + (mine && wait.length ? ' · 대기에서 ▶를 누르세요' : '') + '</div>') + '</section>' +
       '<section class="wk-sec"><div class="wk-sh">대기 <span class="n">' + wait.length + '</span></div>' +
-      (wait.length ? '<ul class="wk-list" id="wkWait">' + wait.map(function (x, i) { return li(x, '<span class="wk-no">' + (i + 1) + '</span>', qb('go', x, '▶', '진행 시작') + qb('done', x, '✓', '바로 완료'), wkHm(x.at) + ' 등록'); }).join('') + '</ul>'
+      (wait.length ? '<ul class="wk-list" id="wkWait">' + wait.map(function (x, i) { return li(x, '<span class="wk-no">' + (i + 1) + '</span>', qb('go', x, '▶', '진행 시작') + qb('done', x, '✓', '바로 완료'), wkHm(x.at) + ' 등록' + (x.start ? ' · 시작 ' + wkHm(x.start) : '')); }).join('') + '</ul>'
         : '<div class="wk-empty">대기 중인 일이 없어요</div>') + '</section>' +
       '<section class="wk-sec"><div class="wk-sh">완료 <span class="n">' + done.length + '</span><span class="spacer"></span>' +
       '<button type="button" class="wk-b" data-a="prev" title="전날">◀</button><span class="wk-date">' + esc(wkDay(w.date)) + '</span>' +
@@ -9330,8 +9332,7 @@
   function wkTick() {
     var w = state.work;
     if (!state.user || state.view !== 'work' || !w || !$('#wkBody')) { clearInterval(wkTimer); wkTimer = null; return; }
-    var el = $('#wkFor'), cur = w.data && w.data.items.filter(function (x) { return x.st === '진행 중'; })[0];
-    if (el && cur) el.textContent = wkFor(cur.start);
+    $$('.wk-for').forEach(function (el) { el.textContent = wkFor(el.dataset.s); });
     if (w.day !== today()) { if (w.date === w.day) { w.date = today(); w.data = null; } w.day = today(); wkLoad(); return; } // 자정 넘으면 오늘로
     if (document.hidden || w.pending || w.edit || !w.data) return;
     api('work.stamp', { uid: w.uid || undefined }).then(function (r) { if (w.data && r.stamp !== w.data.stamp && !w.pending && !w.edit) wkLoad(); }).catch(function () { /* 다음에 다시 */ });

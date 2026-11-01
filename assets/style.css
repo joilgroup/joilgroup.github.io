@@ -1542,6 +1542,9 @@ main.wk-mini-main { max-width: none; padding: 10px 10px 40px; }
 .wk-cur.none { border-style: dashed; border-color: var(--line-strong); box-shadow: none; }
 .wk-lbl { font-size: 12px; font-weight: 700; color: var(--green); letter-spacing: .02em; }
 .wk-cur.none .wk-lbl { color: var(--muted); }
+.wk-cur-one + .wk-cur-one { border-top: 1px dashed var(--line-strong); margin-top: 10px; padding-top: 8px; }
+.wk-cur-one + .wk-cur-one .wk-cur-t { font-size: 17px; }
+.wk-lbl .n { font-size: 11px; background: var(--green); color: #fff; border-radius: 99px; padding: 0 7px; margin-left: 2px; }
 .wk-cur-t { font-size: 20px; font-weight: 700; line-height: 1.35; margin: 4px 0 2px; word-break: break-word; }
 .wk-cur-m { font-size: 12px; color: var(--muted); }
 .wk-cur-b { display: flex; gap: 6px; margin-top: 10px; }
