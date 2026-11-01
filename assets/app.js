@@ -7039,6 +7039,7 @@
     });
   }
   function openTruckMap(D, no) {
+    var J = joinView(D, no); if (J) { D = J.D; no = J.no; } // 합차: 묶인 탭 착지까지 한 지도에
     var st = dispState(), stops = truckStops(D, no), p = stops[0] && findPlace(stops[0].d.from), hue = 'hsl(' + ((no * 67) % 360) + ' 60% 45%)';
     var pts = [p && p.addr ? Object.assign({ label: '🏭', from: 1, title: p.name }, st.geo[geoKey(p.addr)] || {}) : null].concat(stops.map(function (s, i) { return Object.assign({ label: String(i + 1), title: s.fc }, st.geo[geoKey(s.d.addr)] || {}); }));
     var miss = [(!p || !p.addr) ? '상차지(상차지 설정에 주소 없음)' : (!st.geo[geoKey(p.addr)] ? '상차지 ' + p.name : '')].concat(stops.filter(function (s) { return !st.geo[geoKey(s.d.addr)]; }).map(function (s) { return s.fc; })).filter(Boolean);
@@ -7627,10 +7628,14 @@
     else fail();
   }
   function truckRowsHtml(D, no, showCost) {
-    var t = truckInfo(D, no), cost = truckCost(D, no), stops = cost && !cost.join && !cost.joinTo && !cost.joinPart ? cost.stops : truckStops(D, no), key = D.tab + '|' + no, ji = joinInfo(D, no); // 합차여도 표에는 이 탭 착지만
-    var rc = (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
+    var t = truckInfo(D, no), cost = truckCost(D, no), key = D.tab + '|' + no, ji = joinInfo(D, no);
+    // 합차 기준 호차: 묶인 탭 착지까지 한 묶음으로 (연결된 탭에서는 그 탭 착지만)
+    var J = ji && ji.base && ji.g ? joinView(D, no) : null, SD = J ? J.D : D, sno = J ? J.no : no;
+    var stops = J ? truckStops(SD, sno) : cost && !cost.join && !cost.joinTo && !cost.joinPart ? cost.stops : truckStops(D, no);
+    var rc = J ? [].concat.apply([], J.g.map(function (x) { return (x.D.receipts || []).filter(function (r) { return r.no === x.no; }); })) : (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
     var nGot = stops.filter(function (s) { return got(s.fc).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
-    var rec = bestOrder(D, no), blk = drvBlack(t), nIn = truckNotes(D, no, 'in'), nDrv = truckNotes(D, no, 'drv'), kind = dispKind(D);
+    var rec = J ? null : bestOrder(D, no), blk = drvBlack(t), nIn = truckNotes(SD, sno, 'in'), nDrv = truckNotes(SD, sno, 'drv'), kind = dispKind(D);
+    var tabOf = function (s) { var tb = s.rows && s.rows[0] && s.rows[0].tab; return tb && tb !== D.tab ? tb : ''; }; // 묶인 다른 탭 줄
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
     var sti = Math.max(0, DISP_STATUS.indexOf(t.status || '배차전')), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', shade = kindShade(kind);
     // 착지마다 한 줄, 패키지가 있으면 그 착지에 패키지 줄을 따로 (예: 천안2 4번들 2,660 / 천안2 1번들 10패키지)
@@ -7638,11 +7643,11 @@
     if (!lines.length) lines.push({ s: { fc: '', d: {}, rows: [] }, b: 0, kg: '0' });
     n = lines.length; rs = ' rowspan="' + n + '"';
     return '<tbody class="tt-g st-' + sti + '">' + lines.map(function (ln, i) {
-      var s = ln.s, g = got(s.fc), hrs = s.d.hours || '';
+      var s = ln.s, g = got(s.fc), hrs = s.d.hours || '', otb = tabOf(s), lk = otb ? dispKind({ tab: otb }) : kind, lsh = otb ? kindShade(lk) : shade;
       return '<tr' + (hrs ? ' title="하차 가능시간: ' + esc(hrs) + '"' : '') + '>' +
-        '<td class="tt-kind"' + (shade ? ' style="background:' + shade + '"' : '') + '>' + esc(kind) + '</td>' +
+        '<td class="tt-kind"' + (lsh ? ' style="background:' + lsh + '"' : '') + (otb ? ' title="' + esc(otb + ' 탭 오더 (합차)') + '"' : '') + '>' + esc(lk) + '</td>' +
         '<td>' + esc((findPlace(s.d.from) || {}).name || s.d.from || '') + '</td>' +
-        '<td class="tt-fc"' + (hrs ? ' data-hrs="' + esc('하차 가능시간 · ' + hrs) + '"' : '') + '><b>' + esc(s.fc) + '</b>' + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + (ln.pk && s.n0 ? '' : notesOf(s.fc)) + '</td>' +
+        '<td class="tt-fc"' + (hrs ? ' data-hrs="' + esc('하차 가능시간 · ' + hrs) + '"' : '') + '><b>' + esc(s.fc) + '</b>' + (otb ? ' <span class="tt-re" title="합차로 묶인 탭">' + esc(otb) + '</span>' : '') + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + (ln.pk && s.n0 ? '' : notesOf(s.fc)) + '</td>' +
         '<td class="tt-addr"><div class="clip" title="' + esc(s.d.memo || s.d.addr) + '">' + esc(s.d.addr) + '</div></td>' +
         '<td class="num">' + won(ln.b) + '</td><td class="num' + (ln.pk ? ' tt-pkg' : '') + '">' + ln.kg + '</td>' +
         (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in' + (blk && f[0] === 'car' ? ' tt-blk' : '') + '"' + rs + (blk && f[0] === 'car' ? ' title="⛔ 블랙(출입 금지) 기사"' : '') + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
