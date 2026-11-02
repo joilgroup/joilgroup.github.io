@@ -1581,3 +1581,4 @@ main.wk-mini-main { max-width: none; padding: 10px 10px 40px; }
   .wk-cur-t { font-size: 18px; }
   .wk-head #wkMini { display: none; }
 }
+.dp-joined { margin: 6px 0 8px; padding: 6px 10px; background: var(--panel-2); border-radius: 8px; }

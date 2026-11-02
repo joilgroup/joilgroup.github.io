@@ -7747,7 +7747,11 @@
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
       (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">' + (C.noOrderTable ? 'Trucks · ② 배차 표 (한 줄 = 차 한 대)' : 'Trucks · ③ 호차별 문자') + '</div>' +
-        allTrucks.map(function (t) { var X = st.tabs[t[0]], ns = dispTrucks(X); return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대</span></h3><button class="btn btn-sm" data-xlall="' + esc(t[0]) + '" title="구글 시트·엑셀에 붙여넣기용 (착지마다 한 줄)">엑셀로 복사</button></div>' + truckTableHtml(X, ns) + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
+        allTrucks.map(function (t) {
+          // 합차로 묶인 호차는 기준 호차 줄에 합쳐 보여서 여기선 한 줄 안내만 (같은 오더가 두 번 보이지 않게)
+          var X = st.tabs[t[0]], all = dispTrucks(X), lk = all.filter(function (n) { var j = joinInfo(X, n); return j && !j.base && j.g; }), ns = all.filter(function (n) { return lk.indexOf(n) === -1; });
+          var jl = lk.length ? '<div class="dp-joined muted small">🔗 합차로 다른 탭 호차에 합쳐진 호차: ' + lk.map(function (n) { var j = joinInfo(X, n), b = j.others.filter(function (o) { return o.base; })[0]; return '<b>' + n + '호차</b>(' + esc(truckStops(X, n).map(function (s) { return s.fc; }).join(', ')) + ') → ' + esc(b ? joinName(b) : ''); }).join(' · ') + '</div>' : '';
+          return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대' + (lk.length ? ' · 합차 ' + lk.length + '대' : '') + '</span></h3><button class="btn btn-sm" data-xlall="' + esc(t[0]) + '" title="구글 시트·엑셀에 붙여넣기용 (착지마다 한 줄)">엑셀로 복사</button></div>' + jl + (ns.length ? truckTableHtml(X, ns) : '') + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
     var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; renderDispatch(); };
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
