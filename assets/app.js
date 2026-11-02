@@ -6856,8 +6856,8 @@
   function truckStops(D, no) {
     var stops = [], by = {};
     truckOrders(D, no).forEach(function (o) {
-      var k = o.d.fc || '-', s = by[k];
-      if (!s) { s = by[k] = { fc: k, d: o.d, rows: [], b: 0, b0: 0, pkg: 0, kg: 0, kg0: 0, n0: 0 }; stops.push(s); }
+      var k = (o.tab || '') + '|' + (o.d.from || '') + '|' + (o.d.fc || '-'), s = by[k]; // 같은 센터라도 상차지(합차면 탭)가 다르면 따로 (수량·중량·마감 따로)
+      if (!s) { s = by[k] = { fc: o.d.fc || '-', d: o.d, rows: [], b: 0, b0: 0, pkg: 0, kg: 0, kg0: 0, n0: 0 }; stops.push(s); }
       var p = dispPkg(o.d.bundle); s.rows.push(o); if (p) s.pkg += p; else { s.b0 += dispNum(o.d.bundle); s.kg0 += dispNum(o.d.kg); s.n0++; } s.kg += dispNum(o.d.kg);
     });
     stops.forEach(function (s) { s.b = s.b0 + Math.ceil(s.pkg / PKG_PER_BUNDLE); });
@@ -6898,7 +6898,7 @@
       var dn = C.destName ? { name: C.destName(s.d, D.tab), auto: false } : destName(s.fc, s.d.addr, origin, s.d.dest); s.dest = dn;
       var p = dn.name && ratePrice(origin, dn.name, ton, D.date);
       s.price = p || null;
-      if (!p) miss.push(s.fc); else if (!best || p > best.p) best = { p: p, s: s };
+      if (!p) { if (miss.indexOf(s.fc) === -1) miss.push(s.fc); } else if (!best || p > best.p) best = { p: p, s: s };
     });
     // 경유비는 하차지(주소)가 다른 곳만: 주소가 같으면 센터 이름·띄어쓰기가 달라도 한 곳
     var places = []; stops.forEach(function (s) { var k = advAddrKey(s.d.addr || s.fc); if (places.indexOf(k) === -1) places.push(k); });
@@ -7227,7 +7227,7 @@
     var b = 0, kg = 0; truckStops(D, no).forEach(function (s) { b += s.b; kg += s.kg; });
     var froms = [], fm = {}; list.forEach(function (o) { var v = o.d.from || '-'; if (!fm[v]) { fm[v] = 1; froms.push(v); } });
     var stops = truckStops(D, no), out = [D.date, '총 ' + won(b) + '번들 / ' + won(kg) + 'kg'];
-    out.push(froms.map(function (f) { var p = findPlace(f); return String((p && p.name) || f).replace(/물류센터|센터|물류/g, '').trim() || f; }).concat(stops.map(function (s) { return s.fc; })).join(' > ') + ' (' + stops.length + '착)');
+    out.push(froms.map(function (f) { var p = findPlace(f); return String((p && p.name) || f).replace(/물류센터|센터|물류/g, '').trim() || f; }).concat(stops.map(function (s) { return s.fc; }).filter(function (f, i, a) { return a.indexOf(f) === i; })).join(' > ') + ' (' + stops.map(function (s) { return advAddrKey(s.d.addr || s.fc); }).filter(function (k, i, a) { return a.indexOf(k) === i; }).length + '착)');
     truckNotes(D, no, 'drv').forEach(function (x) { out.push('⚠️ ' + (stops.length > 1 ? x.fc + ': ' : '') + x.text); });
     if (ji && !J) out.push('🚚 합차: ' + ji.others.map(joinName).join(', ') + ' 착지도 같이 (기사 링크에 다 있어요)'); // 묶인 탭을 못 보는 화면(협력사)
     out.push('');
@@ -7244,7 +7244,8 @@
       s.rows.forEach(function (o) { var p = dispPkg(o.d.bundle), it = o.d.item || '-'; if (!(it in items)) { items[it] = { b: 0, p: 0 }; order.push(it); } if (p) items[it].p += p; else items[it].b += dispNum(o.d.bundle); });
       var amt = function (x) { return [x.b ? won(x.b) + '번들' : '', x.p ? won(x.p) + '패키지' : ''].filter(Boolean).join(' ') || '0번들'; };
       out.push(stops.length > 1 ? '하차지' + (i + 1) : '하차지');
-      out.push(s.fc + ' / ' + won(s.b) + '번들' + (s.pkg ? '(' + won(s.pkg) + '패키지 포함)' : '') + ' / 품목:' + (order.length > 1 || items[order[0]].p ? order.map(function (it) { return it + '(' + amt(items[it]) + ')'; }).join(', ') : order[0]));
+      var sfrom = froms.length > 1 ? ' / 상차지:' + (((placeFor(d.from) || {}).name) || d.from || '') : ''; // 상차지가 여럿이면 어디서 실은 건지
+      out.push(s.fc + sfrom + ' / ' + won(s.b) + '번들' + (s.pkg ? '(' + won(s.pkg) + '패키지 포함)' : '') + ' / 품목:' + (order.length > 1 || items[order[0]].p ? order.map(function (it) { return it + '(' + amt(items[it]) + ')'; }).join(', ') : order[0]));
       var bl = []; s.rows.forEach(function (o) { var v = String(o.d.bl || '').trim(); if (v && bl.indexOf(v) === -1) bl.push(v); }); if (bl.length) out.push('BL ' + bl.join(', '));
       var daddr = dispVal(d.addr) ? d.addr : ((findPlace(s.fc) || {}).addr || ''); // 역방향: 도착이 창고면 상차지 설정 주소
       [daddr, d.hours, d.dock].forEach(function (x) { if (dispVal(x)) out.push(x); });
@@ -7636,8 +7637,9 @@
     // 합차 기준 호차: 묶인 탭 착지까지 한 묶음으로 (연결된 탭에서는 그 탭 착지만)
     var J = ji && ji.base && ji.g ? joinView(D, no) : null, SD = J ? J.D : D, sno = J ? J.no : no;
     var stops = J ? truckStops(SD, sno) : cost && !cost.join && !cost.joinTo && !cost.joinPart ? cost.stops : truckStops(D, no);
-    var rc = J ? [].concat.apply([], J.g.map(function (x) { return (x.D.receipts || []).filter(function (r) { return r.no === x.no; }); })) : (D.receipts || []).filter(function (x) { return x.no === no; }), got = function (fc) { return rc.filter(function (x) { return x.fc === fc; }); };
-    var nGot = stops.filter(function (s) { return got(s.fc).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
+    var rc = J ? [].concat.apply([], J.g.map(function (x) { return (x.D.receipts || []).filter(function (r) { return r.no === x.no; }).map(function (r) { return Object.assign({ tab: x.D.tab }, r); }); })) : (D.receipts || []).filter(function (x) { return x.no === no; });
+    var got = function (s) { var tb = J && s.rows && s.rows[0] ? s.rows[0].tab || D.tab : ''; return rc.filter(function (x) { return x.fc === s.fc && (!tb || x.tab === tb); }); };
+    var nGot = stops.filter(function (s) { return got(s).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
     var rec = J ? null : bestOrder(D, no), blk = drvBlack(t), nIn = truckNotes(SD, sno, 'in'), nDrv = truckNotes(SD, sno, 'drv'), kind = dispKind(D);
     var tabOf = function (s) { var tb = s.rows && s.rows[0] && s.rows[0].tab; return tb && tb !== D.tab ? tb : ''; }; // 묶인 다른 탭 줄
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
@@ -7647,7 +7649,7 @@
     if (!lines.length) lines.push({ s: { fc: '', d: {}, rows: [] }, b: 0, kg: '0' });
     n = lines.length; rs = ' rowspan="' + n + '"';
     return '<tbody class="tt-g st-' + sti + '">' + lines.map(function (ln, i) {
-      var s = ln.s, g = got(s.fc), hrs = s.d.hours || '', otb = tabOf(s), lk = otb ? dispKind({ tab: otb }) : kind, lsh = otb ? kindShade(lk) : shade;
+      var s = ln.s, g = got(s), hrs = s.d.hours || '', otb = tabOf(s), lk = otb ? dispKind({ tab: otb }) : kind, lsh = otb ? kindShade(lk) : shade;
       return '<tr' + (hrs ? ' title="하차 가능시간: ' + esc(hrs) + '"' : '') + '>' +
         '<td class="tt-kind"' + (lsh ? ' style="background:' + lsh + '"' : '') + (otb ? ' title="' + esc(otb + ' 탭 오더 (합차)') + '"' : '') + '>' + esc(lk) + '</td>' +
         '<td>' + esc((findPlace(s.d.from) || {}).name || s.d.from || '') + '</td>' +
