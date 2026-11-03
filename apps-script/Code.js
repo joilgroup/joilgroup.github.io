@@ -2484,7 +2484,7 @@ function drvGet_(t) {
   if (many && orders.every(function (o) { return o.seq > 100000; })) orders.sort(function (a, b) { return a.seq - b.seq; }); // 화면에서 '추천 순서로' 정한 합차 하차 순서
   var stops = [], by = {};
   orders.forEach(function (o) {
-    var d = o.d || {}, k = (many ? o.g.token + '|' : '') + (d.fc || '-'), v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
+    var d = o.d || {}, k = (many ? o.g.token + '|' : '') + (d.fc || '-') + '|' + String([d.m1, d.m2, d.m3].filter(function (x) { x = String(x == null ? '' : x).trim(); return x && x !== '0'; }).join('/') || d.tel || '').replace(/\s/g, ''), v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
     var s = by[k] || (by[k] = { fc: d.fc || '-', tk: o.g.token, addr: v0(d.addr), hours: v0(d.hours), dock: v0(d.dock), mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).map(v0).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] });
     if (!stops.some(function (x) { return x === s; })) stops.push(s);
     // 번들 칸이 'N패키지'면 같은 착지끼리 모아 24패키지 = 1번들

@@ -6856,7 +6856,8 @@
   function truckStops(D, no) {
     var stops = [], by = {};
     truckOrders(D, no).forEach(function (o) {
-      var k = (o.tab || '') + '|' + (o.d.from || '') + '|' + (o.d.fc || '-'), s = by[k]; // 같은 센터라도 상차지(합차면 탭)가 다르면 따로 (수량·중량·마감 따로)
+      var mg = String([o.d.m1, o.d.m2, o.d.m3].filter(dispVal).join('/') || o.d.tel || '').replace(/\s/g, '');
+      var k = (o.tab || '') + '|' + (o.d.from || '') + '|' + (o.d.fc || '-') + '|' + mg, s = by[k]; // 같은 센터라도 상차지(합차면 탭)·담당자가 다르면 따로 (수량·중량·마감 따로)
       if (!s) { s = by[k] = { fc: o.d.fc || '-', d: o.d, rows: [], b: 0, b0: 0, pkg: 0, kg: 0, kg0: 0, n0: 0 }; stops.push(s); }
       var p = dispPkg(o.d.bundle); s.rows.push(o); if (p) s.pkg += p; else { s.b0 += dispNum(o.d.bundle); s.kg0 += dispNum(o.d.kg); s.n0++; } s.kg += dispNum(o.d.kg);
     });

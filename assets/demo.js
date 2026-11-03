@@ -338,7 +338,7 @@
       var rid = calId('R'); rcptData[rid] = req.data; wk('rcpt').push({ id: rid, cust: ut.cust, date: ut.date, no: ut.no, fc: req.fc, at: today() }); save();
     }
     var stops = [], by = {};
-    orders.forEach(function (o) { var d = o.d, k = (many ? o.g.token + '|' : '') + d.fc; var x = by[k] || (by[k] = { fc: d.fc, tk: o.g.token, addr: d.addr, hours: d.hours, dock: d.dock, mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] }); if (stops.indexOf(x) === -1) stops.push(x);
+    orders.forEach(function (o) { var d = o.d, k = (many ? o.g.token + '|' : '') + d.fc + '|' + String([d.m1, d.m2, d.m3].filter(Boolean).join('/') || d.tel || '').replace(/\s/g, ''); var x = by[k] || (by[k] = { fc: d.fc, tk: o.g.token, addr: d.addr, hours: d.hours, dock: d.dock, mgr: [d.m1, d.m2, d.m3].concat(d.m1 || d.m2 || d.m3 ? [] : String(d.tel || '').split(' / ')).filter(Boolean), items: {}, bundle: 0, kg: 0, bl: [] }); if (stops.indexOf(x) === -1) stops.push(x);
       var n = Number(String(d.bundle).replace(/,/g, '')) || 0; x.bundle += n; x.kg += Number(String(d.kg).replace(/,/g, '')) || 0; x.items[d.item] = (x.items[d.item] || 0) + n; if (d.bl && x.bl.indexOf(d.bl) === -1) x.bl.push(d.bl); var g = demoGeo(d.addr); if (g) { x.lat = g.lat; x.lng = g.lng; } });
     var from = orders[0] && orders[0].d.from, pl = wk('places').filter(function (p) { return p.name === from; })[0] || null;
     var plg = pl && pl.addr && demoGeo(pl.addr); if (pl) pl = Object.assign({}, pl, plg ? { lat: plg.lat, lng: plg.lng } : {});
