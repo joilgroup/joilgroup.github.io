@@ -6931,7 +6931,11 @@
   function joinView(D, no) {
     var g = joinGroup(D, no); if (!g) return null;
     var b = g[0], orders = [], n = 0;
-    g.forEach(function (x) { truckOrders(x.D, x.no).forEach(function (o) { orders.push(Object.assign({}, o, { truck: b.no, seq: ++n, tab: x.D.tab })); }); });
+    g.forEach(function (x) { truckOrders(x.D, x.no).forEach(function (o) { orders.push(Object.assign({}, o, { truck: b.no, tab: x.D.tab })); }); });
+    // 같은 주소(다른 탭 줄 포함)는 이어서 내리게: 주소가 처음 나온 순서대로 묶어요 (기준 호차의 하차 순서는 그대로)
+    var keys = []; orders.forEach(function (o) { var k = advAddrKey(o.d.addr || o.d.fc); if (keys.indexOf(k) === -1) keys.push(k); });
+    orders.sort(function (p, q) { return keys.indexOf(advAddrKey(p.d.addr || p.d.fc)) - keys.indexOf(advAddrKey(q.d.addr || q.d.fc)); }); // sort가 안정적이라 같은 주소 안의 순서는 그대로
+    orders.forEach(function (o) { o.seq = ++n; });
     return { D: { tab: b.D.tab, date: b.D.date, key: b.D.key, orders: orders, trucks: [b.t], receipts: [] }, no: b.no, g: g };
   }
   /** 차량정보·상태를 묶인 호차에도 넣고 그 탭도 저장 (다시 그리지 않을 때를 위해 화면 칸 값도 바꿔요) */

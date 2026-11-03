@@ -2492,6 +2492,11 @@ function drvGet_(t) {
     else { var n = Number(String(d.bundle || '').replace(/[,\s]/g, '')) || 0; s.bundle += n; s.items[it] = (s.items[it] || 0) + n; }
     s.kg += Number(String(d.kg || '').replace(/[,\s]/g, '')) || 0; if (d.bl && s.bl.indexOf(d.bl) === -1) s.bl.push(d.bl);
   });
+  if (many) { // 합차: 같은 주소(다른 탭 착지 포함)는 이어서 · 주소가 처음 나온 순서대로
+    var ak = function (s) { var t = String(s.addr || s.fc).replace(/\([^)]*\)/g, ' ').replace(/,/g, ' ').split(/\s+/).filter(Boolean); return t.slice(0, 1).join('').slice(0, 2) + '|' + t.slice(2).filter(function (x) { return !/(층|호)$|^\d+F$|^B\d+$/i.test(x); }).join(''); }, ks = [];
+    stops.forEach(function (s) { var k = ak(s); if (ks.indexOf(k) === -1) ks.push(k); });
+    stops = stops.map(function (s, i) { return { s: s, i: i, k: ks.indexOf(ak(s)) }; }).sort(function (a, b) { return a.k - b.k || a.i - b.i; }).map(function (x) { return x.s; });
+  }
   stops.forEach(function (s) { if (!s.pkg) return; s.bundle += Math.ceil(s.pkg / 24); Object.keys(s.pkgItems).forEach(function (it) { s.items[it + ' ' + s.pkgItems[it] + '패키지'] = Math.ceil(s.pkgItems[it] / 24); }); delete s.pkgItems; });
   var co = tr.cust.replace(/\/.*$/, ''), from = orders[0] && orders[0].d.from, place = loadingFind_(co, from), froms = [from];
   // 합차인데 상차지가 다르면 다른 상차지도 (같으면 한 번만)
