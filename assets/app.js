@@ -6932,6 +6932,7 @@
     var g = joinGroup(D, no); if (!g) return null;
     var b = g[0], orders = [], n = 0;
     g.forEach(function (x) { truckOrders(x.D, x.no).forEach(function (o) { orders.push(Object.assign({}, o, { truck: b.no, tab: x.D.tab })); }); });
+    if (orders.every(function (o) { return o.seq > JOIN_SEQ; })) orders.sort(function (p, q) { return p.seq - q.seq; }); // '추천 순서로' 정한 합차 순서
     // 같은 주소(다른 탭 줄 포함)는 이어서 내리게: 주소가 처음 나온 순서대로 묶어요 (기준 호차의 하차 순서는 그대로)
     var keys = []; orders.forEach(function (o) { var k = advAddrKey(o.d.addr || o.d.fc); if (keys.indexOf(k) === -1) keys.push(k); });
     orders.sort(function (p, q) { return keys.indexOf(advAddrKey(p.d.addr || p.d.fc)) - keys.indexOf(advAddrKey(q.d.addr || q.d.fc)); }); // sort가 안정적이라 같은 주소 안의 순서는 그대로
@@ -6993,7 +6994,7 @@
   function hav(a, b) { var R = 6371, t = Math.PI / 180, dLa = (b.lat - a.lat) * t, dLo = (b.lng - a.lng) * t, x = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(a.lat * t) * Math.cos(b.lat * t) * Math.sin(dLo / 2) * Math.sin(dLo / 2); return 2 * R * Math.asin(Math.sqrt(x)); }
   function geoKey(a) { return String(a || '').replace(/\s+/g, ' ').trim(); }
   function routeLen(start, pts) { var d = 0, cur = start; pts.forEach(function (p) { d += hav(cur, p); cur = p; }); return d; }
-  function bestOrder(D, no) {
+  function bestOrder(D, no, minGain) {
     var st = dispState(), stops = truckStops(D, no); if (stops.length < 2 || stops.length > 7) return null;
     var p = findPlace(stops[0].d.from), start = p && st.geo[geoKey(p.addr)], pts = stops.map(function (s) { return st.geo[geoKey(s.d.addr)]; });
     if (!start || pts.some(function (x) { return !x; })) return null;
@@ -7001,8 +7002,18 @@
     var perm = function (arr, k) { if (k === arr.length) { var len = routeLen(start, arr.map(function (i) { return pts[i]; })); if (!best || len < best.len - 0.01) best = { len: len, order: arr.slice() }; return; } for (var i = k; i < arr.length; i++) { var t = arr[k]; arr[k] = arr[i]; arr[i] = t; perm(arr, k + 1); arr[i] = arr[k]; arr[k] = t; } };
     perm(idx.slice(), 0);
     var cur = routeLen(start, pts);
-    if (!best || cur - best.len < 1) return { ok: true, cur: cur };
+    if (!best || cur - best.len < (minGain == null ? 1 : minGain)) return { ok: true, cur: cur };
     return { ok: false, cur: cur, len: best.len, order: best.order, stops: stops };
+  }
+  /** 합차 하차 순서 정하기: 묶인 탭 오더의 순서값을 같은 번호대(JOIN_SEQ~)로 이어 매겨요 → joinView가 이 순서대로 합쳐요 */
+  var JOIN_SEQ = 100000;
+  function applyJoinOrder(J, rec) {
+    var k = 0, tabs = [];
+    rec.order.forEach(function (i) { rec.stops[i].rows.forEach(function (c) {
+      var x = J.g.filter(function (y) { return y.D.tab === c.tab; })[0], o = x && x.D.orders.filter(function (y) { return y.id === c.id; })[0];
+      if (o) { o.seq = JOIN_SEQ + (++k); if (tabs.indexOf(x.D) === -1) tabs.push(x.D); }
+    }); });
+    tabs.forEach(function (X) { X.orders.sort(function (a, b) { return a.seq - b.seq; }); dispQueueSave(X.tab); });
   }
   function applyOrder(D, no, rec) {
     var rows = truckOrders(D, no), slots = rows.map(function (o) { return o.seq; }).sort(function (a, b) { return a - b; }), n = 0;
@@ -7644,7 +7655,7 @@
     var rc = J ? [].concat.apply([], J.g.map(function (x) { return (x.D.receipts || []).filter(function (r) { return r.no === x.no; }).map(function (r) { return Object.assign({ tab: x.D.tab }, r); }); })) : (D.receipts || []).filter(function (x) { return x.no === no; });
     var got = function (s) { var tb = J && s.rows && s.rows[0] ? s.rows[0].tab || D.tab : ''; return rc.filter(function (x) { return x.fc === s.fc && (!tb || x.tab === tb); }); };
     var nGot = stops.filter(function (s) { return got(s).length; }).length, n = stops.length || 1, rs = ' rowspan="' + n + '"';
-    var rec = J ? null : bestOrder(D, no), blk = drvBlack(t), nIn = truckNotes(SD, sno, 'in'), nDrv = truckNotes(SD, sno, 'drv'), kind = dispKind(D);
+    var rec = J ? bestOrder(J.D, J.no, 0.3) : bestOrder(D, no), blk = drvBlack(t), nIn = truckNotes(SD, sno, 'in'), nDrv = truckNotes(SD, sno, 'drv'), kind = dispKind(D);
     var tabOf = function (s) { var tb = s.rows && s.rows[0] && s.rows[0].tab; return tb && tb !== D.tab ? tb : ''; }; // 묶인 다른 탭 줄
     var notesOf = function (fc) { return nIn.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note in">[내부] ' + esc(x.text) + '</div>'; }).join('') + nDrv.filter(function (x) { return x.fc === fc; }).map(function (x) { return '<div class="tt-note drv">[기사] ' + esc(x.text) + '</div>'; }).join(''); };
     var sti = Math.max(0, DISP_STATUS.indexOf(t.status || '배차전')), code = stops[0] ? dispCode(D, D.date, stops[0].d.from, no) : '', shade = kindShade(kind);
@@ -7867,7 +7878,10 @@
     $$('[data-tdate]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tdate); openMoveOrders(x.D, truckOrders(x.D, x.no), lblOf(x)); }; }); // 호차 전체 날짜 변경 (삼다수 표도)
     $$('[data-xlrow]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xlrow), rows = (C.sheetRows || dispSheetRows)(x.D, [x.no]); var xj = joinInfo(x.D, x.no); if (!rows.length && xj && !xj.base) return toast('합차로 묶인 호차예요. 기준 호차(' + xj.others.filter(function (o) { return o.base; }).map(joinName).join('') + ')에서 복사하면 이 줄도 같이 들어가요.', 'err'); copyTable(rows, x.D.tab + ' ' + x.no + '호차(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; }); // 한 호차만 (탭 전체 복사와 같은 칸)
     $$('[data-xl]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xl), t = truckInfo(x.D, x.no); copyText(TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\r\n]+/g, ' '); }).join('\t'), x.no + '호차 차량정보 5칸을 복사했어요. 엑셀에 붙여넣으세요.'); }; });
-    $$('[data-rec]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.rec), rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
+    $$('[data-rec]', box).forEach(function (b) { b.onclick = function () {
+      var x = tn(b.dataset.rec), ji = joinInfo(x.D, x.no), J = ji && ji.base && ji.g ? joinView(x.D, x.no) : null;
+      if (J) { var jr = bestOrder(J.D, J.no, 0.3); if (jr && !jr.ok) { applyJoinOrder(J, jr); drawDispDay(); toast(x.no + '호차(합차) 하차 순서를 바꿨어요: ' + jr.order.map(function (i) { return jr.stops[i].fc; }).join(' → ')); } return; } // 합차: 묶인 착지 전체로
+      var rec = bestOrder(x.D, x.no); if (rec && !rec.ok) { applyOrder(x.D, x.no, rec); redraw(x.tab); toast(x.no + '호차 하차 순서를 바꿨어요.'); } }; });
     var copyText = function (txt, msg) { (navigator.clipboard && navigator.clipboard.writeText ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () { toast(msg); }).catch(function () { var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('복사하지 못했어요. 미리보기에서 직접 복사하세요.', 'err'); } ta.remove(); }); };
     var noLink = function (x) { var t = x.D.trucks.filter(function (y) { return y.no === x.no; })[0]; return !(t && t.token); };
     $$('[data-copy]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.copy); if (!C.noMap && noLink(x)) { st.dirty[x.tab] = 1; toast('기사 링크를 만드는 중이에요…'); dispSaveNow().then(function () { drawDispDay(); toast(noLink(x) ? '기사 링크가 안 만들어졌어요. Apps Script(Code.js)를 최신으로 새 버전 배포했는지 확인해 주세요.' : '기사 링크가 생겼어요. 문자 복사를 다시 눌러 주세요.', noLink(x) ? 'err' : ''); }); return; } copyText(truckMessage(x.D, x.no), x.tab + ' ' + x.no + '호차 문자를 복사했어요.'); }; });

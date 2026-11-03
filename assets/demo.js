@@ -331,6 +331,7 @@
     var grp = demoJoinGroup(tr); if (!grp.length) grp = [tr];
     var many = grp.length > 1, orders = [];
     grp.forEach(function (g) { wk('dispOrd').filter(function (o) { return o.cust === g.cust && o.date === tr.date && o.truck === g.no; }).sort(function (a, b) { return a.seq - b.seq; }).forEach(function (o) { orders.push(Object.assign({}, o, { g: g })); }); });
+    if (many && orders.every(function (o) { return o.seq > 100000; })) orders.sort(function (a, b) { return a.seq - b.seq; }); // 서버와 같이: '추천 순서로' 정한 합차 순서
     if (req.action === 'drv.upload') {
       var ut = null; grp.some(function (g) { if (req.tk && g.token !== req.tk) return false; if (orders.some(function (o) { return o.g === g && o.d.fc === req.fc; })) ut = g; return !!ut; });
       if (!ut) fail('이 호차의 착지가 아니에요.');

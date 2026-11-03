@@ -2481,6 +2481,7 @@ function drvGet_(t) {
   var tr = drvFind_(t), grp = drvGroup_(tr), many = grp.length > 1, orders = [];
   // 합차면 묶인 호차의 착지까지 (착지마다 어느 호차 것인지 tk로 · 인수증은 그 호차에 올라가요)
   grp.forEach(function (g) { dispOrders_(g.cust, function (d) { return d === tr.date; }).forEach(function (o) { if (o.truck === g.no) { o.g = g; orders.push(o); } }); });
+  if (many && orders.every(function (o) { return o.seq > 100000; })) orders.sort(function (a, b) { return a.seq - b.seq; }); // 화면에서 '추천 순서로' 정한 합차 하차 순서
   var stops = [], by = {};
   orders.forEach(function (o) {
     var d = o.d || {}, k = (many ? o.g.token + '|' : '') + (d.fc || '-'), v0 = function (x) { x = String(x == null ? '' : x).trim(); return x === '0' ? '' : x; }; // 동방 엑셀의 '0'은 빈 값
