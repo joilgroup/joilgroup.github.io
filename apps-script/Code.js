@@ -2283,15 +2283,26 @@ function dispMoveOrders_(session, req) {
   var lock = LockService.getScriptLock(); lock.waitLock(20000);
   try {
     var sh = headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), last = sh.getLastRow(); if (last < 2) throw new Error('옮길 오더를 찾을 수 없어요.');
-    var v = sh.getRange(2, 1, last - 1, 7).getValues(), maxSeq = 0, hit = [];
-    v.forEach(function (r, i) { if (String(r[1]) !== cust) return; var d0 = textDate_(r[2]); if (d0 === to) maxSeq = Math.max(maxSeq, Number(r[6]) || 0); if (d0 === date && ids[String(r[0])]) hit.push(i); });
-    if (!hit.length) throw new Error('옮길 오더를 찾을 수 없어요.');
-    hit.forEach(function (i, k) {
-      var r = v[i], d = parseJson_(r[4], {}), key = String(r[3]); d.date = to; d.movedFrom = date; d.movedBy = session.name;
-      if (key.indexOf(date + '|') === 0) key = to + key.slice(date.length);
-      sh.getRange(i + 2, 3, 1, 5).setValues([["'" + to, key, JSON.stringify(d), '', maxSeq + k + 1]]);
+    var v = sh.getRange(2, 1, last - 1, 7).getValues(), maxSeq = 0, hit = [], total = {}, picked = {}, maxNo = 0;
+    v.forEach(function (r, i) {
+      if (String(r[1]) !== cust) return; var d0 = textDate_(r[2]), sq = Number(r[6]) || 0;
+      if (d0 === to) { if (sq < 100000) maxSeq = Math.max(maxSeq, sq); if (r[5] !== '') maxNo = Math.max(maxNo, Number(r[5]) || 0); }
+      if (d0 === date && r[5] !== '') total[r[5]] = (total[r[5]] || 0) + 1;
+      if (d0 === date && ids[String(r[0])]) { hit.push(i); if (r[5] !== '') picked[r[5]] = (picked[r[5]] || 0) + 1; }
     });
-    return { moved: hit.length, toDate: to };
+    if (!hit.length) throw new Error('옮길 오더를 찾을 수 없어요.');
+    hit.sort(function (a, b) { return (Number(v[a][6]) || 0) - (Number(v[b][6]) || 0); });
+    // 호차의 오더를 모두 옮기면(keepTruck) 호차째로: 옮긴 날짜의 새 번호 · 호차 줄(차량정보·링크·합차)도 같이
+    var ts = dispTrkSheet_(), tv = ts.getLastRow() >= 2 ? ts.getRange(2, 1, ts.getLastRow() - 1, 3).getValues() : [], map = {};
+    tv.forEach(function (r) { if (String(r[0]) === cust && textDate_(r[1]) === to) maxNo = Math.max(maxNo, Number(r[2]) || 0); });
+    if (req.keepTruck) Object.keys(picked).sort(function (a, b) { return a - b; }).forEach(function (no) { if (picked[no] === total[no]) map[no] = ++maxNo; });
+    hit.forEach(function (i, k) {
+      var r = v[i], d = parseJson_(r[4], {}), key = String(r[3]), sq = Number(r[6]) || 0; d.date = to; d.movedFrom = date; d.movedBy = session.name;
+      if (key.indexOf(date + '|') === 0) key = to + key.slice(date.length);
+      sh.getRange(i + 2, 3, 1, 5).setValues([["'" + to, key, JSON.stringify(d), map[r[5]] || '', map[r[5]] && sq > 100000 ? sq : maxSeq + k + 1]]); // 합차 하차 순서(100000~)는 그대로
+    });
+    tv.forEach(function (r, i) { if (String(r[0]) === cust && textDate_(r[1]) === date && map[r[2]]) ts.getRange(i + 2, 2, 1, 2).setValues([["'" + to, map[r[2]]]]); });
+    return { moved: hit.length, toDate: to, kept: Object.keys(map).length, trucks: map };
   } finally { lock.releaseLock(); }
 }
 /** 오더 고치기: 정해진 칸만 (호차·순서·가져오기 키는 그대로) */

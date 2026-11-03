@@ -7532,25 +7532,35 @@
   }
 
   /** 오더 날짜 변경: 고른 오더를 다른 날짜의 같은 탭으로 옮겨요 (호차는 풀려요 · 서버가 예전이면 복사 후 지우기) */
-  function openMoveOrders(D, list, label) {
+  /** 날짜 변경: parts = [{ D, list }] (합차면 묶인 탭마다) · 호차의 오더를 다 옮기면 호차째로(차량정보·합차 그대로) */
+  function openMoveOrders(D, list, label, parts) {
+    parts = parts || [{ D: D, list: list }];
     if (!list.length) return toast('날짜를 바꿀 오더를 체크하세요.', 'err');
-    var fcs = list.map(function (o) { return o.d.fc; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; });
+    var all = [].concat.apply([], parts.map(function (p) { return p.list; }));
+    var fcs = all.map(function (o) { return o.d.fc; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; });
+    var whole = parts.every(function (p) { var ns = {}; p.list.forEach(function (o) { if (o.truck !== '' && o.truck != null) ns[o.truck] = 1; }); return Object.keys(ns).length && Object.keys(ns).every(function (n) { return truckOrders(p.D, Number(n)).every(function (o) { return p.list.indexOf(o) !== -1; }); }) && p.list.every(function (o) { return o.truck !== '' && o.truck != null; }); });
     modal({ eyebrow: D.tab + ' · ' + D.date + (label ? ' · ' + label : ''), title: '오더 날짜 변경',
-      body: '<p class="muted small" style="margin:0 0 10px">오더 ' + list.length + '줄(' + esc(fcs.join(', ')) + ')을 고른 날짜의 <b>' + esc(D.tab) + '</b> 탭으로 옮겨요. 호차 묶음은 풀리니 옮긴 날짜에서 다시 묶어 주세요.</p>' +
+      body: '<p class="muted small" style="margin:0 0 10px">오더 ' + all.length + '줄(' + esc(fcs.join(', ')) + ')을 고른 날짜의 <b>' + esc(parts.map(function (p) { return p.D.tab; }).join(', ')) + '</b> 탭으로 옮겨요. ' +
+        (whole ? '호차 묶음' + (parts.length > 1 ? '·합차' : '') + '·차량정보는 <b>그대로</b> 옮겨요 (옮긴 날짜의 새 호차 번호).' : '호차 묶음은 풀리니 옮긴 날짜에서 다시 묶어 주세요.') + '</p>' +
         '<div class="field"><label>옮길 날짜</label><input class="input" type="date" id="mvDate" value="' + esc(dAdd(D.date, 1)) + '" style="max-width:200px"></div>',
       foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="mvGo">옮기기</button>',
       onMount: function (m, close) {
         $('#mvGo', m).onclick = function () {
-          var btn = this, to = $('#mvDate', m).value, ids = list.map(function (o) { return o.id; }), req = { cust: D.key, date: D.date, ids: ids, toDate: to };
+          var btn = this, to = $('#mvDate', m).value;
           if (!to) return toast('날짜를 고르세요.', 'err'); if (to === D.date) return toast('지금과 같은 날짜예요.', 'err');
           busy(btn, true, '옮기는 중');
-          dispSaveNow().then(function () {
+          var one = function (p) {
+            var ids = p.list.map(function (o) { return o.id; }), req = { cust: p.D.key, date: p.D.date, ids: ids, toDate: to, keepTruck: whole };
             return api('dispatch.moveOrders', req).catch(function (err) { // 서버(Code.js)가 예전이면: 복사 후 원래 날짜에서 지우기
               if (!/알 수 없는 요청/.test(err.message || '')) throw err;
-              return api('dispatch.copyOrders', req).then(function (r) { return api('dispatch.deleteOrders', { cust: D.key, date: D.date, ids: ids }).then(function () { return { moved: r.copied, toDate: to }; }); });
+              return api('dispatch.copyOrders', req).then(function (r) { return api('dispatch.deleteOrders', { cust: p.D.key, date: p.D.date, ids: ids }).then(function () { return { moved: r.copied, toDate: to }; }); });
             });
-          }).then(function (r) {
-            close(); var st = dispState(); st.sel = {}; toast(r.moved + '줄을 ' + to + ' ' + D.tab + '(으)로 옮겼어요.');
+          };
+          var res = [];
+          dispSaveNow().then(function () { return parts.reduce(function (pr, p) { return pr.then(function () { return one(p).then(function (r) { res.push(r); }); }); }, Promise.resolve()); }).then(function () {
+            close(); var st = dispState(); st.sel = {};
+            var n = res.reduce(function (a, r) { return a + (r.moved || 0); }, 0), kept = res.some(function (r) { return r.kept; });
+            toast(n + '줄을 ' + to + '(으)로 옮겼어요.' + (whole ? kept ? ' 호차 묶음' + (parts.length > 1 ? '·합차' : '') + '도 그대로예요.' : ' (서버 Code.js가 예전 버전이라 호차 묶음은 풀렸어요 — 새 버전 배포 후엔 그대로 옮겨져요)' : ''));
             st.tabs = null; renderDispatch();
           }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
         };
@@ -7876,7 +7886,9 @@
     $$('[data-xlall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.xlall]; if (!X) return; var ns = dispTrucks(X), nj = ns.filter(function (n) { var j = joinInfo(X, n); return j && !j.base; }).length, rows = (C.sheetRows || dispSheetRows)(X, ns), jt = nj ? ' (합차로 묶인 ' + nj + '대는 기준 호차 쪽 복사에 들어가서 뺐어요)' : '';
       if (!rows.length) return toast('복사할 줄이 없어요.' + jt, 'err');
       copyTable(rows, X.tab + ' ' + (ns.length - nj) + '대(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.' + jt); }; });
-    $$('[data-tdate]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tdate); openMoveOrders(x.D, truckOrders(x.D, x.no), lblOf(x)); }; }); // 호차 전체 날짜 변경 (삼다수 표도)
+    $$('[data-tdate]', box).forEach(function (b) { b.onclick = function () { // 호차 전체 날짜 변경 (삼다수 표도) · 합차면 묶인 호차 모두
+      var x = tn(b.dataset.tdate), g = joinGroup(x.D, x.no);
+      openMoveOrders(x.D, truckOrders(x.D, x.no), lblOf(x) + (g ? ' (합차 ' + g.length + '대)' : ''), g ? g.map(function (y) { return { D: y.D, list: truckOrders(y.D, y.no) }; }) : null); }; });
     $$('[data-xlrow]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xlrow), rows = (C.sheetRows || dispSheetRows)(x.D, [x.no]); var xj = joinInfo(x.D, x.no); if (!rows.length && xj && !xj.base) return toast('합차로 묶인 호차예요. 기준 호차(' + xj.others.filter(function (o) { return o.base; }).map(joinName).join('') + ')에서 복사하면 이 줄도 같이 들어가요.', 'err'); copyTable(rows, x.D.tab + ' ' + x.no + '호차(' + rows.length + '줄)를 복사했어요. 구글 시트에 붙여넣으세요.'); }; }); // 한 호차만 (탭 전체 복사와 같은 칸)
     $$('[data-xl]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.xl), t = truckInfo(x.D, x.no); copyText(TRK_FIELDS.map(function (f) { return String(t[f[0]] || '').replace(/[\t\r\n]+/g, ' '); }).join('\t'), x.no + '호차 차량정보 5칸을 복사했어요. 엑셀에 붙여넣으세요.'); }; });
     $$('[data-rec]', box).forEach(function (b) { b.onclick = function () {

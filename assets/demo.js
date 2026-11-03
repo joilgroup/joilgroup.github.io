@@ -628,9 +628,14 @@
         if (req.toDate === req.date) fail('지금과 같은 날짜예요.');
         var mids = {}; (req.ids || []).forEach(function (x) { mids[x] = 1; });
         var msrc = wk('dispOrd').filter(function (o) { return mids[o.id] && o.cust === req.cust && o.date === req.date; }); if (!msrc.length) fail('옮길 오더를 찾을 수 없어요.');
-        var mmax = 0; wk('dispOrd').forEach(function (o) { if (o.cust === req.cust && o.date === req.toDate) mmax = Math.max(mmax, o.seq); });
-        msrc.forEach(function (o, i) { o.date = req.toDate; o.d.date = req.toDate; o.d.movedFrom = req.date; o.truck = ''; o.seq = mmax + i + 1; if (String(o.key).indexOf(req.date + '|') === 0) o.key = req.toDate + String(o.key).slice(req.date.length); });
-        save(); return { moved: msrc.length, toDate: req.toDate };
+        var mmax = 0, mno = 0, mtot = {}, mpk = {}, mmap = {};
+        wk('dispOrd').forEach(function (o) { if (o.cust !== req.cust) return; if (o.date === req.toDate) { if (o.seq < 100000) mmax = Math.max(mmax, o.seq); if (o.truck !== '') mno = Math.max(mno, o.truck); } if (o.date === req.date && o.truck !== '') mtot[o.truck] = (mtot[o.truck] || 0) + 1; });
+        wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.toDate) mno = Math.max(mno, t.no); });
+        msrc.forEach(function (o) { if (o.truck !== '') mpk[o.truck] = (mpk[o.truck] || 0) + 1; });
+        if (req.keepTruck) Object.keys(mpk).sort(function (a, b) { return a - b; }).forEach(function (n) { if (mpk[n] === mtot[n]) mmap[n] = ++mno; });
+        msrc.sort(function (a, b) { return a.seq - b.seq; }).forEach(function (o, i) { var nt = mmap[o.truck]; o.date = req.toDate; o.d.date = req.toDate; o.d.movedFrom = req.date; o.truck = nt || ''; o.seq = nt && o.seq > 100000 ? o.seq : mmax + i + 1; if (String(o.key).indexOf(req.date + '|') === 0) o.key = req.toDate + String(o.key).slice(req.date.length); });
+        wk('dispTrk').forEach(function (t) { if (t.cust === req.cust && t.date === req.date && mmap[t.no]) { t.date = req.toDate; t.no = mmap[t.no]; } });
+        save(); return { moved: msrc.length, toDate: req.toDate, kept: Object.keys(mmap).length, trucks: mmap };
       case 'dispatch.note':
         var no_ = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
         no_.noteIn = String(req.noteIn || '').trim(); no_.noteDrv = String(req.noteDrv || '').trim(); save(); return handle(Object.assign({}, req, { action: 'dispatch.day' }));
