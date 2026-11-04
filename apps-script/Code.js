@@ -159,7 +159,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -208,6 +208,8 @@ function handle_(req) {
     case 'dispatch.rates': return dispRates_(session);
     case 'dispatch.ratesSave': return dispRatesSave_(session, req);
     case 'dispatch.mapSave': return dispMapSave_(session, req);
+    case 'dispatch.price': dispNeedCost_(session); return { prices: dispPrices_(req.cust) };
+    case 'dispatch.priceSave': dispNeedCost_(session); return { prices: dispPriceSave_(req) };
     case 'dispatch.map': return { map: dispMap_() }; // 하차지 이름(삼다수 대리점 → 인천백석동 등)은 금액이 없어서 직원 모두 봐요
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
     case 'dispatch.receipt': return dispReceipt_(req.id);
@@ -2021,7 +2023,7 @@ function ownerCover_(cal, from, to) {
 var SHEET_DISP_ORD = '배차오더';
 var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시', '내부공지', '기사공지'];
 var SHEET_DISP_TRK = '배차호차';
-var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원', '합차'];
+var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원', '합차', '매출'];
 /* 합차: 같은 날짜·같은 업체의 다른 탭 호차를 같은 차로 묶어요. 연결된 호차의 '합차' 칸 = 기준 호차의 링크코드 (호차 번호는 바뀔 수 있어서) */
 var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경'];
 /** 예전 상태 이름 맞추기: 배차중 → 배차전(빈 값), 차량변경 → 정보변경 */
@@ -2037,7 +2039,7 @@ function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
 function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]), noteIn: dispTxt_(r[9]), noteDrv: dispTxt_(r[10]) }; }
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
-function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join: dispTxt_(r[16]) }; }
+function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join: dispTxt_(r[16]), rev: r[17] === '' || r[17] == null ? null : Number(r[17]) }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
 function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
 function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
@@ -2084,7 +2086,7 @@ function dispJoinSync_(cust, date, chg) {
   Object.keys(touched).forEach(function (k) { dispTouch_(k, date); });
 }
 /* ───────────── 협력사 계정: 배차시트만 (견적·분석·배차검색·관리자 등은 전부 막음) ───────────── */
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.month', 'dispatch.monthAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save']; // 월별 기록(dispatch.month·monthAll)은 협력사에게 안 열어요
 function partnerHandle_(session, action, req) {
   if (PARTNER_ACTIONS.indexOf(action) === -1) throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
   var ok = function (k) { if (session.dispTabs.indexOf(String(k)) === -1) throw new Error('볼 수 없는 탭이에요.'); return String(k); };
@@ -2095,9 +2097,7 @@ function partnerHandle_(session, action, req) {
     case 'publicSettings': return { settings: publicSettings_() };
     case 'dispatch.tabs': return { tabs: dispTabs_(req.cust).filter(function (t) { return !t.hidden && session.dispTabs.indexOf(dispCust_(req.cust) + t.suf) !== -1; }) };
     case 'dispatch.day': return dispScrub_(dispDay_(ok(req.cust), req.date), session);
-    case 'dispatch.month': return dispScrub_(dispMonth_(ok(req.cust), req.ym), session);
     case 'dispatch.dayAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispDay_(k, req.date); }), session);
-    case 'dispatch.monthAll': (req.keys || []).forEach(ok); return dispScrub_(dispMulti_(req.keys, function (k) { return dispMonth_(k, req.ym); }), session);
     case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: dispStamps_(req.keys, req.date) };
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
@@ -2124,6 +2124,7 @@ function dispScrub_(out, session) {
   var one = function (r) {
     if (!r) return r;
     if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; });
+    if (!canCost_(session)) (r.trucks || []).forEach(function (t) { delete t.rev; }); // 매출은 분석 권한만 (협력사도 안 봐요)
     if (partner) (r.orders || []).forEach(function (o) { o.noteIn = ''; });
     if (partner) (r.trucks || []).forEach(function (t) { t.join = ''; }); // 합차는 표시(jn)만 · 다른 탭 호차의 링크코드는 안 보내요
     return r;
@@ -2162,6 +2163,17 @@ function dispTabsSave_(req) {
   PropertiesService.getScriptProperties().setProperty('DISP_TABS_' + cust, JSON.stringify(list));
   return { tabs: list };
 }
+/* 월별 번들 단가(매출 단가 · 분석 권한): 업체마다 { 'YYYY-MM': 단가 } · 빈 달은 화면이 직전 달 단가를 이어 써요 */
+function dispPrices_(cust) { return parseJson_(PropertiesService.getScriptProperties().getProperty('DISP_PRICE_' + dispCust_(cust)), {}) || {}; }
+function dispPriceSave_(req) {
+  var cust = dispCust_(req.cust), ym = String(req.ym || ''); if (!/^\d{4}-\d{2}$/.test(ym)) throw new Error('월을 확인하세요.');
+  var lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    var p = dispPrices_(cust), v = Math.round(Number(String(req.price == null ? '' : req.price).replace(/[^0-9.]/g, ''))) || 0;
+    if (v > 0) p[ym] = Math.min(v, 10000000); else delete p[ym];
+    PropertiesService.getScriptProperties().setProperty('DISP_PRICE_' + cust, JSON.stringify(p)); return p;
+  } finally { lock.releaseLock(); }
+}
 function dispMonth_(cust, ym) {
   cust = dispCust_(cust); ym = String(ym || ''); if (!/^\d{4}-\d{2}$/.test(ym)) throw new Error('월을 확인하세요.');
   var inM = function (d) { return d.slice(0, 7) === ym; };
@@ -2194,7 +2206,7 @@ function dispTouch_(cust, date) { try { var n = String(Date.now()); PropertiesSe
 function dispTouched_(req, out) { dispTouch_(req.cust, req.date); return out; }
 function dispStamps_(keys, date) { date = dispDate_(date); var pr = PropertiesService.getScriptProperties(), o = {}; (keys || []).slice(0, 20).forEach(function (k) { o[k] = Number(pr.getProperty(dispStampKey_(String(k), date))) || 0; }); return o; }
 /** 바뀐 칸만 보낸 저장(patch)을 지금 서버에 있는 호차들과 합쳐서 전체 목록으로 만들어요 (다른 사람이 바꾼 칸은 그대로 둠) */
-var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support', 'join']);
+var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support', 'join', 'rev']);
 function dispMerge_(cust, date, req) {
   var ts = dispTrkSheet_(), cv = ts.getLastRow() >= 2 ? ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues() : [];
   var list = cv.filter(function (r) { return String(r[0]) === cust && textDate_(r[1]) === date; }).map(dispTrkRow_), used = [];
@@ -2204,7 +2216,7 @@ function dispMerge_(cust, date, req) {
   var pt = (req.trucks || []).slice().sort(function (a, b) { return (a.token ? 0 : 1) - (b.token ? 0 : 1); }); // 링크 코드 있는 호차부터 (번호가 밀린 경우)
   pt.forEach(function (p) {
     var x = byTok(p.token) || byNo(Number(p.from != null ? p.from : p.no));
-    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0, join: '' }; list.push(x); }
+    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0, join: '', rev: null }; list.push(x); }
     used.push(x); x.no = Math.max(1, Math.round(Number(p.no)) || 1);
     var set = p.set || {}; DISP_PATCH_KEYS.forEach(function (k) { if (set[k] !== undefined) x[k] = set[k]; });
   });
@@ -2244,7 +2256,8 @@ function dispSave_(session, req) {
       var stt = DISP_STATUS.indexOf(dispStatus_(t.status)) !== -1 ? dispStatus_(t.status) : ''; if (stt === '배차전') stt = '';
       var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
       var jn = String(t.join !== undefined ? t.join || '' : o.join || ''); if (!/^[0-9a-f]{20}$/.test(jn) || jn === tok) jn = ''; // 예전 화면은 합차 칸을 안 보내요 → 그대로 둠
-      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3).concat([jn ? "'" + jn : '']);
+      var rv = cost && t.rev !== undefined ? (t.rev === '' || t.rev == null ? '' : Math.max(0, Math.min(Math.round(Number(String(t.rev).replace(/[^0-9.]/g, ''))) || 0, 100000000))) : (o.rev == null ? '' : o.rev); // 매출 직접 고치기: 분석 권한만 · 빈 값 = 번들 × 월 단가
+      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3).concat([jn ? "'" + jn : '', rv]);
     });
     if (hit.length && hit[hit.length - 1] - hit[0] === hit.length - 1) {
       var top = hit[0] + 2, k = Math.min(hit.length, add.length);

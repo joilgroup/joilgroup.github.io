@@ -6681,7 +6681,7 @@
     if (!DISP_TABS.some(function (t) { return t[0] === st.tab; })) st.tab = DISP_TABS[0][0];
   }
   /* ── 여러 사람이 같이 볼 때: 바뀐 칸만 저장 + 15초마다 조용히 확인해서 다른 사람 변경을 그 칸만 반영 ── */
-  var DISP_SYNC_KEYS = ['car', 'driver', 'phone', 'time', 'ton', 'memo', 'status', 'retCost', 'wait', 'support', 'join'];
+  var DISP_SYNC_KEYS = ['car', 'driver', 'phone', 'time', 'ton', 'memo', 'status', 'retCost', 'wait', 'support', 'join', 'rev'];
   function dispNv(v) { return v == null ? '' : String(v); }
   function dispPrep(r, tab, date, key) {
     r = r || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = tab; r.date = date; r.key = key;
@@ -7359,10 +7359,11 @@
   })();
   function renderDispatch() {
     var st = dispState();
+    if (isPartner()) st.view = 'day'; // 협력사는 월별 기록 없음
     syncRoute();
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Dispatch · 배차시트</div><h2>배차시트</h2><p class="muted small" style="margin:4px 0 0' + (isPartner() ? ';display:none' : '') + '">출발지 탭마다 오더를 붙여넣고 → 호차로 묶고 → 문자(기사용 링크 포함) 복사 → 호차 표에 차량정보 붙여넣기 → 엑셀 복사</p></div>' +
       '<div class="actions"><select class="input input-sm" id="dpCust" style="width:auto">' + DISP_CUSTS.map(function (c) { return '<option' + (c === st.cust ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
-      '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>' +
+      (isPartner() ? '' : '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>') +
       (isPartner() ? '' : '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpDests">하차지 주소록</button><button class="btn btn-sm" id="dpPool">기사 풀</button>') + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
     $('#dpBody').addEventListener('focusout', function () {
       setTimeout(function () { var s2 = dispState(), ae = document.activeElement; if (!s2.drawLater || dispTyping() || (ae && ae.tagName === 'SELECT' && ae.closest('#dpBody'))) return; s2.drawLater = false; if (state.view === 'dispatch' && s2.view === 'day') { drawDispDay(); dispFlash(); } }, 250);
@@ -7918,17 +7919,20 @@
       };
     });
   }
-  function drawDispMonth() {
-    var st = dispState(), box = $('#dpBody'), money = can('analysis') || isPartner();
-    var ms = []; for (var i = 0; i < 18; i++) ms.push(ymAdd(todayYmd().slice(0, 7), -i));
-    box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span><button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
+  /** 그 달 번들 단가: 저장한 달 중 가장 가까운 지난 달 것 (11월에 올려도 지난 달은 그대로) */
+  function dispPriceOf(prices, ym) { var ks = Object.keys(prices || {}).filter(function (k) { return k <= ym && Number(prices[k]) > 0; }).sort(); return ks.length ? { v: Number(prices[ks[ks.length - 1]]), ym: ks[ks.length - 1] } : null; }
+  function drawDispMonth(quiet) {
+    var st = dispState(), box = $('#dpBody'), money = can('analysis') || isPartner(), rev = can('analysis'), curYm = todayYmd().slice(0, 7);
+    clearTimeout(st.mTimer);
+    var ms = []; for (var i = 0; i < 18; i++) ms.push(ymAdd(curYm, -i));
+    if (!(quiet && $('#dpMBody'))) box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span><button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
     $('#dpYm').onchange = function () { st.ym = this.value; drawDispMonth(); syncRoute(); };
-    var MT = [];
-    Promise.all([loadDispTabs(), money ? loadDispRates() : null, loadPlaces()]).then(function (z) { var all = z[0]; MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) {
+    var MT = [], PR = null;
+    Promise.all([loadDispTabs(), money ? loadDispRates() : null, loadPlaces(), rev ? api('dispatch.price', { cust: st.cust }).then(function (r) { return r.prices || {}; }).catch(function () { return null; }) : null]).then(function (z) { PR = z[3]; var all = z[0]; MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) {
       var el = $('#dpMBody'); if (!el) return;
       // 고른 탭(지역)만: 처음엔 전부
       var names = MT.map(function (t) { return t[0]; }); if (!st.mTabs || !st.mTabs.some(function (n) { return names.indexOf(n) !== -1; })) st.mTabs = names.slice();
-      var on = function (tab) { return st.mTabs.indexOf(tab) !== -1; };
+      var on = function (tab) { return st.mTabs.indexOf(tab) !== -1; }, price = rev && PR ? dispPriceOf(PR, st.ym) : null;
       $('#dpMTabs').innerHTML = MT.map(function (t) { return '<button type="button" class="chip' + (on(t[0]) ? ' on' : '') + '" data-mt="' + esc(t[0]) + '">' + esc(t[0]) + '</button>'; }).join('');
       $$('[data-mt]').forEach(function (b) { b.onclick = function () { var n = b.dataset.mt, i = st.mTabs.indexOf(n); if (i === -1) st.mTabs.push(n); else if (st.mTabs.length > 1) st.mTabs.splice(i, 1); else { toast('탭을 하나 이상 골라야 해요.', 'err'); return; } drawDispMonth(); }; });
       var orders = [], tk = {}, cars = {};
@@ -7951,29 +7955,64 @@
         var r = { tab: tab, date: date, no: no, t: t, os: os, ret: ret, code: dispCode({ tab: tab }, date, os[0].d.from, no), fcs: stops.map(function (s) { return s.fc; }), b: ret ? 0 : dispBundles(os), kg: ret ? 0 : os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0), ton: ret ? '회차' : jb ? '합차' : cost ? cost.ton : (t.ton || ''), base: base, ex: ex, miss: cost ? cost.miss : [] };
         r.jm = !!jb; r.note = jb ? '합차 · ' + joinName(jb) + '에 포함' : jm ? '합차(기준) · ' + jm.map(joinName).join(', ') + ' 착지 포함' : '';
         if (!jb && !jm && jn.length) { base = r.base = null; r.note = '합차 · 금액은 담당자 확인'; } // 묶인 탭을 못 보는 화면(협력사)
-        r.amt = base == null ? null : base + ex; r.warn = r.jm ? '' : ret && !base ? '회차비 입력 필요' : base == null ? (r.note ? '' : '단가 없음') : r.miss.length ? '일부 착지 단가 없음: ' + r.miss.join(', ') : '';
+        r.amt = base == null ? null : base + ex; r.rv = t.rev != null && t.rev !== '' ? Number(t.rev) : null; r.revenue = r.rv != null ? r.rv : price ? r.b * price.v : null; r.warn = r.jm ? '' : ret && !base ? '회차비 입력 필요' : base == null ? (r.note ? '' : '단가 없음') : r.miss.length ? '일부 착지 단가 없음: ' + r.miss.join(', ') : '';
         var ck = (t.car || '') + (t.driver ? ' · ' + t.driver : ''); if (ck.trim() && !r.jm) cars[ck] = (cars[ck] || 0) + 1;
         return r;
       }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : MT.map(function (t) { return t[0]; }).indexOf(a.tab) - MT.map(function (t) { return t[0]; }).indexOf(b.tab) || a.no - b.no; });
-      var sum = {}, tot = { t: 0, amt: 0, none: 0 };
-      rows.forEach(function (r) { var x = sum[r.tab] || (sum[r.tab] = { t: 0, ret: 0, b: 0, kg: 0, amt: 0, none: 0, jm: 0 }); x.b += r.b; x.kg += r.kg; if (r.jm) { x.jm++; return; } x.t++; if (r.ret) x.ret++; if (r.amt == null) { x.none++; tot.none++; } else { x.amt += r.amt; tot.amt += r.amt; } tot.t++; }); // 합차로 다른 탭 차에 탄 호차는 대수·금액에서 빼요
+      var sum = {}, tot = { t: 0, amt: 0, none: 0, rev: 0, fix: 0, b: 0, fb: 0 };
+      rows.forEach(function (r) { var x = sum[r.tab] || (sum[r.tab] = { t: 0, ret: 0, b: 0, kg: 0, amt: 0, none: 0, jm: 0, rev: 0 }); x.b += r.b; x.kg += r.kg; x.rev += r.revenue || 0; tot.rev += r.revenue || 0; tot.b += r.b; if (r.rv != null) { tot.fix += r.rv; tot.fb += r.b; } if (r.jm) { x.jm++; return; } x.t++; if (r.ret) x.ret++; if (r.amt == null) { x.none++; tot.none++; } else { x.amt += r.amt; tot.amt += r.amt; } tot.t++; }); // 합차로 다른 탭 차에 탄 호차는 대수·금액에서 빼요
       var kpis = MT.filter(function (t) { return sum[t[0]]; }).map(function (t) { var x = sum[t[0]]; return '<div><small>' + esc(t[0]) + '</small><b>' + (money ? won(x.amt) + '원' : won(x.t) + '대') + '</b><span class="small muted">' + won(x.t) + '대' + (x.ret ? ' (회차 ' + x.ret + ')' : '') + (x.jm ? ' (합차 ' + x.jm + '대 별도)' : '') + ' · ' + won(x.b) + '번들 · ' + won(x.kg) + 'kg' + (money && x.none ? ' · <span style="color:#C0392B">단가 없음 ' + x.none + '대 제외</span>' : '') + '</span></div>'; });
       if (money && kpis.length) kpis.push('<div class="dp-mtot"><small>총 합계</small><b>' + won(tot.amt) + '원</b><span class="small muted">' + won(tot.t) + '대' + (tot.none ? ' · <span style="color:#C0392B">단가 없음 ' + tot.none + '대 제외</span>' : '') + '</span></div>');
-      el.innerHTML = rows.length ? '<div class="tr-kpis" style="margin-bottom:14px">' + kpis.join('') + '</div>' + (unassigned ? '<p class="small" style="color:var(--orange);margin:0 0 8px">호차 미배정 오더 ' + unassigned + '줄은 목록에서 빠져 있어요.</p>' : '') +
-        '<div class="table-wrap"><table class="data dp-mtab"><thead><tr><th class="left">날짜</th><th class="left">탭</th><th>호차</th><th class="left">마감코드</th><th>상태</th><th class="left">착지</th><th>번들</th><th>kg</th><th class="left">차량정보</th><th class="left">운전원</th><th>톤수</th>' + (money ? '<th>운송비</th><th>대기료·지원</th><th>합계</th>' : '') + '</tr></thead><tbody>' +
+      var dash = '';
+      if (rev) {
+        var pf = tot.rev - tot.amt, be = tot.b - tot.fb > 0 ? Math.ceil((tot.amt - tot.fix) / (tot.b - tot.fb) / 10) * 10 : 0, red = function (v) { return v < 0 ? ' style="color:#C0392B"' : ''; };
+        dash = '<div class="dp-dash" style="margin-bottom:14px"><div class="actions" style="margin-bottom:8px"><b>' + esc(st.ym) + ' 매출·매입</b>' + (st.ym === curYm ? '<span class="small muted">(이번 달 · 1분마다 새로 고침)</span>' : '') + '<span class="spacer"></span><span class="small muted">번들 단가</span><input class="input input-sm" id="dpPrice" inputmode="numeric" style="width:110px;text-align:right" value="' + (PR && PR[st.ym] ? won(PR[st.ym]) : '') + '" placeholder="' + (price ? won(price.v) : '단가 입력') + '"><span class="small">원</span><button class="btn btn-sm" id="dpPriceSave"' + (PR ? '' : ' disabled title="서버 업데이트 필요"') + '>저장</button></div>' +
+          (PR == null ? '<p class="small err-text" style="margin:0 0 8px">서버(Code.js)가 예전 버전이라 번들 단가를 불러오지 못했어요. 새 버전으로 배포해 주세요.</p>' : !price ? '<p class="small err-text" style="margin:0 0 8px">이 달 번들 단가를 넣고 저장하면 매출이 계산돼요.</p>' : price.ym !== st.ym ? '<p class="small muted" style="margin:0 0 8px">' + esc(price.ym) + ' 단가 ' + won(price.v) + '원을 이어 쓰는 중이에요. 이 달 단가가 다르면 넣고 저장하세요.</p>' : '') +
+          '<div class="tr-kpis"><div><small>매출</small><b>' + won(tot.rev) + '원</b><span class="small muted">' + won(tot.b) + '번들' + (price ? ' × ' + won(price.v) + '원' : '') + (tot.fix ? ' · 직접 고친 매출 ' + won(tot.fix) + '원 포함' : '') + '</span></div>' +
+          '<div><small>매입</small><b>' + won(tot.amt) + '원</b><span class="small muted">' + won(tot.t) + '대' + (tot.none ? ' · <span style="color:#C0392B">단가 없음 ' + tot.none + '대 빠짐</span>' : '') + '</span></div>' +
+          '<div><small>이익</small><b' + red(pf) + '>' + won(pf) + '원</b><span class="small muted">매출 − 매입</span></div>' +
+          '<div><small>이익률</small><b' + red(pf) + '>' + (tot.rev ? (pf / tot.rev * 100).toFixed(1) + '%' : '–') + '</b><span class="small muted">이익 ÷ 매출</span></div>' +
+          '<div><small>손익분기 번들 단가</small><b>' + (be ? won(be) + '원' : '–') + '</b><span class="small muted">(매입 − 직접 고친 매출) ÷ 번들</span></div></div></div>';
+      }
+      el.innerHTML = rows.length ? dash + '<div class="tr-kpis" style="margin-bottom:14px">' + kpis.join('') + '</div>' + (unassigned ? '<p class="small" style="color:var(--orange);margin:0 0 8px">호차 미배정 오더 ' + unassigned + '줄은 목록에서 빠져 있어요.</p>' : '') +
+        '<div class="table-wrap"><table class="data dp-mtab"><thead><tr><th class="left">날짜</th><th class="left">탭</th><th>호차</th><th class="left">마감코드</th><th>상태</th><th class="left">착지</th><th>번들</th><th>kg</th><th class="left">차량정보</th><th class="left">운전원</th><th>톤수</th>' + (money ? '<th>운송비</th><th>대기료·지원</th><th>합계</th>' : '') + (rev ? '<th>매출</th>' : '') + '</tr></thead><tbody>' +
         rows.map(function (r) { return '<tr' + (r.ret ? ' class="dp-mret"' : '') + '><td class="left"><button class="dp-edit" data-open="' + r.date + '|' + esc(r.tab) + '" title="이 날짜 배차 열기">' + r.date.slice(5) + ' (' + WD[dDow(r.date)] + ')</button></td><td class="left">' + esc(r.tab) + '</td><td class="num">' + r.no + '</td><td class="left small">' + esc(r.code) + '</td><td>' + esc(r.t.status || '배차전') + '</td><td class="left small wrap">' + esc(r.fcs.join(' > ')) + '</td><td class="num">' + won(r.b) + '</td><td class="num">' + won(r.kg) + '</td><td class="left">' + esc(r.t.car || '') + '</td><td class="left">' + esc(r.t.driver || '') + '</td><td>' + esc(r.ton) + '</td>' +
-          (money ? '<td class="num">' + (r.base == null ? '–' : (r.ret ? '<span class="small muted">회차</span> ' : '') + won(r.base)) + '</td><td class="num">' + (r.ex ? won(r.ex) : '') + '</td><td class="num"><b>' + (r.amt == null ? '–' : won(r.amt)) + '</b>' + (r.warn ? '<div class="err-text small">' + esc(r.warn) + '</div>' : '') + (r.note ? '<div class="small muted">' + esc(r.note) + '</div>' : '') + '</td>' : '') + '</tr>'; }).join('') +
-        (money ? '<tr class="dp-msum"><td class="left" colspan="11"><b>합계</b> ' + won(tot.t) + '대</td><td></td><td></td><td class="num"><b>' + won(tot.amt) + '</b></td></tr>' : '') +
+          (money ? '<td class="num">' + (r.base == null ? '–' : (r.ret ? '<span class="small muted">회차</span> ' : '') + won(r.base)) + '</td><td class="num">' + (r.ex ? won(r.ex) : '') + '</td><td class="num"><b>' + (r.amt == null ? '–' : won(r.amt)) + '</b>' + (r.warn ? '<div class="err-text small">' + esc(r.warn) + '</div>' : '') + (r.note ? '<div class="small muted">' + esc(r.note) + '</div>' : '') + '</td>' : '') +
+          (rev ? '<td class="num"><button class="dp-edit" data-rev="' + esc(r.tab) + '|' + r.date + '|' + r.no + '" title="눌러서 매출 직접 고치기 (협의 단가·실비 등)">' + (r.revenue == null ? '–' : won(r.revenue)) + '</button>' + (r.rv != null ? '<div class="small" style="color:var(--orange)">직접 고침</div>' : '') + '</td>' : '') + '</tr>'; }).join('') +
+        (money ? '<tr class="dp-msum"><td class="left" colspan="11"><b>합계</b> ' + won(tot.t) + '대</td><td></td><td></td><td class="num"><b>' + won(tot.amt) + '</b></td>' + (rev ? '<td class="num"><b>' + won(tot.rev) + '</b></td>' : '') + '</tr>' : '') +
         '</tbody></table></div>' + (Object.keys(cars).length ? '<h3 style="margin:16px 0 8px">차량 · 기사별 운행 <span class="muted small">' + esc(st.ym) + '</span></h3><div class="chips">' + Object.keys(cars).sort(function (a, b) { return cars[b] - cars[a]; }).map(function (k) { return '<span class="chip">' + esc(k) + ' <span class="cnt">' + cars[k] + '</span></span>'; }).join('') + '</div>' : '')
         : '<p class="muted" style="margin:0">' + esc(st.ym) + ' 기록이 없어요.</p>';
       $$('[data-open]', el).forEach(function (b) { b.onclick = function () { var p = b.dataset.open.split('|'); st.date = p[0]; st.tab = p[1]; st.view = 'day'; st.tabs = null; renderDispatch(); }; });
+      var ps = $('#dpPriceSave'); if (ps) ps.onclick = function () {
+        var v = dispNum($('#dpPrice').value), btn = this; busy(btn, true, '…');
+        api('dispatch.priceSave', { cust: st.cust, ym: st.ym, price: v }).then(function () { toast(v ? st.ym + ' 번들 단가 ' + won(v) + '원 저장' : st.ym + ' 단가를 지웠어요 (지난 달 단가를 이어 써요)'); drawDispMonth(true); })
+          .catch(function (err) { busy(btn, false); toast(/알 수 없는|unknown/i.test(err.message) ? '서버(Code.js)를 새 버전으로 배포해야 저장돼요.' : err.message, 'err'); });
+      };
+      $$('[data-rev]', el).forEach(function (b) { b.onclick = function () {
+        var p = b.dataset.rev.split('|'), r = rows.filter(function (x) { return x.tab === p[0] && x.date === p[1] && x.no === Number(p[2]); })[0]; if (!r) return;
+        var key = st.cust + (MT.filter(function (t) { return t[0] === r.tab; })[0] || ['', ''])[1];
+        modal({ title: '매출 직접 고치기', eyebrow: r.tab + ' · ' + r.date + ' · ' + r.no + '호차',
+          body: '<p class="muted small" style="margin:0 0 8px">' + won(r.b) + '번들' + (price ? ' × ' + won(price.v) + '원 = ' + won(r.b * price.v) + '원' : '') + ' · 협의 단가·실비처럼 다르게 받는 호차만 금액을 넣어요. 비우면 번들 × 단가로 돌아가요.</p><div class="field"><label>매출 (원)</label><input class="input" id="dpRv" inputmode="numeric" value="' + (r.rv != null ? won(r.rv) : '') + '"></div>',
+          foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="dpRvOk">저장</button>',
+          onMount: function (m, close) {
+            var inp = $('#dpRv', m); inp.focus();
+            $('#dpRvOk', m).onclick = function () {
+              var raw = inp.value.trim(), v = raw === '' ? '' : dispNum(raw), btn = this; busy(btn, true, '저장 중…');
+              api('dispatch.save', { cust: key, date: r.date, patch: 1, orders: [], drop: [], trucks: [{ token: r.t.token || '', no: r.no, set: { rev: v } }] }).then(function (res) {
+                if (!(res.trucks || []).some(function (t) { return 'rev' in t; })) toast('서버(Code.js)를 새 버전으로 배포해야 매출이 저장돼요.', 'err'); else toast('매출을 저장했어요.');
+                close(); drawDispMonth(true);
+              }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+            };
+          } });
+      }; });
+      if (st.ym === curYm) st.mTimer = setTimeout(function again() { if (state.view !== 'dispatch' || st.view !== 'month' || st.ym !== curYm) return; if (document.hidden || $('.backdrop') || (document.activeElement && document.activeElement.id === 'dpPrice')) { st.mTimer = setTimeout(again, 60000); return; } drawDispMonth(true); }, 60000);
       var x = $('#dpMX'); x.disabled = !rows.length;
       x.onclick = function () {
         var btn = this; busy(btn, true, '…');
         var sheets = [];
-        if (money) sheets.push({ name: '요약', widths: [18, 8, 8, 14, 12], rows: [['탭', '대수', '회차', '합계(원)', '단가 없음(대)']].concat(MT.filter(function (t) { return sum[t[0]]; }).map(function (t) { var s = sum[t[0]]; return [t[0], s.t, s.ret, s.amt, s.none]; })).concat([['총 합계', tot.t, '', tot.amt, tot.none]]) });
-        sheets.push({ name: '호차', widths: [12, 14, 6, 26, 9, 30, 8, 9, 14, 10, 14, 8].concat(money ? [12, 10, 10, 10, 12, 24] : []), rows: [['날짜', '탭', '호차', '마감코드', '상태', '착지', '번들(동방)', 'kg', '차량정보', '운전원', '연락처', '톤수'].concat(money ? ['운송비(단가·회차비)', '대기료', '운송료지원', '합계', '확인'] : [])].concat(rows.map(function (r) {
-          return [r.date, r.tab, r.no, r.code, r.t.status || '배차전', r.fcs.join(' > '), r.b, r.kg, r.t.car || '', r.t.driver || '', r.t.phone || '', r.ton].concat(money ? [r.base == null ? '' : r.base, Number(r.t.wait) || 0, Number(r.t.support) || 0, r.amt == null ? '' : r.amt, r.warn || r.note] : []);
+        if (money) sheets.push({ name: '요약', widths: [18, 8, 8, 14, 12].concat(rev ? [10, 14, 14] : []), rows: [['탭', '대수', '회차', '합계(원)', '단가 없음(대)'].concat(rev ? ['번들', '매출(원)', '이익(원)'] : [])].concat(MT.filter(function (t) { return sum[t[0]]; }).map(function (t) { var s = sum[t[0]]; return [t[0], s.t, s.ret, s.amt, s.none].concat(rev ? [s.b, s.rev, s.rev - s.amt] : []); })).concat([['총 합계', tot.t, '', tot.amt, tot.none].concat(rev ? [tot.b, tot.rev, tot.rev - tot.amt] : [])]).concat(rev ? [[], ['번들 단가', price ? price.v : '']] : []) });
+        sheets.push({ name: '호차', widths: [12, 14, 6, 26, 9, 30, 8, 9, 14, 10, 14, 8].concat(money ? [12, 10, 10, 10, 12, 24] : []).concat(rev ? [12, 10] : []), rows: [['날짜', '탭', '호차', '마감코드', '상태', '착지', '번들(동방)', 'kg', '차량정보', '운전원', '연락처', '톤수'].concat(money ? ['운송비(단가·회차비)', '대기료', '운송료지원', '합계', '확인'] : []).concat(rev ? ['매출', '매출 확인'] : [])].concat(rows.map(function (r) {
+          return [r.date, r.tab, r.no, r.code, r.t.status || '배차전', r.fcs.join(' > '), r.b, r.kg, r.t.car || '', r.t.driver || '', r.t.phone || '', r.ton].concat(money ? [r.base == null ? '' : r.base, Number(r.t.wait) || 0, Number(r.t.support) || 0, r.amt == null ? '' : r.amt, r.warn || r.note] : []).concat(rev ? [r.revenue == null ? '' : r.revenue, r.rv != null ? '직접 고침' : ''] : []);
         })) });
         sheets.push({ name: '오더', widths: [12, 14, 6, 26, 9, 18, 12, 8, 8, 8, 18, 14, 14, 10, 14, 12, 8], rows: [['날짜', '탭', '호차', '마감코드', '상태', '센터명', 'Item', '번들(동방)', '패키지', 'kg', 'BL', '발주번호', '차량정보', '운전원', '연락처', '입차 예정시간', '톤수']].concat(orders.map(function (o) { var t = tk[o.tab + '|' + o.date + '|' + o.truck] || {}, ret = t.status === '회차', has = o.truck !== '' && o.truck != null; return [o.date, o.tab, o.truck, has ? dispCode({ tab: o.tab }, o.date, o.d.from, o.truck) : '', has ? (t.status || '배차전') : '미배정', o.d.fc, o.d.item, ret ? 0 : dispOrderB(o), ret ? 0 : dispPkg(o.d.bundle), ret ? 0 : dispNum(o.d.kg), o.d.bl, o.d.po, t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '']; })) });
         downloadXlsx('배차기록_' + st.cust + '_' + st.ym + '.xlsx', sheets).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
