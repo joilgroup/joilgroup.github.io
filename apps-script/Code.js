@@ -2586,8 +2586,10 @@ function destSave_(session, req) {
 function loadingList_() { headerSheet_(SHEET_LOADING, LOADING_HEADER); var ph = placePhotos_(); return rowsOf_(SHEET_LOADING, LOADING_HEADER).map(function (r) { var id = String(r[0]); return { id: id, cust: custOfRow_(r[9]), name: dispTxt_(r[1]), addr: dispTxt_(r[2]), time: dispTxt_(r[3]), contact: dispTxt_(r[4]), memo: dispTxt_(r[5]), rateFrom: dispTxt_(r[8]), manager: dispTxt_(r[10]), photos: ph.filter(function (x) { return x.place === id; }).map(function (x) { return { id: x.id, cap: x.cap }; }) }; }).sort(function (a, b) { return a.name.localeCompare(b.name); }); }
 /** 상차지 찾기 (기사 링크용): 같은 업체 먼저, 없으면 다른 업체 같은 이름 */
 function loadingFind_(cust, name) {
-  var n = function (v) { return String(v || '').replace(/\s|\(주\)|㈜/g, ''); }, l = loadingList_().filter(function (p) { return n(p.name) === n(name); });
-  return l.filter(function (p) { return p.cust === cust; })[0] || l[0] || null;
+  var n = function (v) { return String(v || '').replace(/\s|\(주\)|㈜/g, ''); }, ln = function (v) { return n(v).replace(/[()（）\[\]_\-·.]/g, ''); }, all = loadingList_();
+  var pick = function (f) { var l = all.filter(f); return l.filter(function (p) { return p.cust === cust; })[0] || l[0] || null; };
+  if (!n(name)) return null; // 이름이 같은 것 → 괄호·밑줄만 다른 것('평택(선진)' = '평택_선진') → 단가표 출발명이 같은 것
+  return pick(function (p) { return n(p.name) === n(name); }) || pick(function (p) { return ln(p.name) === ln(name); }) || pick(function (p) { return p.rateFrom && ln(p.rateFrom) === ln(name); });
 }
 /** 상차지 한 줄 (ID 다음 칸부터 · 헤더 길이 - 1) */
 function loadingRow_(session, x, cust) {

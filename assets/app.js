@@ -6814,7 +6814,12 @@
   /** 이 업체 것만 (cust가 아예 없는 줄 = 서버가 예전 버전 → 다 보여요) */
   function mineOf(list, cust) { cust = cust || dispState().cust; return (list || []).filter(function (x) { return x.cust == null || rowCust(x) === cust; }); }
   /** 상차지 찾기: 지금 업체 것 먼저, 없으면 다른 업체의 같은 이름 (예전 자료로 계산하던 운송비가 끊기지 않게) */
-  function findPlace(name) { var n = custNorm(name), l = (dispState().places || []).filter(function (p) { return custNorm(p.name) === n; }); return mineOf(l)[0] || l[0] || null; }
+  /** 상차지 찾기: 이름이 같은 것 → 괄호·밑줄만 다른 것('평택(선진)' = '평택_선진') → 단가표 출발명이 같은 것 */
+  function findPlace(name) {
+    var all = dispState().places || [], n = custNorm(name), loose = function (v) { return custNorm(v).replace(/[()（）\[\]_\-·.]/g, ''); }, ln = loose(name);
+    var pick = function (f) { var l = all.filter(f); return mineOf(l)[0] || l[0] || null; };
+    return n ? pick(function (p) { return custNorm(p.name) === n; }) || pick(function (p) { return loose(p.name) === ln; }) || pick(function (p) { return p.rateFrom && loose(p.rateFrom) === ln; }) : null;
+  }
   /** 상차지 정보: 상차지 설정에 없으면 하차지 주소록에서 (역방향 — 출발이 FC일 때 주소만) */
   function placeFor(from) { var p = findPlace(from); if (p) return p; var e = destEntry(from, from); return e ? { name: e.name || from, addr: e.addr } : null; }
   /** 하차지 주소록에서 찾기: 코드(도착지 코드)가 같은 것 → 없으면 하차지명이 같은 것 */
