@@ -35,14 +35,16 @@
       var off = ok(1) > ok(0) ? 1 : 0; DISP_COLS.forEach(function (c, j) { idx[c[0]] = j + off; });
     }
     if (idx.date == null || idx.fc == null) return { items: [], warn: '"납품일자"나 "센터명" 칸을 찾지 못했어요. 동방 엑셀의 제목 줄까지 같이 복사해 주세요.' };
-    var items = [], bad = 0;
+    var items = [], bad = 0, seen = {};
     rows.forEach(function (r) {
       var d = {}; DISP_COLS.forEach(function (c) { var j = idx[c[0]]; d[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); });
       if (!d.fc && d.dest) d.fc = d.dest; // 컬리처럼 센터명이 비어 있으면 도착지(MK_GMP 등)를 센터명으로
       var date = dispYmd(d.date); if (!date || !d.fc) { bad++; return; }
       dispCleanD(d);
       d.date = date; d._n = items.length + bad;
-      items.push({ date: date, key: dispOrderKey(date, d), d: d });
+      // 한 번에 붙여넣은 것 중 발주번호·BL·착지·수량까지 같은 줄은 서로 다른 오더 (#2, #3) · 다음에 같은 걸 또 붙여넣으면 키가 같아서 건너뜀
+      var key = dispOrderKey(date, d), n = seen[key] = (seen[key] || 0) + 1;
+      items.push({ date: date, key: n > 1 ? key + '#' + n : key, d: d });
     });
     return { items: items, warn: bad ? '날짜나 센터명이 없는 ' + bad + '줄은 건너뛰었어요.' + (!items.length ? ' 동방 엑셀의 C열(출발센터)부터 복사했는지 확인해 주세요.' : '') : '' };
   }
