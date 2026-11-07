@@ -10,7 +10,7 @@
 ## 새 업체 추가 = 파일 하나 + script 한 줄
 
 1. `assets/cust/새업체.js`를 만들어요 (아래 틀). 업체 이름은 배차시트 "업체 고르기"에 나오는 이름이고, 서버 저장 키(`업체+탭 접미사`)에도 그대로 쓰여요.
-2. `index.html`에서 `assets/app.js` **위에** `<script src="assets/cust/새업체.js"></script>` 한 줄을 넣어요. 업체 고르기 순서 = script 순서 (맨 앞이 기본 업체).
+2. `index.html` 맨 아래 불러오기 목록(`js = [...]`)에서 `assets/app.js` **앞에** `'assets/cust/새업체.js'` 한 줄을 넣어요. 업체 고르기 순서 = script 순서 (맨 앞이 기본 업체).
 
 ```js
 /* 새업체 배차 */

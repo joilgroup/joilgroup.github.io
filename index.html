@@ -9,19 +9,34 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
-  <link rel="stylesheet" href="assets/style.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%231E1C19'/%3E%3Cpath d='M0 13h32v2H0z' fill='%23E0472E'/%3E%3Cpath d='M0 15h32v2H0z' fill='%23F07A22'/%3E%3Cpath d='M0 17h32v2H0z' fill='%23F4BE2E'/%3E%3Cpath d='M0 19h32v2H0z' fill='%232A9DB0'/%3E%3C/svg%3E">
 </head>
 <body>
   <div id="app"></div>
   <div class="toasts" id="toasts"></div>
 
-  <script src="config.js"></script>
-  <script src="apps-script/Calc.js"></script>
-  <script src="assets/demo.js"></script>
-  <!-- 업체별 배차 기능 (업체 고르기 순서 = 이 순서 · 새 업체는 assets/cust/README.md) -->
-  <script src="assets/cust/coupang.js"></script>
-  <script src="assets/cust/sds.js"></script>
-  <script src="assets/app.js"></script>
+  <!-- 항상 최신 화면: 파일마다 서버에 "바뀌었나?"만 물어보고(안 바뀌었으면 다시 받지 않아요) 바뀐 파일만 받아요.
+       태블릿·휴대폰이 예전 파일을 붙잡고 있어서 캐시를 지워야 하던 문제 때문 · 파일을 추가하면 아래 목록에 넣어요 -->
+  <script>
+  (function () {
+    var css = ['assets/style.css'];
+    var js = ['config.js', 'apps-script/Calc.js', 'assets/demo.js',
+      // 업체별 배차 기능 (업체 고르기 순서 = 이 순서 · 새 업체는 assets/cust/README.md)
+      'assets/cust/coupang.js', 'assets/cust/sds.js',
+      'assets/app.js'];
+    function get(u) { return window.fetch ? fetch(u, { cache: 'no-cache' }).then(function (r) { if (!r.ok) throw new Error(u); return r.text(); }) : Promise.reject(); }
+    css.forEach(function (u) {
+      get(u).then(function (t) { var s = document.createElement('style'); s.textContent = t; document.head.appendChild(s); })
+        .catch(function () { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = u + '?v=' + Date.now(); document.head.appendChild(l); });
+    });
+    function load(i) {
+      if (i >= js.length) return;
+      get(js[i]).then(function (t) { var s = document.createElement('script'); s.text = t + '\n//# sourceURL=' + js[i]; document.body.appendChild(s); load(i + 1); })
+        .catch(function () { var s = document.createElement('script'); s.src = js[i] + '?v=' + Date.now(); s.onload = s.onerror = function () { load(i + 1); }; document.body.appendChild(s); });
+    }
+    load(0);
+  })();
+  </script>
+  <noscript>자바스크립트를 켜야 사이트를 쓸 수 있어요.</noscript>
 </body>
 </html>

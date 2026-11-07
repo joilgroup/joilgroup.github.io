@@ -11,11 +11,12 @@
 
 ## 구조
 - `index.html` + `assets/app.js`(화면 전부, 바닐라 JS 하나의 IIFE) + `assets/style.css`
-- `assets/cust/*.js`: 배차시트의 **업체 전용 기능**(쿠팡부자재 `coupang.js`, 삼다수 `sds.js`). app.js보다 먼저 불러와 `window.JOIL_CUST`에 등록하고, app.js는 `custDef()` 훅(parse·message·truckTable 등)이 있으면 불러요. 업체 파일은 app.js 함수를 `H.이름`으로만 써요(app.js `custHelpers` 목록). 새 업체 = 파일 하나 + `index.html` script 한 줄 → `assets/cust/README.md`. **내 업체 일은 그 업체 파일 위주로** 고쳐요.
+- `assets/cust/*.js`: 배차시트의 **업체 전용 기능**(쿠팡부자재 `coupang.js`, 삼다수 `sds.js`). app.js보다 먼저 불러와 `window.JOIL_CUST`에 등록하고, app.js는 `custDef()` 훅(parse·message·truckTable 등)이 있으면 불러요. 업체 파일은 app.js 함수를 `H.이름`으로만 써요(app.js `custHelpers` 목록). 새 업체 = 파일 하나 + `index.html` 불러오기 목록(`js = [...]`)에 한 줄 → `assets/cust/README.md`. **내 업체 일은 그 업체 파일 위주로** 고쳐요.
 - `assets/demo.js`: `config.js`의 `API_URL`이 비어 있으면 가짜 서버로 동작(데모 모드). **서버에 기능을 추가하면 demo.js에도 같은 동작을 넣어요.**
 - `apps-script/Code.js`: 서버(구글 Apps Script 웹 앱). 데이터는 구글 시트에 값만 저장(수식 없음). `Calc.js`는 견적 계산.
 - `drv.html`: 기사용 페이지(기사 링크). `driver-site/index.html`은 같은 내용을 회사명 없는 별도 주소에 올리는 복사본 — drv.html을 고치면 같이 고쳐요.
 - `config.js`: 서버 주소, 기사 사이트 주소, 카카오 지도 JS 키(공개용 키).
+- `index.html`은 css·js를 `<script src>`로 직접 넣지 않고, 맨 아래 작은 스크립트가 `fetch(..., {cache:'no-cache'})`로 불러와요(태블릿이 예전 파일을 붙잡지 않게). 파일을 추가하면 그 목록에 넣어요.
 
 ## 배포
 - 화면(app.js·style.css·demo.js·html): GitHub Pages는 **`claude/annyeong-m64uzj` 브랜치**에서 나가요(main 아님). 다른 작업 브랜치에서 일했으면 그 브랜치에도 올려야(fast-forward push) 1~2분 뒤 사이트에 반영돼요 — 사용자에게 먼저 물어보고.
