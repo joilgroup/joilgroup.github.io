@@ -7091,14 +7091,26 @@
       return map;
     });
   }
-  function openTruckMap(D, no) {
+  /** 체크한 오더만 지도로 미리 보기 (호차는 안 바꿔요): 가상의 호차로 묶어 추천 순서로 그리고 번들·무게·톤수·운송비를 같이 보여줘요 */
+  function openPeekMap(D, list) {
+    if (!list.length) return toast('지도로 볼 오더를 체크하세요.', 'err');
+    var NO = 9999, Dv = Object.assign({}, D, { orders: list.map(function (o, i) { return Object.assign({}, o, { truck: NO, seq: i + 1 }); }), trucks: [{ no: NO }] });
+    var rec = bestOrder(Dv, NO, 0), k = 0;
+    if (rec && !rec.ok) rec.order.forEach(function (i) { rec.stops[i].rows.forEach(function (o) { o.seq = ++k; }); });
+    var b = dispBundles(Dv.orders), kg = Dv.orders.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0), cost = can('analysis') ? truckCost(Dv, NO) : null, km = rec ? (rec.ok ? rec.cur : rec.len) : null;
+    var froms = list.map(function (o) { return o.d.from; }).filter(function (v, i, a) { return v && a.indexOf(v) === i; });
+    openTruckMap(Dv, NO, { title: '체크한 오더 지도 (미리보기)', note: '<p class="small" style="margin:10px 0 0"><b>' + truckStops(Dv, NO).length + '곳 · ' + won(b) + '번들 · ' + won(kg) + 'kg</b> · 톤수(자동) ' + esc(autoTon(kg, b)) + (km != null ? ' · 직선거리 약 ' + won(Math.round(km)) + 'km' : '') + (cost && cost.total != null ? ' · 예상 운송비 ' + won(cost.total) + '원' + (cost.miss && cost.miss.length ? ' (단가 없음: ' + esc(cost.miss.join(', ')) + ')' : '') : '') + '</p>' +
+      '<p class="hint" style="margin:4px 0 0">추천 순서(직선거리)로 그렸어요. 호차는 바뀌지 않아요 — 같이 가도 되면 그때 묶으세요.' + (froms.length > 1 ? ' <span class="err-text">상차지가 ' + froms.length + '곳이에요: ' + esc(froms.join(', ')) + ' (지도는 첫 상차지 기준)</span>' : '') + '</p>' });
+  }
+  function openTruckMap(D, no, opt) {
+    opt = opt || {};
     var J = joinView(D, no); if (J) { D = J.D; no = J.no; } // 합차: 묶인 탭 착지까지 한 지도에
     var st = dispState(), stops = truckStops(D, no), p = stops[0] && findPlace(stops[0].d.from), hue = 'hsl(' + ((no * 67) % 360) + ' 60% 45%)';
     var pts = [p && p.addr ? Object.assign({ label: '🏭', from: 1, title: p.name }, st.geo[geoKey(p.addr)] || {}) : null].concat(stops.map(function (s, i) { return Object.assign({ label: String(i + 1), title: s.fc }, st.geo[geoKey(s.d.addr)] || {}); }));
     var miss = [(!p || !p.addr) ? '상차지(상차지 설정에 주소 없음)' : (!st.geo[geoKey(p.addr)] ? '상차지 ' + p.name : '')].concat(stops.filter(function (s) { return !st.geo[geoKey(s.d.addr)]; }).map(function (s) { return s.fc; })).filter(Boolean);
-    modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 경로', wide: true,
+    modal({ eyebrow: D.tab + ' · ' + D.date, title: opt.title || no + '호차 경로', wide: true,
       body: '<div class="dp-map" id="dpMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div>' +
-        '<ol class="dp-route" style="margin-top:10px"><li class="from">🏭 ' + esc((p && p.name) || (stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) { return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b><span class="small muted">' + esc(s.d.addr || '') + '</span></li>'; }).join('') + '</ol>' +
+        (opt.note || '') + '<ol class="dp-route" style="margin-top:10px"><li class="from">🏭 ' + esc((p && p.name) || (stops[0] && stops[0].d.from) || '') + '</li>' + stops.map(function (s, i) { return '<li><span class="dp-sn">' + (i + 1) + '</span><b>' + esc(s.fc) + '</b><span class="small muted">' + esc(s.d.addr || '') + '</span></li>'; }).join('') + '</ol>' +
         (miss.length ? '<p class="hint err-text">지도에 못 찍은 곳: ' + esc(miss.join(', ')) + '</p>' : '') +
         (function () { var ap = stops.filter(function (s) { var g = st.geo[geoKey(s.d.addr)]; return g && g.approx; }).map(function (s) { return s.fc; }); return ap.length ? '<p class="hint" style="color:var(--orange)">정확한 번지를 못 찾아 동·읍·면 위치로 대략 찍은 곳: ' + esc(ap.join(', ')) + '</p>' : ''; })() + '<p class="hint">선은 하차 순서대로 이은 직선이에요. 실제 길은 기사님 화면의 길안내 버튼으로 봐요.</p>',
       onMount: function (m) { var el = $('#dpMap', m); drawRouteMap(el, pts, hue).catch(function (e) { el.innerHTML = '<div class="err-text small" style="padding:20px">' + esc(e.message) + '</div>'; }); }
@@ -7809,7 +7821,7 @@
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details>') + '</div>' +
       '<div class="card"' + (isPartner() || C.noOrderTable ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + (C.orderHead ? C.orderHead(orders, tb, tk) : orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg') + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + (C.orderWarn ? C.orderWarn(orders) : '') + '</h3></div>' +
         '<div class="actions"' + (isPartner() ? ' style="display:none"' : '') + '>' + (C.orderButtons ? C.orderButtons(D) : '') + '<button class="btn btn-sm btn-primary" id="dpGroup">체크한 오더 → 새 호차로 묶기</button><select class="input input-sm" id="dpTo" style="width:auto"><option value="">기존 호차에 넣기</option>' + trucks.map(function (n) { return '<option value="' + n + '">' + n + '호차</option>'; }).join('') + '</select>' +
-        '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button><button class="btn btn-sm" id="dpMove" title="체크한 오더를 다른 날짜로 옮겨요">날짜 변경</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
+        '<button class="btn btn-sm" id="dpUngroup">호차 풀기</button>' + (custDef().noMap ? '' : '<button class="btn btn-sm" id="dpPeek" title="체크한 오더만 지도로 미리 봐요 (호차는 안 바뀌어요)">지도 미리보기</button>') + '<button class="btn btn-sm" id="dpMove" title="체크한 오더를 다른 날짜로 옮겨요">날짜 변경</button><button class="btn btn-sm btn-ghost" id="dpDel">삭제</button></div></div>' +
         (orders.length ? '<div class="table-wrap"><table class="data dp-table"><thead><tr><th></th><th><input type="checkbox" id="dpAll"' + (isPartner() ? ' disabled' : '') + '></th><th>호차</th>' + (C.ordHead || '<th class="left">센터명</th><th class="left">도착지</th><th class="left">Item</th><th>번들</th><th>kg</th><th class="left">주소</th><th class="left">상하차 가능시간</th>') + '<th class="left">공지</th></tr></thead><tbody>' +
           orders.map(function (o) {
             var on = !!st.sel[o.id], t = o.truck;
@@ -7877,6 +7889,7 @@
     $('#dpTo').onchange = function () { var v = Number(this.value); if (!v) return; var l = picked(); if (!l.length) { this.value = ''; return; } l.forEach(function (o) { o.truck = v; }); st.sel = {}; redraw(); };
     $('#dpUngroup').onclick = function () { var l = picked(); if (!l.length) return; l.forEach(function (o) { o.truck = ''; }); st.sel = {}; redraw(); };
     $('#dpMove').onclick = function () { openMoveOrders(D, picked()); };
+    var pk = $('#dpPeek'); if (pk) pk.onclick = function () { var l = picked(); if (l.length) openPeekMap(D, l); };
     $('#dpDel').onclick = function () {
       var l = picked(); if (!l.length) return; if (!confirm('체크한 오더 ' + l.length + '줄을 지울까요? (다시 붙여넣으면 다시 들어와요)')) return;
       dispSaveNow().then(function () { return api('dispatch.deleteOrders', { cust: D.key, date: st.date, ids: l.map(function (o) { return o.id; }) }); })
