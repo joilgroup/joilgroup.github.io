@@ -6681,7 +6681,7 @@
     if (!DISP_TABS.some(function (t) { return t[0] === st.tab; })) st.tab = DISP_TABS[0][0];
   }
   /* ── 여러 사람이 같이 볼 때: 바뀐 칸만 저장 + 15초마다 조용히 확인해서 다른 사람 변경을 그 칸만 반영 ── */
-  var DISP_SYNC_KEYS = ['car', 'driver', 'phone', 'time', 'ton', 'memo', 'status', 'retCost', 'wait', 'support', 'join', 'rev'];
+  var DISP_SYNC_KEYS = ['car', 'driver', 'phone', 'time', 'ton', 'memo', 'status', 'retCost', 'wait', 'support', 'join', 'rev', 'cost'];
   function dispNv(v) { return v == null ? '' : String(v); }
   function dispPrep(r, tab, date, key) {
     r = r || { orders: [], trucks: [], days: {}, receipts: [] }; r.tab = tab; r.date = date; r.key = key;
@@ -7551,7 +7551,7 @@
       (rows.length ? '<ul>' + rows.join('') + '</ul>' : '<p class="ok-text" style="margin:8px 0 0">✓ 남은 일이 없어요.</p>') + '</div>';
   }
   /* 호차 상태 · 비용 (단가·회차·대기료·운송료지원은 분석 권한만) */
-  var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경'];
+  var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경', '조일배차']; // 조일배차 = 우리가 직접 배차
   function dispStatusFix(v) { return v === '배차중' ? '' : v === '차량변경' ? '정보변경' : (v || ''); }
   /** 마감 코드: 2026-10-12부자재[인천]1호차 */
   function dispCode(D, date, from, no) { return date + dispPrefix(D, from) + no + '호차'; }
@@ -7564,7 +7564,7 @@
   function statusSelect(D, no, t) {
     var v = t.status || '배차전';
     // 협력사는 '정보넘김'을 고를 수 없어요 (이미 정보넘김이면 그대로 보여줌)
-    return '<select class="input input-sm dp-stsel s' + DISP_STATUS.indexOf(v) + '" data-st="' + esc(D.tab) + '|' + no + '" title="호차 상태">' + DISP_STATUS.filter(function (x) { return !(isPartner() && x === '정보넘김' && v !== '정보넘김'); }).map(function (x) { return '<option' + (x === v ? ' selected' : '') + (isPartner() && x === '정보넘김' ? ' disabled' : '') + '>' + x + '</option>'; }).join('') + '</select>';
+    return '<select class="input input-sm dp-stsel s' + DISP_STATUS.indexOf(v) + '" data-st="' + esc(D.tab) + '|' + no + '" title="호차 상태">' + DISP_STATUS.filter(function (x) { return !(isPartner() && (x === '정보넘김' || x === '조일배차') && v !== x); }).map(function (x) { return '<option' + (x === v ? ' selected' : '') + (isPartner() && (x === '정보넘김' || x === '조일배차') ? ' disabled' : '') + '>' + x + '</option>'; }).join('') + '</select>';
   }
 
   /** 오더 날짜 변경: 고른 오더를 다른 날짜의 같은 탭으로 옮겨요 (호차는 풀려요 · 서버가 예전이면 복사 후 지우기) */
@@ -7962,13 +7962,108 @@
       };
     });
   }
+  /* 예전 구글시트 배차 기록 옮기기 (쿠팡부자재 · 분석 권한): 시트 한 달 탭을 '오더유형' 제목 줄부터 붙여넣으면
+     차량정보가 있는 줄 = 새 호차, 빈 줄·'경유' = 위 호차의 착지 · 출발센터로 탭을 정하고 → 오더 가져오기 → 날짜마다 호차·차량정보·상태·대기료(·실제 매입/매출) 저장 */
+  var HIST_COLS = [['kind', '오더유형'], ['from', '출발센터'], ['date', '납품일자'], ['fc', '도착지'], ['addr', '도착지주소'], ['bundle', '번들'], ['kg', '무게(KG)'], ['car', '차량정보'], ['driver', '운전원'], ['phone', '연락처'], ['time', '입차시간'], ['ton', '톤수'], ['status', '배차현황'], ['note', '비고'], ['wait', '대기료'], ['cost', '실제매입'], ['rev', '실제매출'], ['memo', '매입메모']];
+  var HIST_ST = { '정보넘김': '정보넘김', '조일배차': '조일배차', '배차완료': '배차완료', '회차': '회차', '넘버바뀜': '정보변경', '차량변경': '정보변경', '정보변경': '정보변경' };
+  function histParse(text) {
+    var rows = parseTsv(text), nm = function (v) { return String(v || '').replace(/\s/g, '').toUpperCase(); }, hi = -1, idx = {};
+    for (var i = 0; i < Math.min(rows.length, 10); i++) if (rows[i].map(nm).indexOf('오더유형') !== -1 && rows[i].map(nm).indexOf('납품일자') !== -1) { hi = i; break; }
+    if (hi === -1) return { err: '"오더유형"·"납품일자"가 있는 제목 줄까지 같이 복사해 주세요.' };
+    var h = rows[hi].map(nm); HIST_COLS.forEach(function (c) { var j = h.indexOf(nm(c[1])); if (j !== -1) idx[c[0]] = j; });
+    var trucks = [], cur = null, n = 0, bad = 0;
+    rows.slice(hi + 1).forEach(function (r) {
+      var g = function (k) { return idx[k] == null ? '' : String(r[idx[k]] == null ? '' : r[idx[k]]).trim(); }, date = dispYmd(g('date')), fc = g('fc');
+      if (!date || !fc) { if (r.some(function (v) { return String(v || '').trim(); })) bad++; return; }
+      var o = { kind: g('kind'), from: g('from'), date: date, fc: fc, addr: g('addr'), bundle: g('bundle'), kg: g('kg') }, st = g('status');
+      if (g('car') && st !== '경유' || !cur || cur.date !== date) {
+        cur = { date: date, car: g('car'), driver: g('driver'), phone: g('phone'), time: g('time'), ton: g('ton'), status: HIST_ST[st] || '', st0: st, wait: dispNum(g('wait')), cost: g('cost'), rev: g('rev'), memo: g('memo'), os: [] };
+        trucks.push(cur);
+      } else if (g('wait')) cur.wait += dispNum(g('wait'));
+      cur.os.push(o); n++;
+    });
+    return { trucks: trucks, n: n, bad: bad, hasCost: idx.cost != null };
+  }
+  function histTab(MT, o) {
+    var nm = function (v) { return String(v || '').replace(/물류센터|센터|\s/g, ''); }, kind = o.kind || '부자재';
+    var tries = [o.from, o.fc].map(nm).filter(Boolean), reg = function (t) { return t[0].split('-').slice(1).join('-'); };
+    if (/^GML/i.test(o.from)) tries.unshift('부산');
+    for (var i = 0; i < tries.length; i++) {
+      var f = tries[i], m = MT.filter(function (t) { return reg(t) && (f === nm(reg(t)) || f.indexOf(nm(reg(t))) === 0); });
+      if (m.length) { var best = m.filter(function (t) { return t[0].indexOf(kind) === 0 && nm(reg(t)) === f; })[0] || m.filter(function (t) { return nm(reg(t)) === f; })[0] || m.filter(function (t) { return t[0].indexOf(kind) === 0; })[0] || m.filter(function (t) { return t[0].indexOf('부자재') === 0; })[0] || m[0]; return best[0]; }
+    }
+    return MT[0] ? MT[0][0] : '';
+  }
+  function openHistImport(MT, done) {
+    var st = dispState(), P = null, map = {};
+    modal({ wide: true, eyebrow: '배차시트 · 월별 기록 · 분석 권한자만', title: '시트에서 가져오기 (예전 배차 기록)',
+      body: '<p class="muted small" style="margin:0 0 8px">구글시트 한 달 탭을 <b>B열 "오더유형" 제목 줄부터</b> 끝까지 복사해서 붙여넣어요 (인천·평택 시트와 부산 시트를 이어 붙여도 돼요). 차량정보가 있는 줄이 새 호차, 차량정보가 빈 줄·"경유" 줄은 위 호차의 착지예요. 이미 사이트에 오더가 있는 날짜는 건너뛰어요.</p>' +
+        '<textarea class="input" id="hiIn" rows="6" placeholder="여기에 붙여넣기"></textarea><div id="hiInfo" style="margin-top:10px"></div>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="hiGo" disabled>가져오기</button>',
+      onMount: function (m, close) {
+        var info = $('#hiInfo', m), go = $('#hiGo', m);
+        var draw = function () {
+          if (!P || P.err) { info.innerHTML = P ? '<p class="err-text">' + esc(P.err) + '</p>' : ''; go.disabled = true; return; }
+          var by = {}, ds = {}; P.trucks.forEach(function (t) { var k = (t.os[0].kind || '부자재') + ' · ' + t.os[0].from; if (!(k in map)) map[k] = histTab(MT, t.os[0]); t.tab = map[k]; var x = by[k] = by[k] || { t: 0, o: 0 }; x.t++; x.o += t.os.length; ds[t.date] = 1; });
+          var days = Object.keys(ds).sort(), sc = {}; P.trucks.forEach(function (t) { var s0 = t.status || '배차전'; sc[s0] = (sc[s0] || 0) + 1; });
+          info.innerHTML = '<p class="small" style="margin:0 0 8px"><b>' + P.trucks.length + '대 · ' + P.n + '줄</b> · ' + esc(days[0]) + ' ~ ' + esc(days[days.length - 1]) + ' (' + days.length + '일) · ' + Object.keys(sc).map(function (k) { return esc(k) + ' ' + sc[k]; }).join(' · ') + (P.hasCost ? ' · 실제매입 ' + P.trucks.filter(function (t) { return t.cost !== ''; }).length + '대' : '') + (P.bad ? ' · <span class="err-text">날짜·도착지 없는 ' + P.bad + '줄 뺌</span>' : '') + '</p>' +
+            '<div class="table-wrap"><table class="data"><thead><tr><th class="left">오더유형 · 출발센터</th><th>호차</th><th>줄</th><th class="left">넣을 탭</th></tr></thead><tbody>' +
+            Object.keys(by).map(function (k) { return '<tr><td class="left">' + esc(k) + '</td><td class="num">' + by[k].t + '</td><td class="num">' + by[k].o + '</td><td class="left"><select class="input input-sm" data-hm="' + esc(k) + '">' + MT.map(function (t) { return '<option' + (t[0] === map[k] ? ' selected' : '') + '>' + esc(t[0]) + '</option>'; }).join('') + '</select></td></tr>'; }).join('') + '</tbody></table></div>' +
+            '<p class="muted small" style="margin:6px 0 0">호차의 경유 착지는 출발센터가 달라도 그 호차의 탭으로 들어가요.</p>';
+          $$('[data-hm]', info).forEach(function (sel) { sel.onchange = function () { map[sel.dataset.hm] = sel.value; draw(); }; });
+          go.disabled = !P.trucks.length;
+        };
+        $('#hiIn', m).oninput = function () { P = this.value.trim() ? histParse(this.value) : null; draw(); };
+        go.onclick = function () {
+          var keyOf = function (tab) { return st.cust + (MT.filter(function (t) { return t[0] === tab; })[0] || ['', ''])[1]; };
+          var jobs = {}; P.trucks.forEach(function (t, ti) { var k = t.tab + '|' + t.date; (jobs[k] = jobs[k] || []).push(t); });
+          var ks = Object.keys(jobs).sort(function (a, b) { var x = a.split('|'), y = b.split('|'); return x[1] < y[1] ? -1 : x[1] > y[1] ? 1 : x[0] < y[0] ? -1 : 1; }), skipped = [], made = 0, oldSrv = false, done0 = 0;
+          busy(go, true, '가져오는 중'); $('#hiIn', m).disabled = true;
+          var prog = function (msg) { info.innerHTML = '<p class="small"><span class="spinner dark"></span> ' + esc(msg) + ' (' + done0 + '/' + ks.length + ')</p>'; };
+          var step = function (i) {
+            if (i >= ks.length) return Promise.resolve();
+            var p = ks[i].split('|'), tab = p[0], date = p[1], key = keyOf(tab), list = jobs[ks[i]];
+            prog(date + ' ' + tab);
+            return api('dispatch.day', { cust: key, date: date }).then(function (day) {
+              if ((day.orders || []).some(function (o) { return !(o.d && o.d.hist); })) { skipped.push(date + ' ' + tab); return; } // 사이트에서 직접 넣은 날짜는 건드리지 않아요
+              var rows = []; list.forEach(function (t, k) { t.os.forEach(function (o, j) { rows.push({ date: date, key: ['hist', date, tab, k + 1, j + 1, o.fc, o.bundle].join('|'), d: { from: o.from, date: date, fc: o.fc, dest: o.fc, addr: o.addr, bundle: o.bundle, kg: o.kg, item: o.kind && o.kind !== '부자재' ? o.kind : '', car: t.car, driver: t.driver, phone: t.phone, ton: t.ton, hist: 1 } }); }); });
+              return api('dispatch.import', { cust: key, rows: rows }).then(function () { return api('dispatch.day', { cust: key, date: date }); }).then(function (d2) {
+                var byKey = {}; (d2.orders || []).forEach(function (o) { byKey[o.key] = o; });
+                var maxNo = (d2.trucks || []).reduce(function (a, t) { return Math.max(a, t.no); }, 0), orders = [], trucks = [];
+                list.forEach(function (t, k) {
+                  var os = t.os.map(function (o, j) { return byKey[['hist', date, tab, k + 1, j + 1, o.fc, o.bundle].join('|')]; }).filter(Boolean);
+                  if (!os.length) return;
+                  if (os.some(function (o) { return o.truck !== '' && o.truck != null; })) { // 다시 가져오기: 호차는 그대로 · 빠진 실제 매입·매출만 채워요
+                    var ex = (d2.trucks || []).filter(function (x) { return x.no === os[0].truck; })[0], fill = {};
+                    if (ex && t.cost !== '' && ex.cost == null) fill.cost = dispNum(t.cost); if (ex && t.rev !== '' && ex.rev == null) fill.rev = dispNum(t.rev);
+                    if (ex && Object.keys(fill).length) trucks.push({ no: ex.no, from: ex.no, token: ex.token || '', set: fill });
+                    return;
+                  }
+                  var no = ++maxNo; os.forEach(function (o, j) { orders.push({ id: o.id, truck: no, seq: j + 1 }); });
+                  var set = { car: t.car, driver: t.driver, phone: t.phone, time: t.time, ton: t.ton, status: t.status, memo: t.memo || (t.st0 === '조일배차' && t.cost === '' ? '조일배차 매입 미확인' : '') };
+                  if (t.wait) set.wait = t.wait; if (t.cost !== '') set.cost = dispNum(t.cost); if (t.rev !== '') set.rev = dispNum(t.rev);
+                  trucks.push({ no: no, token: '', set: set }); made++;
+                });
+                if (!trucks.length) return;
+                return api('dispatch.save', { cust: key, date: date, patch: 1, orders: orders, trucks: trucks, drop: [] }).then(function (r) { if (list.some(function (t) { return t.cost !== ''; }) && !(r.trucks || []).some(function (t) { return 'cost' in t; })) oldSrv = true; });
+              });
+            }).then(function () { done0++; return step(i + 1); });
+          };
+          step(0).then(function () {
+            dispState().dayCache = {};
+            info.innerHTML = '<p class="ok-text">✓ ' + made + '대를 옮겼어요.</p>' + (skipped.length ? '<p class="small err-text">사이트에 이미 오더가 있어서 건너뛴 날짜: ' + esc(skipped.join(', ')) + '</p>' : '') + (oldSrv ? '<p class="small err-text">서버(Code.js)가 예전 버전이라 실제 매입·매출은 저장되지 않았어요. 새 버전 배포 후 다시 가져오면 채워져요.</p>' : '');
+            busy(go, false); go.disabled = true; toast(made + '대를 옮겼어요.'); if (done) done();
+          }).catch(function (err) { busy(go, false); info.innerHTML += '<p class="err-text">' + esc(err.message) + ' — 다시 누르면 남은 것부터 이어서 해요.</p>'; $('#hiIn', m).disabled = false; });
+        };
+      } });
+  }
   /** 그 달 번들 단가: 저장한 달 중 가장 가까운 지난 달 것 (11월에 올려도 지난 달은 그대로) */
   function dispPriceOf(prices, ym) { var ks = Object.keys(prices || {}).filter(function (k) { return k <= ym && Number(prices[k]) > 0; }).sort(); return ks.length ? { v: Number(prices[ks[ks.length - 1]]), ym: ks[ks.length - 1] } : null; }
   function drawDispMonth(quiet) {
     var st = dispState(), box = $('#dpBody'), money = can('analysis') || isPartner(), rev = can('analysis'), curYm = todayYmd().slice(0, 7);
     clearTimeout(st.mTimer);
     var ms = []; for (var i = 0; i < 18; i++) ms.push(ymAdd(curYm, -i));
-    if (!(quiet && $('#dpMBody'))) box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span><button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
+    if (!(quiet && $('#dpMBody'))) box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span>' + (rev && st.cust === DISP_CUSTS[0] ? '<button class="btn btn-sm" id="dpHist" title="예전 구글시트 배차 기록을 그대로 옮겨요">시트에서 가져오기</button>' : '') + '<button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
     $('#dpYm').onchange = function () { st.ym = this.value; drawDispMonth(); syncRoute(); };
     var MT = [], PR = null;
     Promise.all([loadDispTabs(), money ? loadDispRates() : null, loadPlaces(), rev ? api('dispatch.price', { cust: st.cust }).then(function (r) { return r.prices || {}; }).catch(function () { return null; }) : null]).then(function (z) { PR = z[3]; var all = z[0]; MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) {
@@ -7998,6 +8093,7 @@
         var r = { tab: tab, date: date, no: no, t: t, os: os, ret: ret, code: dispCode({ tab: tab }, date, os[0].d.from, no), fcs: stops.map(function (s) { return s.fc; }), b: ret ? 0 : dispBundles(os), kg: ret ? 0 : os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0), ton: ret ? '회차' : jb ? '합차' : cost ? cost.ton : (t.ton || ''), base: base, ex: ex, miss: cost ? cost.miss : [] };
         r.jm = !!jb; r.note = jb ? '합차 · ' + joinName(jb) + '에 포함' : jm ? '합차(기준) · ' + jm.map(joinName).join(', ') + ' 착지 포함' : '';
         if (!jb && !jm && jn.length) { base = r.base = null; r.note = '합차 · 금액은 담당자 확인'; } // 묶인 탭을 못 보는 화면(협력사)
+        r.real = rev && !jb && t.cost != null && t.cost !== ''; if (r.real) { base = r.base = Number(t.cost); ex = r.ex = 0; r.miss = []; r.ton = r.ton || t.ton || ''; } // 실제 마감 매입(직접 입력)이면 그 금액만
         r.amt = base == null ? null : base + ex; r.rv = t.rev != null && t.rev !== '' ? Number(t.rev) : null; r.revenue = r.rv != null ? r.rv : price ? r.b * price.v : null; r.warn = r.jm ? '' : ret && !base ? '회차비 입력 필요' : base == null ? (r.note ? '' : '단가 없음') : r.miss.length ? '일부 착지 단가 없음: ' + r.miss.join(', ') : '';
         var ck = (t.car || '') + (t.driver ? ' · ' + t.driver : ''); if (ck.trim() && !r.jm) cars[ck] = (cars[ck] || 0) + 1;
         return r;
@@ -8020,7 +8116,7 @@
       el.innerHTML = rows.length ? dash + '<div class="tr-kpis" style="margin-bottom:14px">' + kpis.join('') + '</div>' + (unassigned ? '<p class="small" style="color:var(--orange);margin:0 0 8px">호차 미배정 오더 ' + unassigned + '줄은 목록에서 빠져 있어요.</p>' : '') +
         '<div class="table-wrap"><table class="data dp-mtab"><thead><tr><th class="left">날짜</th><th class="left">탭</th><th>호차</th><th class="left">마감코드</th><th>상태</th><th class="left">착지</th><th>번들</th><th>kg</th><th class="left">차량정보</th><th class="left">운전원</th><th>톤수</th>' + (money ? '<th>운송비</th><th>대기료·지원</th><th>합계</th>' : '') + (rev ? '<th>매출</th>' : '') + '</tr></thead><tbody>' +
         rows.map(function (r) { return '<tr' + (r.ret ? ' class="dp-mret"' : '') + '><td class="left"><button class="dp-edit" data-open="' + r.date + '|' + esc(r.tab) + '" title="이 날짜 배차 열기">' + r.date.slice(5) + ' (' + WD[dDow(r.date)] + ')</button></td><td class="left">' + esc(r.tab) + '</td><td class="num">' + r.no + '</td><td class="left small">' + esc(r.code) + '</td><td>' + esc(r.t.status || '배차전') + '</td><td class="left small wrap">' + esc(r.fcs.join(' > ')) + '</td><td class="num">' + won(r.b) + '</td><td class="num">' + won(r.kg) + '</td><td class="left">' + esc(r.t.car || '') + '</td><td class="left">' + esc(r.t.driver || '') + '</td><td>' + esc(r.ton) + '</td>' +
-          (money ? '<td class="num">' + (r.base == null ? '–' : (r.ret ? '<span class="small muted">회차</span> ' : '') + won(r.base)) + '</td><td class="num">' + (r.ex ? won(r.ex) : '') + '</td><td class="num"><b>' + (r.amt == null ? '–' : won(r.amt)) + '</b>' + (r.warn ? '<div class="err-text small">' + esc(r.warn) + '</div>' : '') + (r.note ? '<div class="small muted">' + esc(r.note) + '</div>' : '') + '</td>' : '') +
+          (money ? '<td class="num">' + (rev && !r.jm ? '<button class="dp-edit" data-cost="' + esc(r.tab) + '|' + r.date + '|' + r.no + '" title="눌러서 실제 매입 넣기 (마감 금액)">' : '') + (r.base == null ? '–' : (r.ret && !r.real ? '<span class="small muted">회차</span> ' : '') + won(r.base)) + (rev && !r.jm ? '</button>' : '') + (r.real ? '<div class="small" style="color:var(--orange)">실제</div>' : '') + '</td><td class="num">' + (r.ex ? won(r.ex) : '') + '</td><td class="num"><b>' + (r.amt == null ? '–' : won(r.amt)) + '</b>' + (r.warn ? '<div class="err-text small">' + esc(r.warn) + '</div>' : '') + (r.note ? '<div class="small muted">' + esc(r.note) + '</div>' : '') + '</td>' : '') +
           (rev ? '<td class="num"><button class="dp-edit" data-rev="' + esc(r.tab) + '|' + r.date + '|' + r.no + '" title="눌러서 매출 직접 고치기 (협의 단가·실비 등)">' + (r.revenue == null ? '–' : won(r.revenue)) + '</button>' + (r.rv != null ? '<div class="small" style="color:var(--orange)">직접 고침</div>' : '') + '</td>' : '') + '</tr>'; }).join('') +
         (money ? '<tr class="dp-msum"><td class="left" colspan="11"><b>합계</b> ' + won(tot.t) + '대</td><td></td><td></td><td class="num"><b>' + won(tot.amt) + '</b></td>' + (rev ? '<td class="num"><b>' + won(tot.rev) + '</b></td>' : '') + '</tr>' : '') +
         '</tbody></table></div>' + (Object.keys(cars).length ? '<h3 style="margin:16px 0 8px">차량 · 기사별 운행 <span class="muted small">' + esc(st.ym) + '</span></h3><div class="chips">' + Object.keys(cars).sort(function (a, b) { return cars[b] - cars[a]; }).map(function (k) { return '<span class="chip">' + esc(k) + ' <span class="cnt">' + cars[k] + '</span></span>'; }).join('') + '</div>' : '')
@@ -8031,23 +8127,26 @@
         api('dispatch.priceSave', { cust: st.cust, ym: st.ym, price: v }).then(function () { toast(v ? st.ym + ' 번들 단가 ' + won(v) + '원 저장' : st.ym + ' 단가를 지웠어요 (지난 달 단가를 이어 써요)'); drawDispMonth(true); })
           .catch(function (err) { busy(btn, false); toast(/알 수 없는|unknown/i.test(err.message) ? '서버(Code.js)를 새 버전으로 배포해야 저장돼요.' : err.message, 'err'); });
       };
-      $$('[data-rev]', el).forEach(function (b) { b.onclick = function () {
-        var p = b.dataset.rev.split('|'), r = rows.filter(function (x) { return x.tab === p[0] && x.date === p[1] && x.no === Number(p[2]); })[0]; if (!r) return;
-        var key = st.cust + (MT.filter(function (t) { return t[0] === r.tab; })[0] || ['', ''])[1];
-        modal({ title: '매출 직접 고치기', eyebrow: r.tab + ' · ' + r.date + ' · ' + r.no + '호차',
-          body: '<p class="muted small" style="margin:0 0 8px">' + won(r.b) + '번들' + (price ? ' × ' + won(price.v) + '원 = ' + won(r.b * price.v) + '원' : '') + ' · 협의 단가·실비처럼 다르게 받는 호차만 금액을 넣어요. 비우면 번들 × 단가로 돌아가요.</p><div class="field"><label>매출 (원)</label><input class="input" id="dpRv" inputmode="numeric" value="' + (r.rv != null ? won(r.rv) : '') + '"></div>',
+      var fixAmt = function (kind, b) {
+        var p = b.dataset[kind].split('|'), r = rows.filter(function (x) { return x.tab === p[0] && x.date === p[1] && x.no === Number(p[2]); })[0]; if (!r) return;
+        var key = st.cust + (MT.filter(function (t) { return t[0] === r.tab; })[0] || ['', ''])[1], isRev = kind === 'rev', cur = isRev ? r.rv : r.real ? Number(r.t.cost) : null;
+        modal({ title: isRev ? '매출 직접 고치기' : '실제 매입 넣기', eyebrow: r.tab + ' · ' + r.date + ' · ' + r.no + '호차',
+          body: '<p class="muted small" style="margin:0 0 8px">' + (isRev ? won(r.b) + '번들' + (price ? ' × ' + won(price.v) + '원 = ' + won(r.b * price.v) + '원' : '') + ' · 협의 단가·실비처럼 다르게 받는 호차만 금액을 넣어요. 비우면 번들 × 단가로 돌아가요.' : '마감 파일의 실제 매입(대기료 등 포함)을 넣으면 이 금액만 매입으로 써요. 비우면 매입 단가표로 계산해요.') + '</p><div class="field"><label>' + (isRev ? '매출' : '매입') + ' (원)</label><input class="input" id="dpRv" inputmode="numeric" value="' + (cur != null ? won(cur) : '') + '"></div>',
           foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="dpRvOk">저장</button>',
           onMount: function (m, close) {
             var inp = $('#dpRv', m); inp.focus();
             $('#dpRvOk', m).onclick = function () {
-              var raw = inp.value.trim(), v = raw === '' ? '' : dispNum(raw), btn = this; busy(btn, true, '저장 중…');
-              api('dispatch.save', { cust: key, date: r.date, patch: 1, orders: [], drop: [], trucks: [{ token: r.t.token || '', no: r.no, set: { rev: v } }] }).then(function (res) {
-                if (!(res.trucks || []).some(function (t) { return 'rev' in t; })) toast('서버(Code.js)를 새 버전으로 배포해야 매출이 저장돼요.', 'err'); else toast('매출을 저장했어요.');
+              var raw = inp.value.trim(), v = raw === '' ? '' : dispNum(raw), btn = this, set = {}; set[isRev ? 'rev' : 'cost'] = v; busy(btn, true, '저장 중…');
+              api('dispatch.save', { cust: key, date: r.date, patch: 1, orders: [], drop: [], trucks: [{ token: r.t.token || '', no: r.no, set: set }] }).then(function (res) {
+                if (!(res.trucks || []).some(function (t) { return (isRev ? 'rev' : 'cost') in t; })) toast('서버(Code.js)를 새 버전으로 배포해야 저장돼요.', 'err'); else toast((isRev ? '매출' : '매입') + '을 저장했어요.');
                 close(); drawDispMonth(true);
               }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
             };
           } });
-      }; });
+      };
+      $$('[data-rev]', el).forEach(function (b) { b.onclick = function () { fixAmt('rev', b); }; });
+      $$('[data-cost]', el).forEach(function (b) { b.onclick = function () { fixAmt('cost', b); }; });
+      var hi = $('#dpHist'); if (hi) hi.onclick = function () { openHistImport(MT, function () { drawDispMonth(true); }); };
       if (st.ym === curYm) st.mTimer = setTimeout(function again() { if (state.view !== 'dispatch' || st.view !== 'month' || st.ym !== curYm) return; if (document.hidden || $('.backdrop') || (document.activeElement && document.activeElement.id === 'dpPrice')) { st.mTimer = setTimeout(again, 60000); return; } drawDispMonth(true); }, 60000);
       var x = $('#dpMX'); x.disabled = !rows.length;
       x.onclick = function () {
@@ -8055,7 +8154,7 @@
         var sheets = [];
         if (money) sheets.push({ name: '요약', widths: [18, 8, 8, 14, 12].concat(rev ? [10, 14, 14] : []), rows: [['탭', '대수', '회차', '합계(원)', '단가 없음(대)'].concat(rev ? ['번들', '매출(원)', '이익(원)'] : [])].concat(MT.filter(function (t) { return sum[t[0]]; }).map(function (t) { var s = sum[t[0]]; return [t[0], s.t, s.ret, s.amt, s.none].concat(rev ? [s.b, s.rev, s.rev - s.amt] : []); })).concat([['총 합계', tot.t, '', tot.amt, tot.none].concat(rev ? [tot.b, tot.rev, tot.rev - tot.amt] : [])]).concat(rev ? [[], ['번들 단가', price ? price.v : '']] : []) });
         sheets.push({ name: '호차', widths: [12, 14, 6, 26, 9, 30, 8, 9, 14, 10, 14, 8].concat(money ? [12, 10, 10, 10, 12, 24] : []).concat(rev ? [12, 10] : []), rows: [['날짜', '탭', '호차', '마감코드', '상태', '착지', '번들(동방)', 'kg', '차량정보', '운전원', '연락처', '톤수'].concat(money ? ['운송비(단가·회차비)', '대기료', '운송료지원', '합계', '확인'] : []).concat(rev ? ['매출', '매출 확인'] : [])].concat(rows.map(function (r) {
-          return [r.date, r.tab, r.no, r.code, r.t.status || '배차전', r.fcs.join(' > '), r.b, r.kg, r.t.car || '', r.t.driver || '', r.t.phone || '', r.ton].concat(money ? [r.base == null ? '' : r.base, Number(r.t.wait) || 0, Number(r.t.support) || 0, r.amt == null ? '' : r.amt, r.warn || r.note] : []).concat(rev ? [r.revenue == null ? '' : r.revenue, r.rv != null ? '직접 고침' : ''] : []);
+          return [r.date, r.tab, r.no, r.code, r.t.status || '배차전', r.fcs.join(' > '), r.b, r.kg, r.t.car || '', r.t.driver || '', r.t.phone || '', r.ton].concat(money ? [r.base == null ? '' : r.base, Number(r.t.wait) || 0, Number(r.t.support) || 0, r.amt == null ? '' : r.amt, r.warn || r.note] : []).concat(rev ? [r.revenue == null ? '' : r.revenue, (r.rv != null ? '매출 직접 고침 ' : '') + (r.real ? '실제 매입' : '')] : []);
         })) });
         sheets.push({ name: '오더', widths: [12, 14, 6, 26, 9, 18, 12, 8, 8, 8, 18, 14, 14, 10, 14, 12, 8], rows: [['날짜', '탭', '호차', '마감코드', '상태', '센터명', 'Item', '번들(동방)', '패키지', 'kg', 'BL', '발주번호', '차량정보', '운전원', '연락처', '입차 예정시간', '톤수']].concat(orders.map(function (o) { var t = tk[o.tab + '|' + o.date + '|' + o.truck] || {}, ret = t.status === '회차', has = o.truck !== '' && o.truck != null; return [o.date, o.tab, o.truck, has ? dispCode({ tab: o.tab }, o.date, o.d.from, o.truck) : '', has ? (t.status || '배차전') : '미배정', o.d.fc, o.d.item, ret ? 0 : dispOrderB(o), ret ? 0 : dispPkg(o.d.bundle), ret ? 0 : dispNum(o.d.kg), o.d.bl, o.d.po, t.car || '', t.driver || '', t.phone || '', t.time || '', t.ton || '']; })) });
         downloadXlsx('배차기록_' + st.cust + '_' + st.ym + '.xlsx', sheets).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });

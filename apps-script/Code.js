@@ -2023,9 +2023,9 @@ function ownerCover_(cal, from, to) {
 var SHEET_DISP_ORD = '배차오더';
 var DISP_ORD_HEADER = ['ID', '업체', '날짜', '키', '데이터', '호차', '순서', '등록자', '등록일시', '내부공지', '기사공지'];
 var SHEET_DISP_TRK = '배차호차';
-var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원', '합차', '매출'];
+var DISP_TRK_HEADER = ['업체', '날짜', '호차', '차량정보', '운전원', '연락처', '입차시간', '톤수', '메모', '수정자', '수정일시', '링크코드', '상태', '회차비용', '대기료', '운송료지원', '합차', '매출', '매입'];
 /* 합차: 같은 날짜·같은 업체의 다른 탭 호차를 같은 차로 묶어요. 연결된 호차의 '합차' 칸 = 기준 호차의 링크코드 (호차 번호는 바뀔 수 있어서) */
-var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경'];
+var DISP_STATUS = ['배차전', '배차완료', '정보넘김', '회차', '정보변경', '조일배차']; // 조일배차 = 우리가 직접 배차
 /** 예전 상태 이름 맞추기: 배차중 → 배차전(빈 값), 차량변경 → 정보변경 */
 function dispStatus_(v) { v = dispTxt_(v); return v === '배차중' ? '' : v === '차량변경' ? '정보변경' : v; }
 var SHEET_LOADING = '상차지';
@@ -2039,7 +2039,7 @@ function dispCust_(c) { c = String(c || '').trim(); if (!c) throw new Error('업
 function dispDate_(d) { d = String(d || '').trim(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('날짜 형식은 YYYY-MM-DD 입니다: ' + d); return d; }
 function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), d: parseJson_(r[4], {}), truck: r[5] === '' ? '' : Number(r[5]), seq: Number(r[6]) || 0, by: String(r[7] || ''), at: fmt_(r[8]), noteIn: dispTxt_(r[9]), noteDrv: dispTxt_(r[10]) }; }
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
-function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join: dispTxt_(r[16]), rev: r[17] === '' || r[17] == null ? null : Number(r[17]) }; }
+function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join: dispTxt_(r[16]), rev: r[17] === '' || r[17] == null ? null : Number(r[17]), cost: r[18] === '' || r[18] == null ? null : Number(r[18]) }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
 function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
 function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
@@ -2124,7 +2124,7 @@ function dispScrub_(out, session) {
   var one = function (r) {
     if (!r) return r;
     if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; });
-    if (!canCost_(session)) (r.trucks || []).forEach(function (t) { delete t.rev; }); // 매출은 분석 권한만 (협력사도 안 봐요)
+    if (!canCost_(session)) (r.trucks || []).forEach(function (t) { delete t.rev; delete t.cost; }); // 매출은 분석 권한만 (협력사도 안 봐요)
     if (partner) (r.orders || []).forEach(function (o) { o.noteIn = ''; });
     if (partner) (r.trucks || []).forEach(function (t) { t.join = ''; }); // 합차는 표시(jn)만 · 다른 탭 호차의 링크코드는 안 보내요
     return r;
@@ -2206,7 +2206,7 @@ function dispTouch_(cust, date) { try { var n = String(Date.now()); PropertiesSe
 function dispTouched_(req, out) { dispTouch_(req.cust, req.date); return out; }
 function dispStamps_(keys, date) { date = dispDate_(date); var pr = PropertiesService.getScriptProperties(), o = {}; (keys || []).slice(0, 20).forEach(function (k) { o[k] = Number(pr.getProperty(dispStampKey_(String(k), date))) || 0; }); return o; }
 /** 바뀐 칸만 보낸 저장(patch)을 지금 서버에 있는 호차들과 합쳐서 전체 목록으로 만들어요 (다른 사람이 바꾼 칸은 그대로 둠) */
-var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support', 'join', 'rev']);
+var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'support', 'join', 'rev', 'cost']);
 function dispMerge_(cust, date, req) {
   var ts = dispTrkSheet_(), cv = ts.getLastRow() >= 2 ? ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues() : [];
   var list = cv.filter(function (r) { return String(r[0]) === cust && textDate_(r[1]) === date; }).map(dispTrkRow_), used = [];
@@ -2216,7 +2216,7 @@ function dispMerge_(cust, date, req) {
   var pt = (req.trucks || []).slice().sort(function (a, b) { return (a.token ? 0 : 1) - (b.token ? 0 : 1); }); // 링크 코드 있는 호차부터 (번호가 밀린 경우)
   pt.forEach(function (p) {
     var x = byTok(p.token) || byNo(Number(p.from != null ? p.from : p.no));
-    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0, join: '', rev: null }; list.push(x); }
+    if (!x) { x = { no: Number(p.no), token: '', car: '', driver: '', phone: '', time: '', ton: '', memo: '', status: '', retCost: 0, wait: 0, support: 0, join: '', rev: null, cost: null }; list.push(x); }
     used.push(x); x.no = Math.max(1, Math.round(Number(p.no)) || 1);
     var set = p.set || {}; DISP_PATCH_KEYS.forEach(function (k) { if (set[k] !== undefined) x[k] = set[k]; });
   });
@@ -2243,7 +2243,7 @@ function dispSave_(session, req) {
     if (ts.getLastRow() >= 2) { var tv = ts.getRange(2, 1, ts.getLastRow() - 1, DISP_TRK_HEADER.length).getValues(); for (var i = 0; i < tv.length; i++) if (String(tv[i][0]) === cust && textDate_(tv[i][1]) === date) { var on = Number(tv[i][2]); if (tv[i][11]) tokens[on] = String(tv[i][11]); olds[on] = dispTrkRow_(tv[i]); hit.push(i); } }
     var trucks = req.trucks || [];
     // 협력사: 이미 있는 호차의 차량정보 5칸·상태만 (호차 추가·메모·비용은 그대로)
-    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, join: o.join, status: g.status != null && (g.status !== '정보넘김' || o.status === '정보넘김') ? g.status : o.status }; }); }
+    if (partner) { var given = {}; trucks.forEach(function (t) { given[Number(t.no)] = t; }); trucks = Object.keys(olds).map(function (n) { var o = olds[n], g = given[n] || {}; return { no: o.no, car: g.car != null ? g.car : o.car, driver: g.driver != null ? g.driver : o.driver, phone: g.phone != null ? g.phone : o.phone, time: g.time != null ? g.time : o.time, ton: g.ton != null ? g.ton : o.ton, memo: o.memo, join: o.join, status: g.status != null && ((g.status !== '정보넘김' && g.status !== '조일배차') || o.status === g.status) ? g.status : o.status }; }); }
     // 호차 번호가 바뀌어도(끼워넣기로 밀림) 기사링크·비용·인수증은 그 호차를 따라가게: 화면이 보낸 링크 코드로 예전 호차를 찾아요
     var byTok = {}; Object.keys(olds).forEach(function (n) { if (olds[n].token) byTok[olds[n].token] = olds[n]; });
     var claimed = {}; trucks.forEach(function (t) { if (t.token && byTok[t.token]) claimed[t.token] = 1; });
@@ -2256,8 +2256,9 @@ function dispSave_(session, req) {
       var stt = DISP_STATUS.indexOf(dispStatus_(t.status)) !== -1 ? dispStatus_(t.status) : ''; if (stt === '배차전') stt = '';
       var c3 = cost ? [money(t.retCost), money(t.wait), money(t.support)] : [o.retCost || 0, o.wait || 0, o.support || 0];
       var jn = String(t.join !== undefined ? t.join || '' : o.join || ''); if (!/^[0-9a-f]{20}$/.test(jn) || jn === tok) jn = ''; // 예전 화면은 합차 칸을 안 보내요 → 그대로 둠
-      var rv = cost && t.rev !== undefined ? (t.rev === '' || t.rev == null ? '' : Math.max(0, Math.min(Math.round(Number(String(t.rev).replace(/[^0-9.]/g, ''))) || 0, 100000000))) : (o.rev == null ? '' : o.rev); // 매출 직접 고치기: 분석 권한만 · 빈 값 = 번들 × 월 단가
-      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3).concat([jn ? "'" + jn : '', rv]);
+      var fix = function (k) { return cost && t[k] !== undefined ? (t[k] === '' || t[k] == null ? '' : Math.max(0, Math.min(Math.round(Number(String(t[k]).replace(/[^0-9.]/g, ''))) || 0, 100000000))) : (o[k] == null ? '' : o[k]); };
+      var rv = fix('rev'), cv = fix('cost'); // 매출·매입 직접 입력(실제 마감 금액): 분석 권한만 · 빈 값 = 단가로 계산
+      return [cust, "'" + date, no].concat(DISP_TRK_FIELDS.map(function (k) { return "'" + String(t[k] || '').slice(0, 300); })).concat([session.name, now_(), tok, stt]).concat(c3).concat([jn ? "'" + jn : '', rv, cv]);
     });
     if (hit.length && hit[hit.length - 1] - hit[0] === hit.length - 1) {
       var top = hit[0] + 2, k = Math.min(hit.length, add.length);
