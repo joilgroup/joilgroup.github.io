@@ -7077,27 +7077,40 @@
   /** pts: [{ lat, lng, label('🏭' 또는 번호), title }] — 순서대로 선으로 이어요 */
   /* 태블릿(특히 '데스크톱 사이트'로 열린 삼성 인터넷)은 카카오 지도가 손가락 끌기·두 손가락 확대를 못 받아요 → 손가락 동작을 직접 지도에 전해요 */
   function mapTouch(el, map, K) {
-    var P = {}, last = null, pinch = null;
+    // 끌기: 손가락이 움직인 만큼 지도 중심을 바로 옮겨요 (panBy는 매번 애니메이션이라 거의 안 움직여요)
+    // 두 손가락: 벌리는 동안은 화면을 늘렸다 줄였다만 하고(부드럽게), 손을 떼면 가장 가까운 지도 단계로 맞춰요
+    var P = {}, pinch = null, acc = { x: 0, y: 0 }, raf = 0;
     var pt = function (e) { var r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
     var ids = function () { return Object.keys(P); };
+    var kids = function () { return Array.prototype.filter.call(el.children, function (c) { return c.nodeType === 1; }); };
+    var shift = function (dx, dy) { var pr = map.getProjection(), w = el.clientWidth / 2, h = el.clientHeight / 2; map.setCenter(pr.coordsFromContainerPoint(new K.Point(w - dx, h - dy))); };
+    var flush = function () { raf = 0; if (acc.x || acc.y) { shift(acc.x, acc.y); acc = { x: 0, y: 0 }; } };
+    var two = function () { var k = ids(), a = P[k[0]], b = P[k[1]]; return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, m: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } }; };
     el.addEventListener('pointerdown', function (e) {
       if (e.pointerType !== 'touch') return;
-      P[e.pointerId] = pt(e); map.setDraggable(false); // 카카오가 같이 움직이지 않게 (둘이 같이 받으면 두 배로 움직여요)
-      if (ids().length === 2) { var a = P[ids()[0]], b = P[ids()[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; map.setZoomable(false); }
-      last = null;
+      P[e.pointerId] = pt(e); map.setDraggable(false); // 카카오가 같이 움직이지 않게
+      if (ids().length === 2) { flush(); var g = two(); pinch = { d0: g.d, m0: g.m, s: 1, m: g.m }; map.setZoomable(false); kids().forEach(function (c) { c.style.transformOrigin = g.m.x + 'px ' + g.m.y + 'px'; }); }
     }, true);
     el.addEventListener('pointermove', function (e) {
       if (e.pointerType !== 'touch' || !P[e.pointerId]) return;
-      var c = pt(e), k = ids();
-      if (k.length === 1) { var o = P[e.pointerId]; map.panBy(o.x - c.x, o.y - c.y); P[e.pointerId] = c; e.preventDefault(); return; }
-      P[e.pointerId] = c; if (k.length !== 2 || !pinch) return;
-      var a = P[k[0]], b = P[k[1]], d = Math.hypot(a.x - b.x, a.y - b.y), r = d / pinch.d, lv = map.getLevel();
-      var mid = map.getProjection().coordsFromContainerPoint(new K.Point((a.x + b.x) / 2, (a.y + b.y) / 2));
-      if (r > 1.35 && lv > 1) { map.setLevel(lv - 1, { anchor: mid }); pinch.d = d; }
-      else if (r < 0.74 && lv < 14) { map.setLevel(lv + 1, { anchor: mid }); pinch.d = d; }
-      e.preventDefault();
+      var c = pt(e), o = P[e.pointerId]; P[e.pointerId] = c; e.preventDefault();
+      if (!pinch) { acc.x += c.x - o.x; acc.y += c.y - o.y; if (!raf) raf = requestAnimationFrame(flush); return; }
+      if (ids().length < 2) return;
+      var g = two(); pinch.s = Math.max(0.12, Math.min(8, g.d / pinch.d0)); pinch.m = g.m;
+      var tx = g.m.x - pinch.m0.x, ty = g.m.y - pinch.m0.y;
+      kids().forEach(function (k) { k.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + pinch.s + ')'; });
     }, true);
-    var up = function (e) { if (!P[e.pointerId]) return; delete P[e.pointerId]; if (ids().length < 2) { pinch = null; map.setZoomable(true); } if (!ids().length) map.setDraggable(true); };
+    var end = function () {
+      var q = pinch; pinch = null; kids().forEach(function (k) { k.style.transform = ''; k.style.transformOrigin = ''; });
+      var steps = Math.round(Math.log(q.s) / Math.LN2), lv = map.getLevel(), nl = Math.max(1, Math.min(14, lv - steps));
+      if (nl !== lv) map.setLevel(nl, { anchor: map.getProjection().coordsFromContainerPoint(new K.Point(q.m0.x, q.m0.y)) });
+      shift(q.m.x - q.m0.x, q.m.y - q.m0.y); map.setZoomable(true);
+    };
+    var up = function (e) {
+      if (!P[e.pointerId]) return; delete P[e.pointerId];
+      if (pinch && ids().length < 2) end();
+      if (!ids().length) { flush(); map.setDraggable(true); }
+    };
     ['pointerup', 'pointercancel'].forEach(function (t) { el.addEventListener(t, up, true); });
   }
   function drawRouteMap(el, pts, color) {
