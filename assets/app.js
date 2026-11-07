@@ -7075,6 +7075,31 @@
     return kakaoReady;
   }
   /** pts: [{ lat, lng, label('🏭' 또는 번호), title }] — 순서대로 선으로 이어요 */
+  /* 태블릿(특히 '데스크톱 사이트'로 열린 삼성 인터넷)은 카카오 지도가 손가락 끌기·두 손가락 확대를 못 받아요 → 손가락 동작을 직접 지도에 전해요 */
+  function mapTouch(el, map, K) {
+    var P = {}, last = null, pinch = null;
+    var pt = function (e) { var r = el.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+    var ids = function () { return Object.keys(P); };
+    el.addEventListener('pointerdown', function (e) {
+      if (e.pointerType !== 'touch') return;
+      P[e.pointerId] = pt(e); map.setDraggable(false); // 카카오가 같이 움직이지 않게 (둘이 같이 받으면 두 배로 움직여요)
+      if (ids().length === 2) { var a = P[ids()[0]], b = P[ids()[1]]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1 }; map.setZoomable(false); }
+      last = null;
+    }, true);
+    el.addEventListener('pointermove', function (e) {
+      if (e.pointerType !== 'touch' || !P[e.pointerId]) return;
+      var c = pt(e), k = ids();
+      if (k.length === 1) { var o = P[e.pointerId]; map.panBy(o.x - c.x, o.y - c.y); P[e.pointerId] = c; e.preventDefault(); return; }
+      P[e.pointerId] = c; if (k.length !== 2 || !pinch) return;
+      var a = P[k[0]], b = P[k[1]], d = Math.hypot(a.x - b.x, a.y - b.y), r = d / pinch.d, lv = map.getLevel();
+      var mid = map.getProjection().coordsFromContainerPoint(new K.Point((a.x + b.x) / 2, (a.y + b.y) / 2));
+      if (r > 1.35 && lv > 1) { map.setLevel(lv - 1, { anchor: mid }); pinch.d = d; }
+      else if (r < 0.74 && lv < 14) { map.setLevel(lv + 1, { anchor: mid }); pinch.d = d; }
+      e.preventDefault();
+    }, true);
+    var up = function (e) { if (!P[e.pointerId]) return; delete P[e.pointerId]; if (ids().length < 2) { pinch = null; map.setZoomable(true); } if (!ids().length) map.setDraggable(true); };
+    ['pointerup', 'pointercancel'].forEach(function (t) { el.addEventListener(t, up, true); });
+  }
   function drawRouteMap(el, pts, color) {
     return kakaoMaps().then(function (K) {
       var ok = pts.filter(function (p) { return p && p.lat && p.lng; });
@@ -7088,6 +7113,7 @@
       });
       if (path.length > 1) new K.Polyline({ map: map, path: path, strokeWeight: 4, strokeColor: color || '#1E1C19', strokeOpacity: 0.75, strokeStyle: 'solid' });
       if (ok.length > 1) map.setBounds(bounds, 40, 40, 40, 40); else map.setLevel(5);
+      mapTouch(el, map, K);
       return map;
     });
   }
