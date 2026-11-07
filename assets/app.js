@@ -393,6 +393,7 @@
 
     // 묶음 메뉴: 마우스를 올리면 아래로 펼침 (터치는 눌러서)
     var popT = null, popG = null, popAt = 0;
+    var touchy = function () { return window.__navTouch || (window.matchMedia && matchMedia('(hover: none)').matches); }; // 태블릿·휴대폰: 마우스 올림/벗어남을 쓰지 않고 눌러서 열고 닫기
     var closePop = function () { var o = $('.nav-pop'); if (o) o.remove(); popG = null; $$('.nav-grp').forEach(function (x) { x.classList.remove('open'); }); };
     var openPop = function (btn) {
       clearTimeout(popT);
@@ -400,20 +401,21 @@
       closePop();
       var n = navModel().filter(function (x) { return x.g === btn.dataset.g; })[0]; if (!n) return;
       var r = btn.getBoundingClientRect(), pop = document.createElement('div');
-      pop.className = 'nav-pop'; popG = n.g; popAt = Date.now(); btn.classList.add('open');
+      pop.className = 'nav-pop'; popG = n.g; popAt = Date.now(); window.__navPopY = window.scrollY; btn.classList.add('open');
       pop.innerHTML = n.items.map(function (x) { return '<button data-view="' + x[0] + '" class="' + (state.view === x[0] ? 'on' : '') + '">' + x[1] + '</button>'; }).join('');
       pop.style.top = (r.bottom + 4) + 'px'; pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 180)) + 'px';
       document.body.appendChild(pop);
       pop.onmouseenter = function () { clearTimeout(popT); };
-      pop.onmouseleave = function () { popT = setTimeout(closePop, 250); };
+      pop.onmouseleave = function () { if (!touchy()) popT = setTimeout(closePop, 250); };
       $$('button', pop).forEach(navGo);
     };
     $$('.nav-grp').forEach(function (g) {
-      g.onmouseenter = function () { openPop(g); };
-      g.onmouseleave = function () { popT = setTimeout(closePop, 250); };
-      g.onclick = function (e) { e.stopPropagation(); if (popG === g.dataset.g && $('.nav-pop')) { if (Date.now() - popAt > 500) closePop(); } else openPop(g); }; // 터치: 마우스 올림과 눌림이 같이 오면 열린 채로
+      g.onmouseenter = function () { if (!touchy()) openPop(g); };
+      g.onmouseleave = function () { if (!touchy()) popT = setTimeout(closePop, 250); };
+      g.onclick = function (e) { e.stopPropagation(); if (popG === g.dataset.g && $('.nav-pop')) { if (touchy() || Date.now() - popAt > 500) closePop(); } else openPop(g); }; // 터치: 누르면 열고, 다시 누르면 닫기
     });
-    if (!window.__navPopBound) { window.__navPopBound = true; document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('.nav-pop')) { var o = document.querySelector('.nav-pop'); if (o) o.remove(); } }); window.addEventListener('scroll', function () { var o = document.querySelector('.nav-pop'); if (o) o.remove(); }, { passive: true }); }
+    if (!window.__navPopBound) { window.__navPopBound = true; document.addEventListener('click', function (e) { if (!e.target.closest || !e.target.closest('.nav-pop')) { var o = document.querySelector('.nav-pop'); if (o) o.remove(); } }); window.addEventListener('scroll', function () { var o = document.querySelector('.nav-pop'); if (o && Math.abs(window.scrollY - (window.__navPopY || 0)) > 40) o.remove(); }, { passive: true }); // 태블릿은 누를 때 주소창이 움직여 살짝 스크롤돼요
+      document.addEventListener('pointerdown', function (e) { window.__navTouch = e.pointerType && e.pointerType !== 'mouse'; }, true); }
     $$('.nav button[data-view]').forEach(navGo);
     function navGo(b) {
       b.onclick = function () {
