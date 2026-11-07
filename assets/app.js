@@ -6787,17 +6787,47 @@
       var td = el && el.closest('td'); if (td) { td.classList.remove('dp-flash'); void td.offsetWidth; td.classList.add('dp-flash'); }
     });
   }
+  /* 날짜 이동을 빠르게: 본 날짜·앞뒤 날짜를 화면에 들고 있다가(최대 30분) 먼저 보여 주고, 서버 최신 상태는 뒤에서 받아 합쳐요 */
+  function dispDayBuild(res, keys, date, cust) { var o = { _date: date, _cust: cust, _at: Date.now() }; DISP_TABS.forEach(function (t, i) { var r = dispPrep(res.byKey[keys[i]], t[0], date, keys[i]); r.base = dispSnap(r); o[t[0]] = r; }); return o; }
+  function dispCacheGet(cust, date) { var st = dispState(), o = st.dayCache && st.dayCache[cust + '|' + date]; return o && Date.now() - o._at < 1800000 && DISP_TABS.every(function (t) { return o[t[0]]; }) ? o : null; }
+  function dispCachePut(o) { var st = dispState(), c = st.dayCache = st.dayCache || {}; c[o._cust + '|' + o._date] = o; var ks = Object.keys(c); if (ks.length > 12) { ks.sort(function (a, b) { return c[a]._at - c[b]._at; }); delete c[ks[0]]; } }
+  function dispCacheDrop(cust, date) { var st = dispState(); if (st.dayCache) delete st.dayCache[cust + '|' + date]; }
+  function dispPrefetch(date) {
+    var st = dispState(), cust = st.cust, keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); }); st.pref = st.pref || {};
+    [dAdd(date, -1), dAdd(date, 1)].forEach(function (d) {
+      var ck = cust + '|' + d, c = dispCacheGet(cust, d); if (st.pref[ck] || (c && Date.now() - c._at < 120000)) return;
+      st.pref[ck] = 1;
+      api('dispatch.dayAll', { keys: keys, date: d }).then(function (res) { var c2 = dispCacheGet(cust, d); if (c2 && c2 === st.tabs) return; dispCachePut(dispDayBuild(res, keys, d, cust)); }).catch(function () {}).then(function () { delete st.pref[ck]; });
+    });
+  }
+  /** 지금 보는 날짜를 서버 최신 상태로 (고치는 중인 칸은 그대로) */
+  function dispPullDay() {
+    var st = dispState(); if (!st.tabs || state.view !== 'dispatch' || st.view !== 'day') return;
+    var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); }), date = st.date, cust = st.cust, tabs = st.tabs;
+    if (dispSaving || Object.keys(st.dirty || {}).length) { setTimeout(dispPullDay, 1500); return; }
+    api('dispatch.dayAll', { keys: keys, date: date }).then(function (res) {
+      if (st.tabs !== tabs || st.date !== date || st.cust !== cust) return;
+      if (dispSaving || Object.keys(st.dirty || {}).length) { setTimeout(dispPullDay, 1500); return; }
+      var before = JSON.stringify(DISP_TABS.map(function (t) { var D = tabs[t[0]]; return [D.orders.map(function (o) { return [o.id, o.truck, o.seq]; }), D.trucks.map(function (x) { return [x.no, x.token]; })]; })), fl = [];
+      DISP_TABS.forEach(function (t, i) { var D = tabs[t[0]]; if (D) dispMergeTab(D, dispPrep(res.byKey[keys[i]], t[0], date, keys[i]), fl); });
+      tabs._at = Date.now();
+      var after = JSON.stringify(DISP_TABS.map(function (t) { var D = tabs[t[0]]; return [D.orders.map(function (o) { return [o.id, o.truck, o.seq]; }), D.trucks.map(function (x) { return [x.no, x.token]; })]; }));
+      if (before === after && !fl.length) return;
+      var pin = $('#dpPasteIn'); if (pin && pin.value.trim()) return;
+      st.flash = fl; drawDispDay(); if (!st.drawLater) dispFlash(); else dispSoftApply(fl);
+    }).catch(function () { /* 15초 확인에서 다시 */ });
+  }
   function loadDispDay(force) {
     var st = dispState();
     return loadDispTabs().then(function () {
       if (st.tabs && st.tabs._date === st.date && st.tabs._cust === st.cust && !force) return st.tabs;
       var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); });
-      var date = st.date;
+      var date = st.date, cust = st.cust, quick = st.useCache && !force && dispCacheGet(cust, date); st.useCache = false;
       dispStampInit(keys, date);
+      if (quick) { st.tabs = quick; st.sel = {}; setTimeout(dispPullDay, 0); dispPrefetch(date); return quick; } // 받아 둔 화면 먼저 → 뒤에서 최신으로
       return api('dispatch.dayAll', { keys: keys, date: date }).then(function (res) {
-        var o = { _date: date, _cust: st.cust };
-        DISP_TABS.forEach(function (t, i) { var r = dispPrep(res.byKey[keys[i]], t[0], date, keys[i]); r.base = dispSnap(r); o[t[0]] = r; });
-        st.tabs = o; st.sel = {}; return o;
+        var o = dispDayBuild(res, keys, date, cust);
+        st.tabs = o; st.sel = {}; dispCachePut(o); dispPrefetch(date); return o;
       });
     });
   }
@@ -7554,7 +7584,7 @@
         $('#mvGo', m).onclick = function () {
           var btn = this, to = $('#mvDate', m).value;
           if (!to) return toast('날짜를 고르세요.', 'err'); if (to === D.date) return toast('지금과 같은 날짜예요.', 'err');
-          busy(btn, true, '옮기는 중');
+          var st = dispState(), from = D.date;
           var one = function (p) {
             var ids = p.list.map(function (o) { return o.id; }), req = { cust: p.D.key, date: p.D.date, ids: ids, toDate: to, keepTruck: whole };
             return api('dispatch.moveOrders', req).catch(function (err) { // 서버(Code.js)가 예전이면: 복사 후 원래 날짜에서 지우기
@@ -7562,13 +7592,21 @@
               return api('dispatch.copyOrders', req).then(function (r) { return api('dispatch.deleteOrders', { cust: p.D.key, date: p.D.date, ids: ids }).then(function () { return { moved: r.copied, toDate: to }; }); });
             });
           };
-          var res = [];
-          dispSaveNow().then(function () { return parts.reduce(function (pr, p) { return pr.then(function () { return one(p).then(function (r) { res.push(r); }); }); }, Promise.resolve()); }).then(function () {
-            close(); var st = dispState(); st.sel = {};
+          var res = [], saved = dispSaveNow(); // 저장할 칸은 지금 정해져요 → 그다음 화면에서 먼저 옮기고, 서버는 뒤에서
+          parts.forEach(function (p) {
+            var ids = {}, nos = {}; p.list.forEach(function (o) { ids[o.id] = 1; if (whole && o.truck !== '' && o.truck != null) nos[o.truck] = 1; });
+            var keep = p.D.orders.filter(function (o) { return !ids[o.id]; }); p.D.orders.length = 0; keep.forEach(function (o) { p.D.orders.push(o); });
+            var toks = p.D.trucks.filter(function (t) { return nos[t.no]; }).map(function (t) { return t.token; }).filter(Boolean);
+            if (whole) p.D.trucks = p.D.trucks.filter(function (t) { return !nos[t.no]; });
+            if (p.D.base) { Object.keys(ids).forEach(function (id) { delete p.D.base.o[id]; }); p.D.base.t = p.D.base.t.filter(function (bt) { return toks.indexOf(bt.token) === -1; }); } // 옮긴 호차를 '지운 호차'로 저장하지 않게
+          });
+          close(); st.sel = {}; dispCacheDrop(st.cust, to); drawDispDay();
+          toast(all.length + '줄을 ' + to + '(으)로 옮기는 중…');
+          Promise.resolve(saved).then(function () { return parts.reduce(function (pr, p) { return pr.then(function () { return one(p).then(function (r) { res.push(r); }); }); }, Promise.resolve()); }).then(function () {
             var n = res.reduce(function (a, r) { return a + (r.moved || 0); }, 0), kept = res.some(function (r) { return r.kept; });
             toast(n + '줄을 ' + to + '(으)로 옮겼어요.' + (whole ? kept ? ' 호차 묶음' + (parts.length > 1 ? '·합차' : '') + '도 그대로예요.' : ' (서버 Code.js가 예전 버전이라 호차 묶음은 풀렸어요 — 새 버전 배포 후엔 그대로 옮겨져요)' : ''));
-            st.tabs = null; renderDispatch();
-          }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+            if (st.date === from) dispPullDay(); dispPrefetch(from);
+          }).catch(function (err) { toast('옮기지 못했어요: ' + err.message, 'err'); if (st.date === from) { st.tabs = null; renderDispatch(); } }); // 실패하면 서버 상태로 다시
         };
       } });
   }
@@ -7784,7 +7822,7 @@
           var X = st.tabs[t[0]], all = dispTrucks(X), lk = all.filter(function (n) { var j = joinInfo(X, n); return j && !j.base && j.g; }), ns = all.filter(function (n) { return lk.indexOf(n) === -1; });
           var jl = lk.length ? '<div class="dp-joined muted small">🔗 합차로 다른 탭 호차에 합쳐진 호차: ' + lk.map(function (n) { var j = joinInfo(X, n), b = j.others.filter(function (o) { return o.base; })[0]; return '<b>' + n + '호차</b>(' + esc(truckStops(X, n).map(function (s) { return s.fc; }).join(', ')) + ') → ' + esc(b ? joinName(b) : ''); }).join(' · ') + '</div>' : '';
           return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대' + (lk.length ? ' · 합차 ' + lk.length + '대' : '') + '</span></h3><button class="btn btn-sm" data-xlall="' + esc(t[0]) + '" title="구글 시트·엑셀에 붙여넣기용 (착지마다 한 줄)">엑셀로 복사</button></div>' + jl + (ns.length ? truckTableHtml(X, ns) : '') + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
-    var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; renderDispatch(); };
+    var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; st.useCache = true; renderDispatch(); };
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
     $('#dpDate').onchange = function () { if (this.value) go(this.value); };
