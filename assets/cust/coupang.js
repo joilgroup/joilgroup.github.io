@@ -16,6 +16,8 @@
   function dispOrderKey(date, d) { return [date, d.po, d.bl, d.fc, d.item, d.outQty, d.bundle].join('|'); }
   // 컬리 양식: 입고수량 칸이 없고(그 뒤 칸이 하나씩 당겨짐), 발주번호·컬리담당자 이름이 달라요
   var DISP_COLS_KURLY = DISP_COLS.filter(function (c) { return c[0] !== 'inQty'; }).map(function (c) { return c[0] === 'po' ? ['po', '발주번호'] : /^m\d$/.test(c[0]) ? [c[0], '컬리담당자' + c[0].slice(1)] : c; });
+  /** 사람 이름·차량번호가 아니라 안내 문구인지 (한글 + 띄어쓰기나 긴 글 + 요청·시간 말) */
+  function dispIsNote(v) { v = String(v == null ? '' : v).trim(); return /[가-힣]/.test(v) && (/\s/.test(v) || v.length >= 6) && !/^\d{2,3}[가-힣]\d{4}$/.test(v.replace(/\s/g, '')) && /(부탁|요청|가능|불가|이후|이전|까지|부터|배차|상차|하차|입차|필수|도착|\d\s*시)/.test(v); }
   function dispIsKurly(tab) { return /컬리/.test(String(tab || '')); }
   function dispParse(text, kurly) {
     var DISP_COLS = kurly ? DISP_COLS_KURLY : DISP_COLS_BASE;
@@ -39,6 +41,9 @@
     rows.forEach(function (r) {
       var d = {}; DISP_COLS.forEach(function (c) { var j = idx[c[0]]; d[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); });
       if (!d.fc && d.dest) d.fc = d.dest; // 컬리처럼 센터명이 비어 있으면 도착지(MK_GMP 등)를 센터명으로
+      // 동방이 차량정보 칸(차량·운전원·연락처·입차시간·톤수)에 적어 보내는 안내 문구("13시이후 배차부탁드립니다.")는 오더 공지로 옮겨요
+      var nt = []; ['car', 'driver', 'phone', 'time', 'ton'].forEach(function (k) { if (dispIsNote(d[k])) { nt.push(String(d[k]).trim()); d[k] = ''; } });
+      if (nt.length) d.note = nt.join(' / ');
       var date = dispYmd(d.date); if (!date || !d.fc) { bad++; return; }
       dispCleanD(d);
       d.date = date; d._n = items.length + bad;

@@ -7324,6 +7324,22 @@
         $('#askCopy', m).onclick = function () { var l = pick(); if (!l.length) { toast('하차지를 하나 이상 고르세요.', 'err'); return; } copy(truckAskText(D, no, l)); close(); };
       } });
   }
+  /** 시간 안내(13시 이후·10시까지 등)인지: 기사 공지로도 보내요 */
+  function dispTimeNote(t) { return /(\d{1,2}\s*시|\d{1,2}:\d{2}|오전|오후)/.test(String(t || '')); }
+  /** 붙여넣은 오더의 안내 문구(d.note)를 공지로 저장: 내부 공지에 넣고, 시간 안내면 기사 공지에도 (이미 공지가 있으면 그대로) */
+  function dispImportNotes(key, items) {
+    if (!items.length) return Promise.resolve(0);
+    var dates = {}; items.forEach(function (x) { (dates[x.date] = dates[x.date] || {})[x.key] = x.d.note; });
+    var n = 0;
+    return Object.keys(dates).reduce(function (pr, date) {
+      return pr.then(function () { return api('dispatch.day', { cust: key, date: date }); }).then(function (day) {
+        return (day.orders || []).filter(function (o) { return dates[date][o.key] && !o.noteIn && !o.noteDrv; }).reduce(function (p2, o) {
+          var t = dates[date][o.key];
+          return p2.then(function () { return api('dispatch.note', { cust: key, date: date, id: o.id, noteIn: t, noteDrv: dispTimeNote(t) ? t : '' }); }).then(function () { n++; });
+        }, Promise.resolve());
+      });
+    }, Promise.resolve()).then(function () { return n; }).catch(function () { return n; });
+  }
   function truckMessage(D, no) {
     var C = custDef(); if (C.message) return C.message(D, no);
     var ji = joinInfo(D, no), J = joinView(D, no); if (J) { D = J.D; no = J.no; } // 합차: 묶인 호차 착지까지 한 문자로 (기준 호차 링크)
@@ -7332,7 +7348,7 @@
     var froms = [], fm = {}; list.forEach(function (o) { var v = o.d.from || '-'; if (!fm[v]) { fm[v] = 1; froms.push(v); } });
     var stops = truckStops(D, no), out = [D.date, '총 ' + won(b) + '번들 / ' + won(kg) + 'kg'];
     out.push(froms.map(function (f) { var p = findPlace(f); return String((p && p.name) || f).replace(/물류센터|센터|물류/g, '').trim() || f; }).concat(stops.map(function (s) { return s.fc; }).filter(function (f, i, a) { return a.indexOf(f) === i; })).join(' > ') + ' (' + stops.map(function (s) { return advAddrKey(s.d.addr || s.fc); }).filter(function (k, i, a) { return a.indexOf(k) === i; }).length + '착)');
-    truckNotes(D, no, 'drv').forEach(function (x) { out.push('⚠️ ' + (stops.length > 1 ? x.fc + ': ' : '') + x.text); });
+    truckNotes(D, no, 'drv').forEach(function (x) { out.push('⚠️ ' + (stops.length > 1 ? '[' + x.fc + ' 물건] ' : '') + x.text); }); // 'fc: 13시 이후' 는 그 하차지 시간으로 읽혀서, 그 하차지로 가는 물건 얘기임을 밝혀요
     if (ji && !J) out.push('🚚 합차: ' + ji.others.map(joinName).join(', ') + ' 착지도 같이 (기사 링크에 다 있어요)'); // 묶인 탭을 못 보는 화면(협력사)
     out.push('');
     froms.forEach(function (f, i) {
@@ -7887,7 +7903,7 @@
     if ($('#dpPasteIn')) $('#dpPasteIn').oninput = function () {
       parsed = C.parse ? C.parse(this.value, st.tab, st.date) : { items: [], warn: '이 업체는 오더 붙여넣기 양식이 없어요.' }; var by = {}, fr = {}; parsed.items.forEach(function (x) { by[x.date] = (by[x.date] || 0) + 1; fr[x.d.from] = 1; });
       var region = (String(st.tab).split('-').slice(1).join('-') || st.tab).replace(/\(.*?\)/g, '').trim(), other = Object.keys(fr).filter(function (f) { return f && region && f.indexOf(region) === -1; });
-      $('#dpPasteInfo').innerHTML = parsed.items.length ? '<b>' + parsed.items.length + '줄</b> · ' + Object.keys(by).sort().map(function (d) { return d.slice(5) + ' ' + by[d] + '줄'; }).join(', ') + (other.length ? ' · <span style="color:var(--orange)">출발센터 ' + esc(other.join(', ')) + ' — ' + esc(st.tab) + ' 탭이 맞나요?</span>' : '') + (parsed.warn ? ' · <span style="color:var(--orange)">' + esc(parsed.warn) + '</span>' : '') : '<span class="err-text">' + esc(parsed.warn || '읽을 줄이 없어요.') + '</span>';
+      $('#dpPasteInfo').innerHTML = parsed.items.length ? '<b>' + parsed.items.length + '줄</b> · ' + (function () { var nn = parsed.items.filter(function (x) { return x.d.note; }); return nn.length ? '<span style="color:var(--orange)">안내 문구 ' + nn.length + '건 → 공지로 (' + esc(nn[0].d.note) + (nn.length > 1 ? ' 등' : '') + ')</span> · ' : ''; })() + Object.keys(by).sort().map(function (d) { return d.slice(5) + ' ' + by[d] + '줄'; }).join(', ') + (other.length ? ' · <span style="color:var(--orange)">출발센터 ' + esc(other.join(', ')) + ' — ' + esc(st.tab) + ' 탭이 맞나요?</span>' : '') + (parsed.warn ? ' · <span style="color:var(--orange)">' + esc(parsed.warn) + '</span>' : '') : '<span class="err-text">' + esc(parsed.warn || '읽을 줄이 없어요.') + '</span>';
       $('#dpImport').disabled = !parsed.items.length;
     };
     if (C.pasteHtml && $('#dpPasteIn')) $('#dpPasteIn').onpaste = function (e) { // 메일 표(HTML)로 받아 칸 맞추기 (삼다수)
@@ -7896,9 +7912,12 @@
     };
     if ($('#dpImport')) $('#dpImport').onclick = function () {
       var btn = this; busy(btn, true, '가져오는 중…');
+      var withNote = parsed.items.filter(function (x) { return x.d.note; });
       api('dispatch.import', { cust: D.key, rows: parsed.items }).then(function (r) {
+        return dispImportNotes(D.key, withNote).then(function (n) { r.notes = n; return r; });
+      }).then(function (r) {
         var ds = Object.keys(r.dates).sort();
-        toast(st.tab + ' ' + r.added + '줄을 가져왔어요.' + (r.skipped ? ' (이미 있는 ' + r.skipped + '줄 건너뜀)' : ''));
+        toast(st.tab + ' ' + r.added + '줄을 가져왔어요.' + (r.skipped ? ' (이미 있는 ' + r.skipped + '줄 건너뜀)' : '') + (r.notes ? ' · 안내 문구 ' + r.notes + '건을 공지에 넣었어요' : ''));
         if (ds.length && !r.dates[st.date]) st.date = ds[0];
         if (C.autoTruck) st.autoTruck = st.tab;
         dispSaveNow(); st.tabs = null; renderDispatch();
