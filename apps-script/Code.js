@@ -2041,14 +2041,32 @@ function dispOrdRow_(r) { return { id: String(r[0]), cust: String(r[1]), date: t
 function dispTxt_(v) { return String(v == null ? '' : v).replace(/^'/, ''); }
 function dispTrkRow_(r) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]), car: dispTxt_(r[3]), driver: dispTxt_(r[4]), phone: dispTxt_(r[5]), time: dispTxt_(r[6]), ton: dispTxt_(r[7]), memo: dispTxt_(r[8]), by: String(r[9] || ''), at: fmt_(r[10]), token: String(r[11] || ''), status: dispStatus_(r[12]), retCost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join: dispTxt_(r[16]), rev: r[17] === '' || r[17] == null ? null : Number(r[17]), cost: r[18] === '' || r[18] == null ? null : Number(r[18]) }; }
 function dispTrkSheet_() { return headerSheet_(SHEET_DISP_TRK, DISP_TRK_HEADER); }
-function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER)).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
-function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER)).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
+/* 그날(그 달) 줄만 읽기: 업체·날짜 두 칸만 먼저 훑어 맞는 줄 번호를 찾고 → 그 줄 덩어리만 꺼내 읽어요.
+   시트 전체(몇 달치 오더 데이터)를 매번 읽지 않아서 데이터가 쌓여도 빨라요. 한 요청 안에서는 훑은 결과를 같이 써요(ROWS_MEMO_) */
+function rowsIdx_(sheet, header, kc, dc) {
+  var mk = 'IDX|' + sheet; if (ROWS_MEMO_ && ROWS_MEMO_[mk]) return ROWS_MEMO_[mk];
+  var sh = cacheSheet_(sheet, header), last = sh.getLastRow(), c0 = Math.min(kc, dc), idx = [];
+  if (last >= 2) idx = sh.getRange(2, c0 + 1, last - 1, Math.abs(dc - kc) + 1).getValues().map(function (r) { return [String(r[kc - c0]), textDate_(r[dc - c0])]; });
+  if (ROWS_MEMO_) ROWS_MEMO_[mk] = idx; return idx;
+}
+function rowsWhere_(sheet, header, kc, dc, keep) {
+  var hit = []; rowsIdx_(sheet, header, kc, dc).forEach(function (r, i) { if (keep(r[0], r[1])) hit.push(i); });
+  if (!hit.length) return [];
+  var sh = cacheSheet_(sheet, header), w = header.length, runs = [], out = [];
+  hit.forEach(function (i) { var r = runs[runs.length - 1]; if (r && i === r[1] + 1) r[1] = i; else runs.push([i, i]); });
+  if (runs.length > 25) { // 줄이 여기저기 흩어져 있으면 처음~끝을 한 번에 읽고 골라요
+    var a = hit[0], blk = sh.getRange(a + 2, 1, hit[hit.length - 1] - a + 1, w).getValues(); hit.forEach(function (i) { out.push(blk[i - a]); });
+  } else runs.forEach(function (r) { sh.getRange(r[0] + 2, 1, r[1] - r[0] + 1, w).getValues().forEach(function (x) { out.push(x); }); });
+  return out.filter(function (r) { return r[0] !== ''; });
+}
+function dispOrders_(cust, test) { return (headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER), rowsWhere_(SHEET_DISP_ORD, DISP_ORD_HEADER, 1, 2, function (c, d) { return c === cust && test(d); })).map(dispOrdRow_).filter(function (o) { return o.cust === cust && test(o.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.seq - b.seq; }); }
+function dispTrucks_(cust, test) { return (dispTrkSheet_(), rowsWhere_(SHEET_DISP_TRK, DISP_TRK_HEADER, 0, 1, function (c, d) { return c === cust && test(d); })).map(dispTrkRow_).filter(function (t) { return t.cust === cust && test(t.date); }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.no - b.no; }); }
 function dispDay_(cust, date) {
   cust = dispCust_(cust); date = dispDate_(date);
   var eq = function (d) { return d === date; };
   // 이 업체에 오더가 있는 날짜 (날짜 이동용, 최근 120일)
   var since = ymd_(new Date(Date.now() - 120 * 86400000)), days = {};
-  rowsOf_(SHEET_DISP_ORD, DISP_ORD_HEADER).forEach(function (r) { if (String(r[1]) === cust) { var d = textDate_(r[2]); if (d >= since) days[d] = (days[d] || 0) + 1; } });
+  rowsIdx_(SHEET_DISP_ORD, DISP_ORD_HEADER, 1, 2).forEach(function (r) { if (r[0] === cust && r[1] >= since) days[r[1]] = (days[r[1]] || 0) + 1; }); // 업체·날짜 칸만
   return { orders: dispOrders_(cust, eq), trucks: dispJoinMark_(cust, dispTrucks_(cust, eq)), days: days, receipts: dispReceipts_(cust, date) };
 }
 function dispCo_(key) { return String(key || '').replace(/\/.*$/, ''); }
@@ -2061,8 +2079,10 @@ function dispJoinGroup_(all, t) {
 }
 /** 화면 표시용: 호차마다 같이 묶인 다른 탭 호차 (탭 이름 · 호차 · 기준 여부만 — 협력사에게도 이것만 가요) */
 function dispJoinMark_(cust, trucks) {
-  var raw = rowsOf_(SHEET_DISP_TRK, DISP_TRK_HEADER); if (!raw.some(function (r) { return r[16]; })) return trucks; // 합차가 하나도 없으면 그냥
-  var co = dispCo_(cust), all = raw.filter(function (r) { return dispCo_(r[0]) === co; }).map(dispTrkRow_);
+  var co = dispCo_(cust), ds = {}; trucks.forEach(function (t) { ds[t.date] = 1; }); if (!trucks.length) return trucks;
+  var raw = rowsWhere_(SHEET_DISP_TRK, DISP_TRK_HEADER, 0, 1, function (c, d) { return ds[d] && dispCo_(c) === co; }); // 합차는 같은 날짜·같은 업체끼리라 그날 줄만
+  if (!raw.some(function (r) { return r[16]; })) return trucks; // 합차가 하나도 없으면 그냥
+  var all = raw.map(dispTrkRow_);
   var tabs = dispTabs_(co), name = function (k) { var suf = String(k).slice(co.length), t = tabs.filter(function (x) { return x.suf === suf; })[0]; return t ? t.name : k; };
   trucks.forEach(function (t) {
     var g = dispJoinGroup_(all, t), base = t.join || t.token; if (!g.length) return;
@@ -2487,7 +2507,7 @@ function dispReceiptsMove_(cust, date, moved) {
   if (ch) rng.setValues(no);
 }
 function dispReceipts_(cust, date) {
-  return rowsOf_(SHEET_RECEIPTS, RECEIPT_HEADER).filter(function (r) { return String(r[1]) === cust && textDate_(r[2]) === date; })
+  return rowsWhere_(SHEET_RECEIPTS, RECEIPT_HEADER, 1, 2, function (c, d) { return c === cust && d === date; }).filter(function (r) { return String(r[1]) === cust && textDate_(r[2]) === date; })
     .map(function (r) { return { id: String(r[0]), no: Number(r[3]), fc: String(r[4]), at: fmt_(r[6]), size: Number(r[7]) || 0 }; });
 }
 function dispReceipt_(id) {
