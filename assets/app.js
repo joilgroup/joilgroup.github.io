@@ -7326,6 +7326,12 @@
   }
   /** 시간 안내(13시 이후·10시까지 등)인지: 기사 공지로도 보내요 */
   function dispTimeNote(t) { return /(\d{1,2}\s*시|\d{1,2}:\d{2}|오전|오후)/.test(String(t || '')); }
+  /** 기사 공지는 짧게: "13시이후 배차부탁드립니다." → "13시 이후 상차가능" · "10시까지" → "10시까지 상차" (못 알아보면 그대로) */
+  function dispShortTime(t) {
+    var m = String(t || '').match(/(오전|오후)?\s*(\d{1,2})\s*(?:[:시]\s*(\d{1,2})\s*분?)?\s*시?\s*(이후|부터|이전|전|까지)/); if (!m) return t;
+    var h = Number(m[2]) + (m[1] === '오후' && Number(m[2]) < 12 ? 12 : 0), mm = m[3] && Number(m[3]) ? Number(m[3]) + '분' : '', at = h + '시' + mm;
+    return /이후|부터/.test(m[4]) ? at + ' 이후 상차가능' : at + '까지 상차';
+  }
   /** 붙여넣은 오더의 안내 문구(d.note)를 공지로 저장: 내부 공지에 넣고, 시간 안내면 기사 공지에도 (이미 공지가 있으면 그대로) */
   function dispImportNotes(key, items) {
     if (!items.length) return Promise.resolve(0);
@@ -7335,7 +7341,7 @@
       return pr.then(function () { return api('dispatch.day', { cust: key, date: date }); }).then(function (day) {
         return (day.orders || []).filter(function (o) { return dates[date][o.key] && !o.noteIn && !o.noteDrv; }).reduce(function (p2, o) {
           var t = dates[date][o.key];
-          return p2.then(function () { return api('dispatch.note', { cust: key, date: date, id: o.id, noteIn: t, noteDrv: dispTimeNote(t) ? t : '' }); }).then(function () { n++; });
+          return p2.then(function () { return api('dispatch.note', { cust: key, date: date, id: o.id, noteIn: t, noteDrv: dispTimeNote(t) ? dispShortTime(t) : '' }); }).then(function () { n++; });
         }, Promise.resolve());
       });
     }, Promise.resolve()).then(function () { return n; }).catch(function () { return n; });
@@ -7348,7 +7354,7 @@
     var froms = [], fm = {}; list.forEach(function (o) { var v = o.d.from || '-'; if (!fm[v]) { fm[v] = 1; froms.push(v); } });
     var stops = truckStops(D, no), out = [D.date, '총 ' + won(b) + '번들 / ' + won(kg) + 'kg'];
     out.push(froms.map(function (f) { var p = findPlace(f); return String((p && p.name) || f).replace(/물류센터|센터|물류/g, '').trim() || f; }).concat(stops.map(function (s) { return s.fc; }).filter(function (f, i, a) { return a.indexOf(f) === i; })).join(' > ') + ' (' + stops.map(function (s) { return advAddrKey(s.d.addr || s.fc); }).filter(function (k, i, a) { return a.indexOf(k) === i; }).length + '착)');
-    truckNotes(D, no, 'drv').forEach(function (x) { out.push('⚠️ ' + (stops.length > 1 ? '[' + x.fc + ' 물건] ' : '') + x.text); }); // 'fc: 13시 이후' 는 그 하차지 시간으로 읽혀서, 그 하차지로 가는 물건 얘기임을 밝혀요
+    truckNotes(D, no, 'drv').map(function (x) { return x.text; }).filter(function (t, i, a) { return a.indexOf(t) === i; }).forEach(function (t) { out.push('⚠️ ' + t); }); // 어느 하차지 물건이든 시간이 정해지면 호차 전체가 맞춰야 해서 하차지 이름은 안 붙여요
     if (ji && !J) out.push('🚚 합차: ' + ji.others.map(joinName).join(', ') + ' 착지도 같이 (기사 링크에 다 있어요)'); // 묶인 탭을 못 보는 화면(협력사)
     out.push('');
     froms.forEach(function (f, i) {
