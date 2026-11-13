@@ -154,8 +154,10 @@
     function close() { wrap.remove(); document.removeEventListener('keydown', onKey); }
     function onKey(e) { if (e.key === 'Escape' && !opts.locked) close(); }
     document.addEventListener('keydown', onKey);
+    var downOut = false; // 바깥(어두운 곳)에서 누르기 시작한 경우만 닫아요 — 칸 안에서 글자를 끌어 고르다 창 밖에서 떼면 닫히던 문제
+    wrap.addEventListener('mousedown', function (e) { downOut = e.target === wrap; });
     wrap.addEventListener('click', function (e) {
-      if (e.target === wrap && !opts.locked) close();
+      if (e.target === wrap && downOut && !opts.locked) close();
       if (e.target.closest('[data-close]')) close();
     });
     if (opts.onMount) opts.onMount(wrap.querySelector('.modal'), close);
