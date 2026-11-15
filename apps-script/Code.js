@@ -159,7 +159,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -210,6 +210,8 @@ function handle_(req) {
     case 'dispatch.mapSave': return dispMapSave_(session, req);
     case 'dispatch.price': dispNeedCost_(session); return { prices: dispPrices_(req.cust) };
     case 'dispatch.priceSave': dispNeedCost_(session); return { prices: dispPriceSave_(req) };
+    case 'dispatch.codes': dispNeedCost_(session); return { codes: dispCodes_(req.cust) };
+    case 'dispatch.codesSave': dispNeedCost_(session); return { codes: dispCodesSave_(req) };
     case 'dispatch.map': return { map: dispMap_() }; // 하차지 이름(삼다수 대리점 → 인천백석동 등)은 금액이 없어서 직원 모두 봐요
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
     case 'dispatch.receipt': return dispReceipt_(req.id);
@@ -2193,6 +2195,14 @@ function dispPriceSave_(req) {
     if (v > 0) p[ym] = Math.min(v, 10000000); else delete p[ym];
     PropertiesService.getScriptProperties().setProperty('DISP_PRICE_' + cust, JSON.stringify(p)); return p;
   } finally { lock.releaseLock(); }
+}
+/* 차도리(회계 프로그램) 등록 엑셀용 거래처 코드: 업체마다 { sale: 매출코드, buy: { 탭 접미사: 매입코드 }, jo: 조일배차 매입코드 } · 분석 권한 */
+function dispCodes_(cust) { return parseJson_(PropertiesService.getScriptProperties().getProperty('DISP_CODES_' + dispCust_(cust)), {}) || {}; }
+function dispCodesSave_(req) {
+  var c = req.codes || {}, t = function (v) { return String(v == null ? '' : v).trim().slice(0, 30); }, buy = {};
+  Object.keys(c.buy || {}).slice(0, 40).forEach(function (k) { buy[String(k).slice(0, 60)] = t(c.buy[k]); });
+  var o = { sale: t(c.sale), buy: buy, jo: t(c.jo) };
+  PropertiesService.getScriptProperties().setProperty('DISP_CODES_' + dispCust_(req.cust), JSON.stringify(o)); return o;
 }
 function dispMonth_(cust, ym) {
   cust = dispCust_(cust); ym = String(ym || ''); if (!/^\d{4}-\d{2}$/.test(ym)) throw new Error('월을 확인하세요.');

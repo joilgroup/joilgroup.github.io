@@ -8138,13 +8138,72 @@
         };
       } });
   }
+  /* 차도리(회계 프로그램) 배차일보 업로드 양식 (.xls): 1~6행 안내 · 7행 제목 · 8행부터 착지마다 한 줄
+     매출 = 착지 번들 × 그 달 단가(직접 고친 매출은 번들 비율로 나눔) · 매입 = 호차 운송비(실제 매입) 번들 비율로 나눔 · 비고 = 번들 · 거래처 코드는 서버에 저장(분석 권한) */
+  var CHA_HEAD = ['날짜', '매출코드', '매출처', '매입코드', '매입처', '발지', '착지', '차량번호', '품목', '중량', '수량', '규격', '부피', '길이', '인수증', '세금', '인터넷', '매출후불', '매출선불', '수수료', '매출부가세', '청구월', '매입후불', '매입선불', '보관료', '매입부가세', '지급월', '매출단가', '매입단가', '기타', '비고', '메모', '착불금', '계근비', '상차일', '하차일', '상차지', '하차지', '고객', '고객전화', '차량전화', '희망차종', '실적신고\n(운송)', '실적신고\n(위탁)', '화물정보', '배차\n건수', '메모1', '메모2', '메모3', '기사상호', '사업자번호', '대표자명', '운송비지급\n코드번호(1~2)', '기사명', '은행명', '계좌번호', '예금주'];
+  function chadoriRows(rows, MT, codes, price) {
+    var out = [], warn = [], C = function (n) { return CHA_HEAD.indexOf(n); };
+    var split = function (total, ws) { var s = ws.reduce(function (a, w) { return a + w; }, 0), v = ws.map(function (w) { return s ? Math.round(total * w / s) : 0; }); if (!s && v.length) v[0] = total; v[v.length - 1] += total - v.reduce(function (a, x) { return a + x; }, 0); return v; };
+    rows.forEach(function (r) {
+      var stops = truckStops({ tab: r.tab, date: r.date, orders: r.os, trucks: [r.t] }, r.no); if (!stops.length) return;
+      var ws = stops.map(function (x) { return r.ret ? 0 : x.b; }), suf = (MT.filter(function (t) { return t[0] === r.tab; })[0] || ['', ''])[1];
+      var buy = r.t.status === '조일배차' && codes.jo ? codes.jo : (codes.buy || {})[suf] || '';
+      var revs = r.rv != null ? split(r.rv, ws) : ws.map(function (b) { return price ? Math.round(b * price.v) : 0; }), costs = r.amt == null ? null : split(r.amt, ws);
+      if (r.amt == null && !r.jm) warn.push(r.date.slice(5) + ' ' + r.tab + ' ' + r.no + '호차 운송비 없음');
+      if (!buy) warn.push(r.tab + ' 매입코드 없음');
+      stops.forEach(function (x, i) {
+        var row = CHA_HEAD.map(function () { return ''; });
+        row[C('날짜')] = r.date; row[C('매출코드')] = codes.sale || ''; row[C('매입코드')] = buy;
+        row[C('발지')] = x.d.from || ''; row[C('착지')] = x.fc; row[C('차량번호')] = r.t.car || ''; row[C('품목')] = String(r.tab).split('-')[0] || '';
+        var ton = parseFloat(String(r.t.ton || r.ton || '').replace(/[^0-9.]/g, '')); if (ton) row[C('중량')] = ton;
+        row[C('매출후불')] = revs[i] || 0; if (costs) row[C('매입후불')] = costs[i]; row[C('비고')] = r.ret ? '회차' : ws[i];
+        row[C('차량전화')] = r.t.phone || ''; row[C('기사명')] = r.t.driver || '';
+        out.push(row);
+      });
+    });
+    return { rows: out, warn: warn.filter(function (w, i, a) { return a.indexOf(w) === i; }) };
+  }
+  function openChadori(MT, rows, price) {
+    var st = dispState(), tabs = MT.filter(function (t) { return rows.some(function (r) { return r.tab === t[0]; }); }), codes = { buy: {} }, oldSrv = false;
+    modal({ eyebrow: '배차시트 · 월별 기록 · ' + st.cust + ' · ' + st.ym, title: '차도리 엑셀 (배차일보 업로드)',
+      body: '<p class="muted small" style="margin:0 0 10px">착지마다 한 줄이에요. 매출 = 번들 × 단가(직접 고친 매출은 번들 비율로 나눔), 매입 = 호차 운송비·실제 매입을 번들 비율로 나눠요. 비고 칸에 번들 수. 지금 고른 탭(' + esc(tabs.map(function (t) { return t[0]; }).join(', ')) + ')만 들어가요.</p>' +
+        '<div id="chBody"><span class="spinner dark"></span></div>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="chGo" disabled>저장하고 내려받기</button>',
+      onMount: function (m) {
+        var draw = function () {
+          $('#chBody', m).innerHTML = '<div class="field"><label>매출코드 (동방)</label><input class="input" id="chSale" value="' + esc(codes.sale || '') + '" style="max-width:180px"></div>' +
+            '<div class="table-wrap"><table class="data"><thead><tr><th class="left">탭</th><th class="left">매입코드</th></tr></thead><tbody>' + tabs.map(function (t) { return '<tr><td class="left">' + esc(t[0]) + '</td><td class="left"><input class="input input-sm" data-chb="' + esc(t[1]) + '" value="' + esc((codes.buy || {})[t[1]] || '') + '" style="max-width:160px"></td></tr>'; }).join('') +
+            '<tr><td class="left">상태 "조일배차" 호차</td><td class="left"><input class="input input-sm" id="chJo" value="' + esc(codes.jo || '') + '" style="max-width:160px"></td></tr></tbody></table></div>' +
+            (oldSrv ? '<p class="small err-text">서버(Code.js)가 예전 버전이라 코드를 저장하지 못해요. 이번에만 쓰고 다음에 다시 넣어야 해요.</p>' : '<p class="hint">코드는 서버에 저장돼서 다음부터 그대로 나와요 (분석 권한자만).</p>') + '<div id="chWarn"></div>';
+          $('#chGo', m).disabled = false;
+        };
+        api('dispatch.codes', { cust: st.cust }).then(function (r) { codes = r.codes || { buy: {} }; codes.buy = codes.buy || {}; draw(); }).catch(function () { oldSrv = true; draw(); });
+        $('#chGo', m).onclick = function () {
+          var btn = this; codes = { sale: $('#chSale', m).value.trim(), jo: $('#chJo', m).value.trim(), buy: Object.assign({}, codes.buy) };
+          $$('[data-chb]', m).forEach(function (i) { codes.buy[i.dataset.chb] = i.value.trim(); });
+          if (!codes.sale) return toast('매출코드를 넣으세요.', 'err');
+          var R = chadoriRows(rows, MT, codes, price); if (!R.rows.length) return toast('내려받을 호차가 없어요.', 'err');
+          busy(btn, true, '만드는 중…');
+          var sum = function (k) { return R.rows.reduce(function (a, x) { return a + (Number(x[CHA_HEAD.indexOf(k)]) || 0); }, 0); };
+          $('#chWarn', m).innerHTML = '<p class="ok-text small">✓ ' + R.rows.length + '줄 · 매출 ' + won(sum('매출후불')) + '원 · 매입 ' + won(sum('매입후불')) + '원</p>' + (R.warn.length ? '<p class="small err-text">확인: ' + esc(R.warn.slice(0, 8).join(' · ')) + (R.warn.length > 8 ? ' 외 ' + (R.warn.length - 8) + '건' : '') + '</p>' : '');
+          (oldSrv ? Promise.resolve() : api('dispatch.codesSave', { cust: st.cust, codes: codes }).catch(function () {})).then(function () { return loadXlsx(); }).then(function (X) {
+            var aoa = [['차도리 배차일보등록 업로드 양식'], ["▶아래 '항목설명' 시트를 참고하여 작성하시기 바랍니다.\n▶실제 업로드할 DATA는 8행부터 입력하여야 합니다."], [], ['▶임의로 행을 추가하거나 삭제하는 경우 파일을 제대로 읽지 못하는 경우가 있으므로, 주어진 양식안에 반드시 작성을 하시기 바랍니다.\n▶차도리 프로그램에 저장 되있는 매출코드 ,매입코드는 동일하게 입력하여야합니다.(코드번호 없는 경우 자동으로 거래처 등록이 됩니다.)'], [], [], CHA_HEAD].concat(R.rows);
+            var ws = X.utils.aoa_to_sheet(aoa); ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }, { s: { r: 1, c: 0 }, e: { r: 2, c: 16 } }, { s: { r: 3, c: 0 }, e: { r: 4, c: 16 } }];
+            Object.keys(ws).forEach(function (a) { if (a.charAt(0) === '!') return; var c = ws[a]; if (c.t === 's') c.z = '@'; }); // 코드·전화번호·날짜는 글자로
+            var wb = X.utils.book_new(); X.utils.book_append_sheet(wb, ws, 'Sheet1');
+            saveBlob(new Blob([X.write(wb, { bookType: 'biff8', type: 'array' })], { type: 'application/vnd.ms-excel' }), '차도리_' + st.cust + '_' + st.ym + '.xls');
+            busy(btn, false); toast('차도리 엑셀을 내려받았어요.');
+          }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+        };
+      } });
+  }
   /** 그 달 번들 단가: 저장한 달 중 가장 가까운 지난 달 것 (11월에 올려도 지난 달은 그대로) */
   function dispPriceOf(prices, ym) { var ks = Object.keys(prices || {}).filter(function (k) { return k <= ym && Number(prices[k]) > 0; }).sort(); return ks.length ? { v: Number(prices[ks[ks.length - 1]]), ym: ks[ks.length - 1] } : null; }
   function drawDispMonth(quiet) {
     var st = dispState(), box = $('#dpBody'), money = can('analysis') || isPartner(), rev = can('analysis'), curYm = todayYmd().slice(0, 7);
     clearTimeout(st.mTimer);
     var ms = []; for (var i = 0; i < 18; i++) ms.push(ymAdd(curYm, -i));
-    if (!(quiet && $('#dpMBody'))) box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span>' + (rev && st.cust === DISP_CUSTS[0] ? '<button class="btn btn-sm" id="dpHist" title="예전 구글시트 배차 기록을 그대로 옮겨요">시트에서 가져오기</button>' : '') + '<button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
+    if (!(quiet && $('#dpMBody'))) box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span>' + (rev && st.cust === DISP_CUSTS[0] ? '<button class="btn btn-sm" id="dpHist" title="예전 구글시트 배차 기록을 그대로 옮겨요">시트에서 가져오기</button>' : '') + (rev ? '<button class="btn btn-sm" id="dpCha" disabled title="차도리 배차일보 업로드 양식(.xls)">차도리 엑셀</button>' : '') + '<button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
     $('#dpYm').onchange = function () { st.ym = this.value; drawDispMonth(); syncRoute(); };
     var MT = [], PR = null;
     Promise.all([loadDispTabs(), money ? loadDispRates() : null, loadPlaces(), rev ? api('dispatch.price', { cust: st.cust }).then(function (r) { return r.prices || {}; }).catch(function () { return null; }) : null]).then(function (z) { PR = z[3]; var all = z[0]; MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) {
@@ -8228,6 +8287,7 @@
       $$('[data-rev]', el).forEach(function (b) { b.onclick = function () { fixAmt('rev', b); }; });
       $$('[data-cost]', el).forEach(function (b) { b.onclick = function () { fixAmt('cost', b); }; });
       var hi = $('#dpHist'); if (hi) hi.onclick = function () { openHistImport(MT, function () { drawDispMonth(true); }); };
+      var ch = $('#dpCha'); if (ch) { ch.disabled = !rows.length; ch.onclick = function () { openChadori(MT, rows, price); }; }
       if (st.ym === curYm) st.mTimer = setTimeout(function again() { if (state.view !== 'dispatch' || st.view !== 'month' || st.ym !== curYm) return; if (document.hidden || $('.backdrop') || (document.activeElement && document.activeElement.id === 'dpPrice')) { st.mTimer = setTimeout(again, 60000); return; } drawDispMonth(true); }, 60000);
       var x = $('#dpMX'); x.disabled = !rows.length;
       x.onclick = function () {

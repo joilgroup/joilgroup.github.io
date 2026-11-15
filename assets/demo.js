@@ -646,6 +646,8 @@
         return demoRates(null);
       case 'dispatch.price': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); return { prices: (store.dispPrice || {})[req.cust] || {} };
       case 'dispatch.priceSave': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); store.dispPrice = store.dispPrice || {}; var dpp = store.dispPrice[req.cust] = store.dispPrice[req.cust] || {}, dpv = Math.round(Number(String(req.price == null ? '' : req.price).replace(/[^0-9.]/g, ''))) || 0; if (dpv > 0) dpp[req.ym] = dpv; else delete dpp[req.ym]; save(); return { prices: dpp };
+      case 'dispatch.codes': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); return { codes: (store.dispCodes || {})[req.cust] || {} };
+      case 'dispatch.codesSave': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); store.dispCodes = store.dispCodes || {}; store.dispCodes[req.cust] = { sale: String((req.codes || {}).sale || ''), buy: (req.codes || {}).buy || {}, jo: String((req.codes || {}).jo || '') }; save(); return { codes: store.dispCodes[req.cust] };
       case 'dispatch.map': var dm2 = {}; wk('dispMap').forEach(function (x) { dm2[x.fc] = x.dest; }); return { map: dm2 };
       case 'dispatch.ratesSave':
         if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');
