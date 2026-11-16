@@ -7228,7 +7228,24 @@
     return out;
   }
   /** 목록 표 위 검색칸: 글자를 칠 때마다 다시 그려도 커서가 그 자리에 */
-  function keepTyping(inp, draw) { inp.oninput = function () { var v = inp.value, pos = inp.selectionStart; draw(v); var n = document.getElementById(inp.id); if (n) { n.focus(); n.setSelectionRange(pos, pos); } }; }
+  /** 검색칸에 치면 목록을 다시 그려요 (칸은 setHtmlKeep으로 그대로 두어서 한글 조합이 끊기지 않아요) */
+  function keepTyping(inp, draw) { inp.oninput = function () { var v = inp.value, pos = inp.selectionStart; draw(v); var n = document.getElementById(inp.id); if (n && document.activeElement !== n) { n.focus(); n.setSelectionRange(pos, pos); } }; }
+  /** innerHTML 대신: 지금 치고 있는 칸(id 있는 input·textarea)은 그대로 두고 둘레만 새로 바꿔요
+      칸을 새로 만들면 한글 조합 중이던 글자가 끊겨서 'ㅊㅏㅇ'처럼 자음·모음이 떨어져요 */
+  function setHtmlKeep(el, html) {
+    var a = document.activeElement;
+    if (!a || !a.id || !/^(INPUT|TEXTAREA)$/.test(a.tagName) || !el.contains(a)) { el.innerHTML = html; return; }
+    var tmp = document.createElement('div'); tmp.innerHTML = html; var b = tmp.querySelector('#' + a.id);
+    if (!b) { el.innerHTML = html; return; }
+    var swap = function (pa, keep, pb, ref) { // pa의 keep 말고는 pb의 ref 앞뒤 것들로 바꿔요
+      Array.prototype.slice.call(pa.childNodes).forEach(function (c) { if (c !== keep) pa.removeChild(c); });
+      var before = true; Array.prototype.slice.call(pb.childNodes).forEach(function (c) { if (c === ref) { before = false; return; } if (before) pa.insertBefore(c, keep); else pa.appendChild(c); });
+    };
+    var x = a, y = b;
+    while (x.parentNode !== el) { var px = x.parentNode, py = y.parentNode; if (!px || !py || py === tmp) { el.innerHTML = html; return; } swap(px, x, py, y); px.className = py.className; x = px; y = py; }
+    if (y.parentNode !== tmp) { el.innerHTML = html; return; }
+    swap(el, x, tmp, y);
+  }
   /** 서버가 예전 버전이면 업체별 저장을 막아요 (예전 서버는 업체를 몰라서 다른 업체 자료를 덮어써요) */
   function oldServer(list) { return (list || []).length && list.every(function (x) { return x.cust == null; }); }
   var OLD_SRV = '서버(Code.js)가 예전 버전이라 업체별로 저장할 수 없어요. Apps Script에 새 Code.js를 붙여넣고 새 버전으로 배포해 주세요.';
@@ -7264,12 +7281,12 @@
             var all = mine(), kinds = []; all.forEach(function (x) { if (kinds.indexOf(x.kind) === -1) kinds.push(x.kind); }); if (kind && kinds.indexOf(kind) === -1) kind = '';
             var ql = q.toLowerCase(), list = all.filter(function (x) { return (!kind || x.kind === kind) && (!ql || DEST_COLS.map(function (c) { return x[c[0]]; }).join(' ').toLowerCase().indexOf(ql) !== -1); });
             var v = cur || {};
-            $('#dbBody', m).innerHTML = '<div class="actions" style="margin-bottom:8px">' + (kinds.length > 1 ? '<div class="segmented" id="dbKind"><button type="button" data-k="" class="' + (kind ? '' : 'on') + '">전체 <span class="muted small">' + all.length + '</span></button>' + kinds.map(function (k) { return '<button type="button" data-k="' + esc(k) + '" class="' + (k === kind ? 'on' : '') + '">' + esc(k) + ' <span class="muted small">' + all.filter(function (x) { return x.kind === k; }).length + '</span></button>'; }).join('') + '</div>' : '') +
+            setHtmlKeep($('#dbBody', m), '<div class="actions" style="margin-bottom:8px">' + (kinds.length > 1 ? '<div class="segmented" id="dbKind"><button type="button" data-k="" class="' + (kind ? '' : 'on') + '">전체 <span class="muted small">' + all.length + '</span></button>' + kinds.map(function (k) { return '<button type="button" data-k="' + esc(k) + '" class="' + (k === kind ? 'on' : '') + '">' + esc(k) + ' <span class="muted small">' + all.filter(function (x) { return x.kind === k; }).length + '</span></button>'; }).join('') + '</div>' : '') +
               '<input class="input input-sm" id="dbQ" placeholder="코드·하차지명·주소 검색" value="' + esc(q) + '" style="max-width:300px"><span class="muted small">' + list.length + ' / ' + all.length + '곳</span><span class="spacer"></span><button type="button" class="btn btn-sm" id="dbNew">＋ 한 줄 더하기</button></div>' +
               (cur ? '<div class="std-form">' + DEST_COLS.map(function (c) { return '<label class="small">' + esc(c[1]) + '<input class="input input-sm" data-df="' + c[0] + '" value="' + esc(v[c[0]] || '') + '"' + (c[0] === 'kind' ? ' list="dbKl"' : '') + '></label>'; }).join('') + '<datalist id="dbKl">' + ['일반(FC도크)', '장갑'].concat(kinds).filter(function (k, i, a) { return a.indexOf(k) === i; }).map(function (k) { return '<option value="' + esc(k) + '">'; }).join('') + '</datalist><div class="actions"><button type="button" class="btn btn-sm" id="dbCancel">취소</button><button type="button" class="btn btn-sm btn-primary" id="dbSave">' + (cur._i != null ? '고치기' : '더하기') + '</button></div></div>' : '') +
               '<div class="pa-list std-list"><table class="data te-tb std-tb"><thead><tr>' + DEST_COLS.map(function (c) { return '<th class="left">' + esc(c[1]) + '</th>'; }).join('') + '<th></th></tr></thead><tbody>' +
               (list.length ? list.map(function (x) { return '<tr>' + DEST_COLS.map(function (c) { return '<td class="left' + (c[0] === 'addr' ? ' small' : '') + '">' + esc(x[c[0]] || '') + '</td>'; }).join('') + '<td class="nowrap"><button type="button" class="btn btn-sm" data-ded="' + all.indexOf(x) + '">수정</button> <button type="button" class="btn btn-sm btn-ghost" data-ddel="' + all.indexOf(x) + '">삭제</button></td></tr>'; }).join('')
-                : '<tr><td colspan="' + (DEST_COLS.length + 1) + '" class="muted">' + (all.length ? '맞는 하차지가 없어요.' : '아직 없어요. 위 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table></div>';
+                : '<tr><td colspan="' + (DEST_COLS.length + 1) + '" class="muted">' + (all.length ? '맞는 하차지가 없어요.' : '아직 없어요. 위 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table></div>');
             $$('#dbKind button', m).forEach(function (b) { b.onclick = function () { kind = b.dataset.k; draw(); }; });
             keepTyping($('#dbQ', m), function (val) { q = val; draw(); });
             $('#dbNew', m).onclick = function () { cur = { kind: kind || (all[0] && all[0].kind) || '일반(FC도크)' }; draw(); };
@@ -8362,12 +8379,12 @@
           var ql = q.toLowerCase(), list = groups.filter(function (g) { return !ql || (g.from + ' ' + g.to + ' ' + g.memo).toLowerCase().indexOf(ql) !== -1; });
           var froms = {}; groups.forEach(function (g) { froms[g.from] = 1; });
           var v = cur || { p: {} };
-          $('#drBody', m).innerHTML = '<div class="actions" style="margin-bottom:8px"><input class="input input-sm" id="drQ" placeholder="출발·도착 검색" value="' + esc(q) + '" style="max-width:260px"><span class="muted small">' + list.length + ' / ' + groups.length + '구간 · 단가 ' + rows.length + '칸 · 출발 ' + esc(Object.keys(froms).join(', ') || '–') + '</span><span class="spacer"></span><button type="button" class="btn btn-sm" id="drNew"' + (isOld() ? ' disabled' : '') + '>＋ 구간 더하기</button></div>' +
+          setHtmlKeep($('#drBody', m), '<div class="actions" style="margin-bottom:8px"><input class="input input-sm" id="drQ" placeholder="출발·도착 검색" value="' + esc(q) + '" style="max-width:260px"><span class="muted small">' + list.length + ' / ' + groups.length + '구간 · 단가 ' + rows.length + '칸 · 출발 ' + esc(Object.keys(froms).join(', ') || '–') + '</span><span class="spacer"></span><button type="button" class="btn btn-sm" id="drNew"' + (isOld() ? ' disabled' : '') + '>＋ 구간 더하기</button></div>' +
             (cur ? '<div class="std-form"><label class="small">출발<input class="input input-sm" data-rf="from" value="' + esc(v.from || '') + '"></label><label class="small">도착<input class="input input-sm" data-rf="to" value="' + esc(v.to || '') + '"></label><label class="small">적용시작일<input class="input input-sm" type="date" data-rf="start" value="' + esc(v.start || '') + '"></label><label class="small">비고<input class="input input-sm" data-rf="memo" value="' + esc(v.memo || '') + '"></label>' +
               tons.map(function (t) { return '<label class="small">' + esc(t) + '<input class="input input-sm num" inputmode="numeric" data-rt="' + esc(t) + '" value="' + (v.p[t] ? won(v.p[t]) : '') + '"></label>'; }).join('') + '<div class="actions"><button type="button" class="btn btn-sm" id="drCancel">취소</button><button type="button" class="btn btn-sm btn-primary" id="drSave">' + (cur.k ? '고치기' : '더하기') + '</button></div></div>' : '') +
             '<div class="pa-list std-list"><table class="data te-tb std-tb"><thead><tr><th class="left">출발</th><th class="left">도착</th><th class="left">적용시작일</th>' + used.map(function (t) { return '<th class="num">' + esc(t) + '</th>'; }).join('') + '<th class="left">비고</th><th></th></tr></thead><tbody>' +
             (list.length ? list.map(function (g) { return '<tr><td class="left"><b>' + esc(g.from) + '</b></td><td class="left">' + esc(g.to) + '</td><td class="left small">' + (g.start ? esc(g.start) + (g.start > today ? ' <span class="badge">예정</span>' : '') : '<span class="muted">처음부터</span>') + '</td>' + used.map(function (t) { return '<td class="num">' + (g.p[t] ? won(g.p[t]) : '<span class="muted">–</span>') + '</td>'; }).join('') + '<td class="left small">' + esc(g.memo) + '</td><td class="nowrap">' + (isOld() ? '' : '<button type="button" class="btn btn-sm" data-red="' + esc(g.k) + '">수정</button> <button type="button" class="btn btn-sm btn-ghost" data-rdel="' + esc(g.k) + '">삭제</button>') + '</td></tr>'; }).join('')
-              : '<tr><td colspan="' + (used.length + 5) + '" class="muted">' + (groups.length ? '맞는 구간이 없어요.' : '아직 없어요. 위 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table></div>';
+              : '<tr><td colspan="' + (used.length + 5) + '" class="muted">' + (groups.length ? '맞는 구간이 없어요.' : '아직 없어요. 위 "여러 줄 올리기"로 올려 주세요.') + '</td></tr>') + '</tbody></table></div>');
           keepTyping($('#drQ', m), function (val) { q = val; draw(); });
           $('#drNew', m).onclick = function () { cur = { p: {} }; draw(); };
           var rest = function (k) { return rows.filter(function (x) { return x.from + '|' + x.to + '|' + x.start !== k; }); };
