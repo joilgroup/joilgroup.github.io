@@ -7706,21 +7706,31 @@
       } });
   }
   /** 운임 수정: 회차 비용 · 대기료 · 운송료지원 (분석 권한만) */
-  function openFare(D, no) {
+  function dispAdmin() { return !!(state.user && state.user.role === 'admin'); }
+  function dispReal(t) { return t && t.cost != null && t.cost !== '' && can('analysis'); }
+  function openFare(D, no, opt) {
+    opt = opt || {};
     var ji = joinInfo(D, no); if (ji && !ji.base) return toast('합차라 운송비는 기준 호차(' + ji.others.filter(function (x) { return x.base; }).map(joinName).join('') + ')에서 고쳐 주세요.', 'err');
-    var t = truckInfo(D, no), cost = truckCost(D, no), rows = (t.status === '회차' ? [['retCost', '회차 비용']] : []).concat(DISP_EXTRA);
-    modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 운임 수정',
+    var t = truckInfo(D, no), cost = truckCost(D, no), rows = (t.status === '회차' ? [['retCost', '회차 비용']] : []).concat(DISP_EXTRA), adm = dispAdmin(), real = dispReal(t);
+    modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 ' + (opt.real ? '실제 배차금액 (조일배차)' : '운임 수정'),
       body: '<p class="muted small" style="margin:0 0 10px">' + (t.status === '회차' ? '회차는 단가표 대신 적은 회차 비용으로 계산해요.' : (cost && cost.total != null ? esc(cost.ton) + ' 기준 단가 ' + won(cost.total) + '원' : '단가표에서 단가를 찾지 못했어요.')) + ' 추가 비용은 체크하고 금액을 넣으세요.</p>' +
         rows.map(function (x) { var v = Number(t[x[0]]) || 0, fixed = x[0] === 'retCost'; return '<div class="fare-row"><label>' + (fixed ? '' : '<input type="checkbox" data-fon="' + x[0] + '"' + (v ? ' checked' : '') + '> ') + '<b>' + x[1] + '</b></label><input class="input input-sm num" inputmode="numeric" data-fv="' + x[0] + '" value="' + (v ? won(v) : '') + '" placeholder="0"' + (fixed || v ? '' : ' disabled') + '><span class="muted small">원</span></div>'; }).join('') +
+        (adm ? '<div class="fare-row" style="margin-top:10px;border-top:1px dashed var(--line);padding-top:10px"><label><input type="checkbox" data-fon="cost"' + (real || opt.real ? ' checked' : '') + '> <b>실제 배차금액</b> <span class="small muted">(넣으면 단가표·추가 비용 대신 이 금액만 매입 · 조일배차처럼 정해진 금액)</span></label><input class="input input-sm num" inputmode="numeric" data-fv="cost" value="' + (real ? won(t.cost) : '') + '"' + (real || opt.real ? '' : ' disabled') + ' placeholder="금액"></div>' : '') +
         '<div class="fare-sum" id="fareSum"></div>',
       foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="fareSave">저장</button>',
       onMount: function (m, close) {
         var val = function (k) { var on = k === 'retCost' || $('[data-fon="' + k + '"]', m).checked; return on ? (Math.round(Number(String($('[data-fv="' + k + '"]', m).value).replace(/[^0-9.]/g, ''))) || 0) : 0; };
-        var sum = function () { var base = t.status === '회차' ? val('retCost') : (cost && cost.total) || 0; $('#fareSum', m).innerHTML = '운송비 <b>' + won(base + DISP_EXTRA.reduce(function (a, x) { return a + val(x[0]); }, 0)) + '원</b>'; };
+        var useReal = function () { var c = $('[data-fon="cost"]', m); return !!(c && c.checked); };
+        var sum = function () { if (useReal()) { $('#fareSum', m).innerHTML = '운송비 <b>' + won(val('cost')) + '원</b> <span class="small" style="color:var(--orange)">실제 배차금액</span>'; return; } var base = t.status === '회차' ? val('retCost') : (cost && cost.total) || 0; $('#fareSum', m).innerHTML = '운송비 <b>' + won(base + DISP_EXTRA.reduce(function (a, x) { return a + val(x[0]); }, 0)) + '원</b>'; };
         $$('[data-fon]', m).forEach(function (c) { c.onchange = function () { var i = $('[data-fv="' + c.dataset.fon + '"]', m); i.disabled = !c.checked; if (c.checked) i.focus(); sum(); }; });
         $$('[data-fv]', m).forEach(function (i) { i.oninput = sum; });
-        sum();
-        $('#fareSave', m).onclick = function () { rows.forEach(function (x) { t[x[0]] = val(x[0]); }); dispQueueSave(D.tab); close(); drawDispDay(); toast(no + '호차 운임을 저장했어요.'); };
+        sum(); if (opt.real) { var ci = $('[data-fv="cost"]', m); if (ci) setTimeout(function () { ci.focus(); }, 80); }
+        $('#fareSave', m).onclick = function () {
+          if (useReal() && !val('cost')) { toast('실제 배차금액을 넣으세요.', 'err'); return; }
+          rows.forEach(function (x) { t[x[0]] = val(x[0]); });
+          if (adm) t.cost = useReal() ? val('cost') : '';
+          dispQueueSave(D.tab); close(); drawDispDay(); toast(no + '호차 운임을 저장했어요.');
+        };
       } });
   }
   /** 호차 표 (지금 쓰는 구글시트처럼): 착지마다 한 줄, 같은 호차의 차량정보·상태·문자·운송비·호차는 칸을 합쳐 한 번만 */
@@ -7736,6 +7746,7 @@
   function truckCostCell(D, no, t, cost) {
     if (cost && cost.joinTo) return '<div class="tt-cv" title="합차 · 운송비는 기준 호차에 차 1대로 계산해요"><div class="tt-ton tt-joinc">합차 · ' + esc(joinName(cost.joinTo)) + '에 포함</div><div class="tt-amt">0</div></div>';
     if (cost && cost.joinPart) return '<div class="tt-cv"><div class="tt-ton tt-joinc">합차 (다른 탭 포함)</div><div class="small muted">금액은 담당자 확인</div></div>';
+    if (dispReal(t)) return '<div class="tt-cv" title="실제 배차금액 (단가표 대신)"><div class="tt-ton" style="color:var(--orange)">실제</div><div class="tt-amt">' + won(t.cost) + '</div></div>';
     var base = null, tip = [], top;
     if (t.status === '회차') { base = Number(t.retCost) || 0; top = '회차'; tip.push('회차 ' + won(base)); }
     else if (cost) { base = cost.total; top = cost.ton; if (cost.max) { tip.push(won(cost.max.p)); if (cost.vias) tip.push('경유 ' + cost.vias + '곳 ' + won(STOP_FEE * cost.vias)); } }
@@ -8026,7 +8037,7 @@
     if (C.bind) C.bind(box, { st: st, D: D, tn: tn, redraw: redraw, applyGroups: applyGroups }); // 업체만의 버튼·입력칸
     $$('[data-oedit]', box).forEach(function (b) { b.onclick = function () { var o = D.orders.filter(function (x) { return x.id === b.dataset.oedit; })[0]; if (o) openOrderEdit(D, o); }; });
     $$('[data-note]', box).forEach(function (b) { b.onclick = function () { var o = D.orders.filter(function (x) { return x.id === b.dataset.note; })[0]; if (o) openOrderNote(D, o); }; });
-    $$('[data-st]', box).forEach(function (sel) { sel.onchange = function () { var x = tn(sel.dataset.st), t = truckInfo(x.D, x.no); t.status = sel.value === '배차전' ? '' : sel.value; delete st.open[sel.dataset.st]; dispQueueSave(x.tab); joinCopy(x.D, x.no, ['status']); drawDispDay(); }; });
+    $$('[data-st]', box).forEach(function (sel) { sel.onchange = function () { var x = tn(sel.dataset.st), t = truckInfo(x.D, x.no); t.status = sel.value === '배차전' ? '' : sel.value; delete st.open[sel.dataset.st]; dispQueueSave(x.tab); joinCopy(x.D, x.no, ['status']); drawDispDay(); if (sel.value === '조일배차' && dispAdmin()) openFare(x.D, x.no, { real: true }); }; }); // 조일배차는 단가표가 아니라 늘 실제 금액
     $$('[data-preview]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.preview); modal({ eyebrow: x.tab + ' · ' + x.D.date, title: x.no + '호차 문자', body: '<pre class="dp-msg">' + esc(truckMessage(x.D, x.no)) + '</pre>', foot: '<button class="btn" data-close>닫기</button>' }); }; });
     $$('[data-code]', box).forEach(function (b) { b.onclick = function () { copyText(b.dataset.code, '마감 코드를 복사했어요: ' + b.dataset.code); }; });
     $$('[data-recopy]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.recopy); openReCopy(x.D, x.no); }; });
