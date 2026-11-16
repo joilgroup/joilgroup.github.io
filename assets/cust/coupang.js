@@ -42,7 +42,8 @@
       var d = {}; DISP_COLS.forEach(function (c) { var j = idx[c[0]]; d[c[0]] = j == null ? '' : String(r[j] == null ? '' : r[j]).trim(); });
       if (!d.fc && d.dest) d.fc = d.dest; // 컬리처럼 센터명이 비어 있으면 도착지(MK_GMP 등)를 센터명으로
       // 동방이 차량정보 칸(차량·운전원·연락처·입차시간·톤수)에 적어 보내는 안내 문구("13시이후 배차부탁드립니다.")는 오더 공지로 옮겨요
-      var nt = []; ['car', 'driver', 'phone', 'time', 'ton'].forEach(function (k) { if (dispIsNote(d[k])) { nt.push(String(d[k]).trim()); d[k] = ''; } });
+      // (입차시간 칸의 "오후 2시"·"14시 입차"는 정상 값이라 부탁·요청 말이 있을 때만)
+      var nt = []; ['car', 'driver', 'phone', 'time', 'ton'].forEach(function (k) { if (dispIsNote(d[k]) && (k !== 'time' || /(부탁|요청|바랍|주세요|필수|불가)/.test(d[k]))) { nt.push(String(d[k]).trim()); d[k] = ''; } });
       if (nt.length) d.note = nt.join(' / ');
       var date = dispYmd(d.date); if (!date || !d.fc) { bad++; return; }
       dispCleanD(d);

@@ -2253,7 +2253,12 @@ function dispImport_(session, req) {
 /** 하루치 호차 배정·순서·차량정보 저장 */
 /* 여러 사람이 같이 볼 때: 바뀐 시각(업체·날짜별)을 남겨 두고, 화면은 15초마다 이것만 물어봐요 */
 function dispStampKey_(cust, date) { return 'DST|' + cust + '|' + date; }
-function dispTouch_(cust, date) { try { var n = String(Date.now()); PropertiesService.getScriptProperties().setProperty(dispStampKey_(String(cust || ''), String(date || '')), n); return Number(n); } catch (e) { return 0; } }
+function dispTouch_(cust, date) { try { var n = String(Date.now()); PropertiesService.getScriptProperties().setProperty(dispStampKey_(String(cust || ''), String(date || '')), n); dispStampGc_(); return Number(n); } catch (e) { return 0; } }
+/** 60일 넘게 안 바뀐 '바뀐 시각' 기록은 지워요 (스크립트 속성은 용량 한도가 있어요 · 6시간에 한 번만) — 지워져도 화면은 0으로 읽어서 문제없어요 */
+function dispStampGc_() {
+  var sc = CacheService.getScriptCache(); if (sc.get('DST_GC')) return; sc.put('DST_GC', '1', 21600);
+  try { var pr = PropertiesService.getScriptProperties(), all = pr.getProperties(), old = Date.now() - 60 * 86400000; Object.keys(all).forEach(function (k) { if (k.indexOf('DST|') === 0 && Number(all[k]) < old) pr.deleteProperty(k); }); } catch (e) { /* 다음에 다시 */ }
+}
 function dispTouched_(req, out) { dispTouch_(req.cust, req.date); return out; }
 function dispStamps_(keys, date) { date = dispDate_(date); var pr = PropertiesService.getScriptProperties(), o = {}; (keys || []).slice(0, 20).forEach(function (k) { o[k] = Number(pr.getProperty(dispStampKey_(String(k), date))) || 0; }); return o; }
 /** 바뀐 칸만 보낸 저장(patch)을 지금 서버에 있는 호차들과 합쳐서 전체 목록으로 만들어요 (다른 사람이 바꾼 칸은 그대로 둠) */

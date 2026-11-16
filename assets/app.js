@@ -7345,8 +7345,9 @@
   }
   /** 시간 안내(13시 이후·10시까지 등)인지: 기사 공지로도 보내요 */
   function dispTimeNote(t) { return /(\d{1,2}\s*시|\d{1,2}:\d{2}|오전|오후)/.test(String(t || '')); }
-  /** 기사 공지는 짧게: "13시이후 배차부탁드립니다." → "13시 이후 상차가능" · "10시까지" → "10시까지 상차" (못 알아보면 그대로) */
+  /** 기사 공지는 짧게: "13시이후 배차부탁드립니다." → "13시 이후 상차가능" · "10시까지" → "10시까지 상차" (못 알아보거나 하차·도착 얘기면 그대로) */
   function dispShortTime(t) {
+    if (/하차|도착|입차|납품|입고/.test(String(t || ''))) return t; // 하차·도착 시간 얘기를 '상차'로 바꾸면 반대 뜻이 돼요 → 원문 그대로
     var m = String(t || '').match(/(오전|오후)?\s*(\d{1,2})\s*(?:[:시]\s*(\d{1,2})\s*분?)?\s*시?\s*(이후|부터|이전|전|까지)/); if (!m) return t;
     var h = Number(m[2]) + (m[1] === '오후' && Number(m[2]) < 12 ? 12 : 0), mm = m[3] && Number(m[3]) ? Number(m[3]) + '분' : '', at = h + '시' + mm;
     return /이후|부터/.test(m[4]) ? at + ' 이후 상차가능' : at + '까지 상차';
@@ -8308,9 +8309,11 @@
               var raw = inp.value.trim(), v = raw === '' ? '' : dispNum(raw), set = {}, fk = isRev ? 'rev' : 'cost', old = r.t[fk]; set[fk] = v;
               r.t[fk] = v === '' ? null : v; close(); drawDispMonth(true, true); // 화면은 바로 바꾸고 서버 저장은 뒤에서 (서버는 몇 초 걸려요)
               if (st.dayCache) Object.keys(st.dayCache).forEach(function (k) { if (k.indexOf(st.cust + '|' + r.date) === 0) delete st.dayCache[k]; });
+              st.mSaving = (st.mSaving || 0) + 1; // 저장이 끝나기 전에 자동 새로고침이 옛 금액을 받아 오지 않게
               api('dispatch.save', { cust: key, date: r.date, patch: 1, orders: [], drop: [], trucks: [{ token: r.t.token || '', no: r.no, set: set }] }).then(function (res) {
+                st.mSaving--;
                 if (!(res.trucks || []).some(function (t) { return fk in t; })) { r.t[fk] = old; toast('서버(Code.js)를 새 버전으로 배포해야 저장돼요.', 'err'); drawDispMonth(true, true); } else toast((isRev ? '매출' : '매입') + '을 저장했어요.');
-              }).catch(function (err) { r.t[fk] = old; toast('저장하지 못했어요: ' + err.message, 'err'); if (state.view === 'dispatch' && st.view === 'month') drawDispMonth(true, true); });
+              }).catch(function (err) { st.mSaving--; r.t[fk] = old; toast('저장하지 못했어요: ' + err.message, 'err'); if (state.view === 'dispatch' && st.view === 'month') drawDispMonth(true, true); });
             };
           } });
       };
@@ -8318,7 +8321,7 @@
       $$('[data-cost]', el).forEach(function (b) { b.onclick = function () { fixAmt('cost', b); }; });
       var hi = $('#dpHist'); if (hi) hi.onclick = function () { openHistImport(MT, function () { drawDispMonth(true); }); };
       var ch = $('#dpCha'); if (ch) { ch.disabled = !rows.length; ch.onclick = function () { openChadori(MT, rows, price); }; }
-      if (st.ym === curYm) st.mTimer = setTimeout(function again() { if (state.view !== 'dispatch' || st.view !== 'month' || st.ym !== curYm) return; if (document.hidden || $('.backdrop') || (document.activeElement && document.activeElement.id === 'dpPrice')) { st.mTimer = setTimeout(again, 60000); return; } drawDispMonth(true); }, 60000);
+      if (st.ym === curYm) st.mTimer = setTimeout(function again() { if (state.view !== 'dispatch' || st.view !== 'month' || st.ym !== curYm) return; if (st.mSaving > 0) { st.mTimer = setTimeout(again, 5000); return; } if (document.hidden || $('.backdrop') || (document.activeElement && document.activeElement.id === 'dpPrice')) { st.mTimer = setTimeout(again, 60000); return; } drawDispMonth(true); }, 60000);
       var x = $('#dpMX'); x.disabled = !rows.length;
       x.onclick = function () {
         var btn = this; busy(btn, true, '…');
