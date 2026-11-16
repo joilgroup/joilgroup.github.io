@@ -8168,7 +8168,7 @@
       } });
   }
   /* 차도리(회계 프로그램) 배차일보 업로드 양식 (.xls): 1~6행 안내 · 7행 제목 · 8행부터 착지마다 한 줄
-     매출 = 착지 번들 × 그 달 단가(직접 고친 매출은 번들 비율로 나눔) · 매입 = 호차 운송비(실제 매입) 번들 비율로 나눔 · 비고 = 번들 · 거래처 코드는 서버에 저장(분석 권한) */
+     매출 = 착지 번들 × 그 달 단가(직접 고친 매출은 번들 비율로 나눔) · 매입 = 호차 운송비(실제 매입)를 그 호차 첫 줄에만 통째로(차 1대 값이라 착지별로 나누지 않아요) · 비고 = 번들 · 거래처 코드는 서버에 저장(분석 권한) */
   var CHA_HEAD = ['날짜', '매출코드', '매출처', '매입코드', '매입처', '발지', '착지', '차량번호', '품목', '중량', '수량', '규격', '부피', '길이', '인수증', '세금', '인터넷', '매출후불', '매출선불', '수수료', '매출부가세', '청구월', '매입후불', '매입선불', '보관료', '매입부가세', '지급월', '매출단가', '매입단가', '기타', '비고', '메모', '착불금', '계근비', '상차일', '하차일', '상차지', '하차지', '고객', '고객전화', '차량전화', '희망차종', '실적신고\n(운송)', '실적신고\n(위탁)', '화물정보', '배차\n건수', '메모1', '메모2', '메모3', '기사상호', '사업자번호', '대표자명', '운송비지급\n코드번호(1~2)', '기사명', '은행명', '계좌번호', '예금주'];
   function chadoriRows(rows, MT, codes, price) {
     var out = [], warn = [], C = function (n) { return CHA_HEAD.indexOf(n); };
@@ -8177,7 +8177,7 @@
       var stops = truckStops({ tab: r.tab, date: r.date, orders: r.os, trucks: [r.t] }, r.no); if (!stops.length) return;
       var ws = stops.map(function (x) { return r.ret ? 0 : x.b; }), suf = (MT.filter(function (t) { return t[0] === r.tab; })[0] || ['', ''])[1];
       var buy = r.t.status === '조일배차' && codes.jo ? codes.jo : (codes.buy || {})[suf] || '';
-      var revs = r.rv != null ? split(r.rv, ws) : ws.map(function (b) { return price ? Math.round(b * price.v) : 0; }), costs = r.amt == null ? null : split(r.amt, ws);
+      var revs = r.rv != null ? split(r.rv, ws) : ws.map(function (b) { return price ? Math.round(b * price.v) : 0; }), costs = r.amt == null ? null : stops.map(function (x, i) { return i === 0 ? r.amt : ''; });
       if (r.amt == null && !r.jm) warn.push(r.date.slice(5) + ' ' + r.tab + ' ' + r.no + '호차 운송비 없음');
       if (!buy) warn.push(r.tab + ' 매입코드 없음');
       stops.forEach(function (x, i) {
@@ -8195,7 +8195,7 @@
   function openChadori(MT, rows, price) {
     var st = dispState(), tabs = MT.filter(function (t) { return rows.some(function (r) { return r.tab === t[0]; }); }), codes = { buy: {} }, oldSrv = false;
     modal({ eyebrow: '배차시트 · 월별 기록 · ' + st.cust + ' · ' + st.ym, title: '차도리 엑셀 (배차일보 업로드)',
-      body: '<p class="muted small" style="margin:0 0 10px">착지마다 한 줄이에요. 매출 = 번들 × 단가(직접 고친 매출은 번들 비율로 나눔), 매입 = 호차 운송비·실제 매입을 번들 비율로 나눠요. 비고 칸에 번들 수. 지금 고른 탭(' + esc(tabs.map(function (t) { return t[0]; }).join(', ')) + ')만 들어가요.</p>' +
+      body: '<p class="muted small" style="margin:0 0 10px">착지마다 한 줄이에요. 매출 = 번들 × 단가(직접 고친 매출은 번들 비율로 나눔), 매입 = 호차 운송비·실제 매입을 <b>그 호차 첫 줄에만</b> 통째로 넣어요(나머지 착지 줄은 빈칸). 비고 칸에 번들 수. 지금 고른 탭(' + esc(tabs.map(function (t) { return t[0]; }).join(', ')) + ')만 들어가요.</p>' +
         '<div id="chBody"><span class="spinner dark"></span></div>',
       foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="chGo" disabled>저장하고 내려받기</button>',
       onMount: function (m) {
