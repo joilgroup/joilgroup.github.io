@@ -493,7 +493,7 @@
       e.preventDefault();
       var btn = e.target.querySelector('button[type=submit]');
       busy(btn, true, '확인 중…');
-      api('login', { id: $('#lid').value, password: $('#lpw').value }).then(function (r) {
+      api('login', { id: $('#lid').value, password: $('#lpw').value, keep: $('#lkeep').checked }).then(function (r) {
         state.token = r.token; state.user = r.user;
         storage('set', 'joil-token', r.token);
         local('set', 'joil-keep', $('#lkeep').checked ? r.token : null); local('set', 'joil-keepOn', $('#lkeep').checked);
@@ -8227,14 +8227,15 @@
   }
   /** 그 달 번들 단가: 저장한 달 중 가장 가까운 지난 달 것 (11월에 올려도 지난 달은 그대로) */
   function dispPriceOf(prices, ym) { var ks = Object.keys(prices || {}).filter(function (k) { return k <= ym && Number(prices[k]) > 0; }).sort(); return ks.length ? { v: Number(prices[ks[ks.length - 1]]), ym: ks[ks.length - 1] } : null; }
-  function drawDispMonth(quiet) {
+  function drawDispMonth(quiet, useCache) {
     var st = dispState(), box = $('#dpBody'), money = can('analysis') || isPartner(), rev = can('analysis'), curYm = todayYmd().slice(0, 7);
     clearTimeout(st.mTimer);
     var ms = []; for (var i = 0; i < 18; i++) ms.push(ymAdd(curYm, -i));
     if (!(quiet && $('#dpMBody'))) box.innerHTML = '<div class="card"><div class="actions"><span class="small muted">월</span><select class="input input-sm" id="dpYm" style="width:auto">' + ms.map(function (m) { return '<option' + (m === st.ym ? ' selected' : '') + '>' + m + '</option>'; }).join('') + '</select><span class="chips" id="dpMTabs"></span><span class="spacer"></span>' + (rev && st.cust === DISP_CUSTS[0] ? '<button class="btn btn-sm" id="dpHist" title="예전 구글시트 배차 기록을 그대로 옮겨요">시트에서 가져오기</button>' : '') + (rev ? '<button class="btn btn-sm" id="dpCha" disabled title="차도리 배차일보 업로드 양식(.xls)">차도리 엑셀</button>' : '') + '<button class="btn btn-sm" id="dpMX" disabled>엑셀</button></div><div id="dpMBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
     $('#dpYm').onchange = function () { st.ym = this.value; drawDispMonth(); syncRoute(); };
     var MT = [], PR = null;
-    Promise.all([loadDispTabs(), money ? loadDispRates() : null, loadPlaces(), rev ? api('dispatch.price', { cust: st.cust }).then(function (r) { return r.prices || {}; }).catch(function () { return null; }) : null]).then(function (z) { PR = z[3]; var all = z[0]; MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) {
+    var mk = st.cust + '|' + st.ym, mc = useCache && st.mCache && st.mCache.k === mk ? st.mCache : null; // 금액만 고친 뒤엔 서버에 다시 묻지 않고 받아 둔 것으로 바로 그려요
+    (mc ? Promise.resolve(mc.res).then(function (r) { PR = mc.PR; MT = mc.MT; return r; }) : Promise.all([loadDispTabs(), money ? loadDispRates() : null, loadPlaces(), rev ? api('dispatch.price', { cust: st.cust }).then(function (r) { return r.prices || {}; }).catch(function () { return null; }) : null]).then(function (z) { PR = z[3]; var all = z[0]; MT = all.map(function (t) { return [t.name, t.suf]; }); var keys = MT.map(function (t) { return st.cust + t[1]; }); return api('dispatch.monthAll', { keys: keys, ym: st.ym }).then(function (r) { return MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; }); }); }).then(function (res) { st.mCache = { k: mk, res: res, PR: PR, MT: MT }; return res; })).then(function (res) {
       var el = $('#dpMBody'); if (!el) return;
       // 고른 탭(지역)만: 처음엔 전부
       var names = MT.map(function (t) { return t[0]; }); if (!st.mTabs || !st.mTabs.some(function (n) { return names.indexOf(n) !== -1; })) st.mTabs = names.slice();
@@ -8304,11 +8305,12 @@
           onMount: function (m, close) {
             var inp = $('#dpRv', m); inp.focus();
             $('#dpRvOk', m).onclick = function () {
-              var raw = inp.value.trim(), v = raw === '' ? '' : dispNum(raw), btn = this, set = {}; set[isRev ? 'rev' : 'cost'] = v; busy(btn, true, '저장 중…');
+              var raw = inp.value.trim(), v = raw === '' ? '' : dispNum(raw), set = {}, fk = isRev ? 'rev' : 'cost', old = r.t[fk]; set[fk] = v;
+              r.t[fk] = v === '' ? null : v; close(); drawDispMonth(true, true); // 화면은 바로 바꾸고 서버 저장은 뒤에서 (서버는 몇 초 걸려요)
+              if (st.dayCache) Object.keys(st.dayCache).forEach(function (k) { if (k.indexOf(st.cust + '|' + r.date) === 0) delete st.dayCache[k]; });
               api('dispatch.save', { cust: key, date: r.date, patch: 1, orders: [], drop: [], trucks: [{ token: r.t.token || '', no: r.no, set: set }] }).then(function (res) {
-                if (!(res.trucks || []).some(function (t) { return (isRev ? 'rev' : 'cost') in t; })) toast('서버(Code.js)를 새 버전으로 배포해야 저장돼요.', 'err'); else toast((isRev ? '매출' : '매입') + '을 저장했어요.');
-                close(); drawDispMonth(true);
-              }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+                if (!(res.trucks || []).some(function (t) { return fk in t; })) { r.t[fk] = old; toast('서버(Code.js)를 새 버전으로 배포해야 저장돼요.', 'err'); drawDispMonth(true, true); } else toast((isRev ? '매출' : '매입') + '을 저장했어요.');
+              }).catch(function (err) { r.t[fk] = old; toast('저장하지 못했어요: ' + err.message, 'err'); if (state.view === 'dispatch' && st.view === 'month') drawDispMonth(true, true); });
             };
           } });
       };

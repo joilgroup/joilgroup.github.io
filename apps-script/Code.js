@@ -110,7 +110,7 @@ function doPost(e) {
 function handle_(req) {
   CAL_LINK_ = null;
   var action = String(req.action || '');
-  if (action === 'login') return login_(req.id, req.password);
+  if (action === 'login') return login_(req.id, req.password, req.keep);
   if (action === 'drv.get') return drvGet_(req.t);
   if (action === 'drv.upload') return drvUpload_(req);
   if (action === 'drv.photo') return drvPhoto_(req);
@@ -121,7 +121,7 @@ function handle_(req) {
   if (session.role === 'partner') return partnerHandle_(session, action, req);
   switch (action) {
     case 'me': return { user: session, settings: publicSettings_() };
-    case 'logout': CacheService.getScriptCache().remove('S_' + req.token); return {};
+    case 'logout': CacheService.getScriptCache().remove('S_' + req.token); try { PropertiesService.getScriptProperties().deleteProperty(keepKey_(req.token)); } catch (e) {} return {};
     case 'changePassword': return changePassword_(session, req.current, req.next);
     case 'publicSettings': return { settings: publicSettings_() };
     case 'info.diesel': return dieselAll_();
@@ -294,7 +294,26 @@ function handle_(req) {
 
 /* ───────────── 로그인 / 세션 ───────────── */
 
-function login_(id, password) {
+/* 로그인 유지: 세션은 스크립트 캐시(최대 6시간)라 밤새 지나면 사라져요 → '이 기기에서 로그인 유지'면 토큰(해시)을
+   스크립트 속성에 30일 보관하고, 캐시에 없을 때 여기서 되살려요. 로그아웃·비밀번호 변경·사용중지하면 지워져요 */
+var KEEP_DAYS = 30;
+function keepKey_(token) { return 'RT_' + toHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(token), Utilities.Charset.UTF_8)).slice(0, 40); }
+function keepPut_(token, id) {
+  var pr = PropertiesService.getScriptProperties(), now = Date.now();
+  try { var all = pr.getProperties(); Object.keys(all).forEach(function (k) { if (k.indexOf('RT_') === 0) { var v = parseJson_(all[k], null); if (!v || v.exp < now) pr.deleteProperty(k); } }); } catch (e) { /* 정리 실패는 무시 */ }
+  pr.setProperty(keepKey_(token), JSON.stringify({ id: id, exp: now + KEEP_DAYS * 86400000, day: ymd_(new Date()) }));
+}
+function keepGet_(token) {
+  var pr = PropertiesService.getScriptProperties(), k = keepKey_(token), v = parseJson_(pr.getProperty(k), null);
+  if (!v || v.exp < Date.now()) { if (v) pr.deleteProperty(k); return null; }
+  var today = ymd_(new Date()); if (v.day !== today) { v.exp = Date.now() + KEEP_DAYS * 86400000; v.day = today; pr.setProperty(k, JSON.stringify(v)); } // 쓰는 동안은 30일씩 연장 (하루 한 번만 기록)
+  return v;
+}
+function keepDropUser_(id) {
+  var pr = PropertiesService.getScriptProperties(), all = pr.getProperties();
+  Object.keys(all).forEach(function (k) { if (k.indexOf('RT_') === 0) { var v = parseJson_(all[k], null); if (v && v.id === id) pr.deleteProperty(k); } });
+}
+function login_(id, password, keep) {
   id = String(id || '').trim();
   if (!id || !password) throw new Error('아이디와 비밀번호를 입력하세요.');
   var cache = CacheService.getScriptCache();
@@ -313,7 +332,8 @@ function login_(id, password) {
   var token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, '');
   var session = { id: id, name: u.data['이름'], role: u.data['권한'], mustChange: u.data['비밀번호변경필요'] === 'Y', perms: permsOf_(u.data['권한'], u.data['메뉴권한']), dispTabs: tabsOf_(u.data['배차탭']) };
   cache.put('S_' + token, JSON.stringify({ id: id }), SESSION_SECONDS);
-  return { token: token, user: session, settings: publicSettings_() };
+  if (keep) keepPut_(token, id);
+  return { token: token, user: session, settings: publicSettings_(), keep: !!keep };
 }
 
 /** 매 요청마다 계정 시트를 다시 확인 → 사용중지하면 즉시 차단 */
@@ -321,11 +341,11 @@ function requireSession_(token) {
   if (!token) throw new Error('로그인이 필요합니다.');
   var cache = CacheService.getScriptCache();
   var raw = cache.get('S_' + token);
-  if (!raw) throw new Error('로그인이 만료되었습니다. 다시 로그인하세요.');
+  if (!raw) { var kp = keepGet_(token); if (!kp) throw new Error('로그인이 만료되었습니다. 다시 로그인하세요.'); raw = JSON.stringify({ id: kp.id }); } // 로그인 유지: 캐시가 비어도 되살려요
   var id = JSON.parse(raw).id;
   var u = cachedUser_(id);
   if (!u || !u.active) {
-    cache.remove('S_' + token);
+    cache.remove('S_' + token); try { PropertiesService.getScriptProperties().deleteProperty(keepKey_(token)); } catch (e) {}
     throw new Error('사용이 중지된 계정입니다.');
   }
   cache.put('S_' + token, raw, SESSION_SECONDS);
@@ -357,6 +377,7 @@ function changePassword_(session, current, next) {
   checkPasswordRule_(next);
   setPassword_(u.row, next, false);
   dropUserCache_(session.id);
+  keepDropUser_(session.id); // 비밀번호를 바꾸면 다른 기기의 로그인 유지도 풀어요
   return {};
 }
 
@@ -459,7 +480,7 @@ function resetPassword_(id) {
   if (!u) throw new Error('계정을 찾을 수 없습니다.');
   var temp = randomPassword_();
   setPassword_(u.row, temp, true);
-  dropUserCache_(id);
+  dropUserCache_(id); keepDropUser_(id);
   return { tempPassword: temp };
 }
 
@@ -2114,7 +2135,7 @@ function partnerHandle_(session, action, req) {
   var ok = function (k) { if (session.dispTabs.indexOf(String(k)) === -1) throw new Error('볼 수 없는 탭이에요.'); return String(k); };
   switch (action) {
     case 'me': return { user: session, settings: publicSettings_() };
-    case 'logout': CacheService.getScriptCache().remove('S_' + req.token); return {};
+    case 'logout': CacheService.getScriptCache().remove('S_' + req.token); try { PropertiesService.getScriptProperties().deleteProperty(keepKey_(req.token)); } catch (e) {} return {};
     case 'changePassword': return changePassword_(session, req.current, req.next);
     case 'publicSettings': return { settings: publicSettings_() };
     case 'dispatch.tabs': return { tabs: dispTabs_(req.cust).filter(function (t) { return !t.hidden && session.dispTabs.indexOf(dispCust_(req.cust) + t.suf) !== -1; }) };
