@@ -7187,10 +7187,13 @@
     sd = { 충청남: '충남', 충청북: '충북', 전라남: '전남', 전라북: '전북', 경상남: '경남', 경상북: '경북' }[sd] || sd;
     return sd + ' ' + (t[1] || '');
   }
-  /** 같은 곳인지 비교용 주소: 시도 표기·띄어쓰기·층·괄호 무시 (인천광역시 서구 오류동 1545-2 = 인천시 서구 오류동 1545-2, 3층) */
+  /** 같은 곳인지 비교용 주소: 시도 표기·띄어쓰기·층·괄호 무시 (인천광역시 서구 오류동 1545-2 = 인천시 서구 오류동 1545-2, 3층)
+      '경기도'처럼 도 이름은 빼고 비교해요 — 도를 안 적은 주소(안산시 단원구 …)와 적은 주소(경기도 안산시 단원구 …)가 같은 곳이 되게 */
   function advAddrKey(addr) {
-    var t = String(addr || '').replace(/\(.*?\)/g, ' ').replace(/,/g, ' ').split(/\s+/).filter(Boolean);
-    return advRegion(addr) + '|' + t.slice(2).filter(function (x) { return !/(층|호)$|^\d+F$|^B\d+$/i.test(x); }).join('');
+    var t = String(addr || '').replace(/\(.*?\)/g, ' ').replace(/,/g, ' ').split(/\s+/).filter(Boolean), m;
+    if (/^(경기|강원|충북|충남|전북|전남|경북|경남|제주|충청[남북]|전라[남북]|경상[남북])(특별자치도|도)?$/.test(t[0] || '')) t.shift();
+    else if ((m = /^(서울|부산|인천|대구|광주|대전|울산|세종)(특별자치시|특별시|광역시|시)?$/.exec(t[0] || ''))) t[0] = m[1];
+    return t.filter(function (x) { return !/(층|호)$|^\d+F$|^B\d+$/i.test(x); }).join('');
   }
   /* ── 표준 양식 올리기 (상차지·하차지·기사·매입단가 공통): 양식 내려받기 · 엑셀에서 복사해 붙여넣기(제목 줄 있어도/없어도) · 파일 올리기 ──
      cfg = { el, name, file, cols: [[키, 제목, 넓이, 예시]], alias: { 키: /제목 정규식/ }, read(rows) → 다른 양식이면 줄 목록, add(items, btn), replace(items, btn), hint } */
