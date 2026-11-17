@@ -5412,28 +5412,172 @@
   }
 
   var CAL_LANES = 4;
-  function calMonth() {
+  /* 달력에 끌어다 놓는 칩: [종류, 색 묶음, 설명] · 'event' = 일정(공지) */
+  var CAL_CHIPS = [['연차', 'leave', '하루'], ['오전 반차', 'leave', '0.5일'], ['오후 반차', 'leave', '0.5일'], ['야간근무', 'work', '시각 입력'], ['휴일근무', 'work', '시각 입력'], ['당직', 'duty', '바로 저장'], ['event', 'event', '제목 입력']];
+  function calMd(s) { return (+s.slice(5, 7)) + '/' + (+s.slice(8)); }
+  /** 끌어 옮길 수 있는 기록인지: 관리자는 모두, 아니면 내 것만 (순번 규칙 당직은 못 옮김) */
+  function calCanMove(rk, ref) {
+    if (!ref || !ref.id || ref.virtual || String(ref.id).indexOf('tmp') === 0) return false;
+    return state.user.role === 'admin' || (rk === 'ev' ? ref.ownerId : ref.userId) === state.user.id;
+  }
+  /** 화면 먼저 바꾸고 저장은 뒤에서 · 실패하면 서버 상태로 되돌리고 알림 (apply는 새로 받은 데이터에도 다시 적용돼요) */
+  function calOpt(apply, action, payload, msg) {
+    var c = state.cal, op = { apply: apply };
+    c.pend = c.pend || []; c.pend.push(op); apply(c.data); c.weekly = {}; drawCal();
+    var settle = function (d) {
+      c.pend = c.pend.filter(function (x) { return x !== op; });
+      if (d) setCalData(d);
+      c.pend.forEach(function (x) { x.apply(c.data); });
+      c.weekly = {}; if (state.view === 'cal') drawCal();
+    };
+    return api(action, payload).then(function (d) { settle(d); if (msg) toast(msg); }, function (err) {
+      toast(err.message + ' (되돌렸어요)', 'err');
+      return api('cal.all').then(settle, function () { settle(null); });
+    });
+  }
+  function calPut(lv, u) {
+    var tmp = Object.assign({ id: 'tmp' + Date.now(), name: u.name, by: state.user.name }, lv);
+    state.cal.flash = tmp.id;
+    calOpt(function (d) { d.leaves.push(tmp); }, 'cal.leaveSave', { id: '', leave: lv }, u.name + ' ' + lv.kind + ' · ' + calMd(lv.start) + ' 저장했어요.');
+  }
+  /** 칩을 날짜에 놓았을 때 */
+  function calPlace(kind, date) {
+    var c = state.cal, d = c.data;
+    if (kind === 'event') return calQuickEvent(date);
+    var uid = state.user.role === 'admin' && c.who ? c.who : state.user.id;
+    var u = d.users.filter(function (x) { return x.id === uid; })[0] || { id: state.user.id, name: state.user.name };
+    if (!isWork(kind) && isOff(date, calHoli())) return toast('쉬는 날에는 ' + kind + '를 넣을 수 없어요.', 'err');
+    if (d.leaves.some(function (l) { return l.userId === u.id && l.kind === kind && l.start <= date && l.end >= date; })) return toast(u.name + ' ' + kind + ' — 이미 있어요.', 'err');
+    var lv = { userId: u.id, kind: kind, start: date, end: date, memo: '', from: '', to: '', hours: 0 };
+    if (kind === '야간근무' || kind === '휴일근무') return calQuickWork(lv, u);
+    calPut(lv, u);
+  }
+  function calQuickWork(lv, u) {
+    modal({
+      eyebrow: calMd(lv.start) + ' (' + WD[dDow(lv.start)] + ') · ' + u.name, title: lv.kind, cls: 'modal-sm',
+      body: '<div class="qd-two"><div class="field"><label>시작 시각</label><input class="input" type="time" id="cqF"></div><div class="field"><label>종료 시각</label><input class="input" type="time" id="cqT"></div></div>' +
+        '<div class="field"><label>추가근무 시간</label><input class="input num" id="cqH" inputmode="decimal" placeholder="예) 2"><span class="hint">시각을 넣으면 자동 계산 (자정 넘으면 다음날)</span></div>' +
+        '<div class="field"><label>메모</label><input class="input" id="cqM" maxlength="500"></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="cqOk">저장</button>',
+      onMount: function (m, close) {
+        var autoH = function () {
+          var f = $('#cqF', m).value, t = $('#cqT', m).value; if (!f || !t) return;
+          var n = (+t.slice(0, 2) * 60 + +t.slice(3, 5)) - (+f.slice(0, 2) * 60 + +f.slice(3, 5)); if (n <= 0) n += 1440;
+          $('#cqH', m).value = Math.round(n / 60 * 100) / 100;
+        };
+        $('#cqF', m).onchange = autoH; $('#cqT', m).onchange = autoH; $('#cqF', m).focus();
+        $('#cqOk', m).onclick = function () {
+          lv.from = $('#cqF', m).value; lv.to = $('#cqT', m).value; lv.memo = $('#cqM', m).value; lv.hours = Number(String($('#cqH', m).value).replace(/[^\d.]/g, '')) || 0;
+          if (!lv.hours && !confirm('추가근무 시간이 비어 있어요. 0시간으로 저장할까요?')) return;
+          close(); calPut(lv, u);
+        };
+      }
+    });
+  }
+  function calQuickEvent(date) {
+    modal({
+      eyebrow: calMd(date) + ' (' + WD[dDow(date)] + ')', title: '일정 · 공지', cls: 'modal-sm',
+      body: '<div class="field"><label>제목</label><input class="input" id="cqT" maxlength="100" placeholder="예) 월간 회의, 사무실 공지"></div><div class="field"><label>메모</label><input class="input" id="cqM" maxlength="1000"></div>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="cqOk">저장</button>',
+      onMount: function (m, close) {
+        var save = function () {
+          var t = $('#cqT', m).value.trim(); if (!t) return toast('제목을 입력하세요.', 'err');
+          var ev = { start: date, end: date, title: t, memo: $('#cqM', m).value, private: false };
+          var tmp = Object.assign({ id: 'tmp' + Date.now(), ownerId: state.user.id, owner: state.user.name }, ev);
+          close(); state.cal.flash = tmp.id;
+          calOpt(function (d) { d.events.push(tmp); }, 'cal.eventSave', { id: '', event: ev }, '일정 · ' + calMd(date) + ' 저장했어요.');
+        };
+        $('#cqT', m).focus(); $('#cqOk', m).onclick = save;
+        $('#cqT', m).onkeydown = function (e) { if (e.key === 'Enter' && !e.isComposing) save(); };
+      }
+    });
+  }
+  /** 달력의 기록을 n일 옮기기 */
+  function calMove(rk, ref, n) {
+    if (!n) return;
+    var s = dAdd(ref.start, n), e = dAdd(ref.end, n), id = ref.id;
+    if (rk === 'ev') { state.cal.flash = id; return calOpt(function (d) { d.events.forEach(function (x) { if (x.id === id) { x.start = s; x.end = e; } }); }, 'cal.eventSave', { id: id, event: { start: s, end: e, title: ref.title, memo: ref.memo, private: ref.private } }, calMd(s) + '로 옮겼어요.'); }
+    if (!isWork(ref.kind) && ref.start === ref.end && isOff(s, calHoli())) return toast('쉬는 날로는 옮길 수 없어요.', 'err');
+    state.cal.flash = id;
+    calOpt(function (d) { d.leaves.forEach(function (x) { if (x.id === id) { x.start = s; x.end = e; } }); }, 'cal.leaveSave', { id: id, leave: { userId: ref.userId, kind: ref.kind, start: s, end: e, memo: ref.memo, from: ref.from, to: ref.to, hours: ref.hours } }, calMd(s) + '로 옮겼어요.');
+  }
+  /** 끌기(마우스·손가락 공통): opt = { label, k, span(며칠짜리), ref 시작일, drop(놓은 칸 날짜, 잡은 위치가 며칠째였는지), click() } */
+  function calDrag(el, opt) {
+    el.addEventListener('pointerdown', function (ev) {
+      if (ev.button > 0 || state.cal.dragging) return;
+      ev.preventDefault();
+      var x0 = ev.clientX, y0 = ev.clientY, lx = x0, ly = y0, on = false, ghost = null, cur = null, raf = 0, off = 0, span = opt.span || 1;
+      var cellAt = function (x, y) {
+        var l = $$('#calBody .cal-cell');
+        for (var i = 0; i < l.length; i++) { var r = l[i].getBoundingClientRect(); if (x >= r.left && x < r.right && y >= r.top && y < r.bottom) return l[i]; }
+        return null;
+      };
+      var unmark = function () { $$('#calBody .cal-cell.cdrop').forEach(function (x) { x.classList.remove('cdrop', 'k-' + opt.k); }); };
+      var mark = function (cell) {
+        if (cell === cur) return;
+        cur = cell; unmark(); if (!cell) return;
+        var s = dAdd(cell.dataset.d, -off);
+        for (var i = 0; i < span; i++) { var t = $('#calBody .cal-cell[data-d="' + dAdd(s, i) + '"]'); if (t) t.classList.add('cdrop', 'k-' + opt.k); }
+      };
+      var place = function () { if (ghost) ghost.style.transform = 'translate3d(' + (lx - ghost.offsetWidth / 2) + 'px,' + (ly - ghost.offsetHeight / 2) + 'px,0) rotate(-2deg) scale(1.06)'; };
+      var tick = function () {
+        raf = 0; if (!on) return;
+        if (ly < 70) window.scrollBy(0, -14); else if (ly > window.innerHeight - 70) window.scrollBy(0, 14);
+        place(); mark(cellAt(lx, ly)); raf = requestAnimationFrame(tick);
+      };
+      var start = function () {
+        on = true; state.cal.dragging = true;
+        if (opt.start) { var g = cellAt(x0, y0); off = g ? Math.max(0, Math.min(span - 1, Math.round((dU(g.dataset.d) - dU(opt.start)) / 86400000))) : 0; }
+        ghost = document.createElement('div'); ghost.className = 'cal-ghost k-' + opt.k; ghost.textContent = opt.label; document.body.appendChild(ghost);
+        el.classList.add('dragging'); document.body.classList.add('cal-dragging');
+        var g2 = $('#calBody .cal-grid2'); if (g2) g2.classList.add('dropping');
+        tick();
+      };
+      var fly = function (r, gone) {
+        var g = ghost; ghost = null; if (!g) return;
+        g.classList.add('fly'); g.style.transform = 'translate3d(' + (r.left + r.width / 2 - g.offsetWidth / 2) + 'px,' + (r.top + (gone ? r.height / 2 : 22) - g.offsetHeight / 2) + 'px,0) scale(' + (gone ? .6 : .9) + ')'; g.style.opacity = '0';
+        setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 240);
+      };
+      var end = function (cancel) {
+        window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', cc); window.removeEventListener('keydown', key);
+        if (raf) cancelAnimationFrame(raf);
+        if (!on) { if (!cancel && opt.click) opt.click(); return; }
+        on = false; state.cal.dragging = false;
+        var cell = cancel ? null : cellAt(lx, ly); unmark();
+        el.classList.remove('dragging'); document.body.classList.remove('cal-dragging');
+        var g2 = $('#calBody .cal-grid2'); if (g2) g2.classList.remove('dropping');
+        if (!cell) return fly(el.getBoundingClientRect(), true);
+        fly(cell.getBoundingClientRect(), false); opt.drop(cell.dataset.d, off);
+      };
+      var mv = function (e) { lx = e.clientX; ly = e.clientY; if (!on && Math.abs(lx - x0) + Math.abs(ly - y0) > 6) start(); };
+      var up = function (e) { lx = e.clientX; ly = e.clientY; end(false); };
+      var cc = function () { end(true); };
+      var key = function (e) { if (e.key === 'Escape') end(true); };
+      window.addEventListener('pointermove', mv); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', cc); window.addEventListener('keydown', key);
+    });
+  }
+  function calMonth(dir) {
     syncRoute();
     var c = state.cal, d = c.data, ym = c.ym, holi = calHoli();
     var y = +ym.slice(0, 4), m = +ym.slice(5, 7), first = ym + '-01', last = ym + '-' + pad2(dim(y, m));
     var col = function (x) { return (dDow(x) + 6) % 7; }; // 월요일 시작
     var gStart = dAdd(first, -col(first)), gEnd = dAdd(last, 6 - col(last));
-    // 막대로 그릴 항목 (기간)
+    // 막대로 그릴 항목 (기간) · ref = 눌러서 고치거나 끌어 옮길 원본
     var items = [], P = { duty: 0, leave: 1, work: 2, event: 3, task: 4, req: 5, doc: 6 };
-    leavesIn(gStart, gEnd).forEach(function (l) { var k = leaveKey(l); if (calShow(k)) items.push({ k: k, t: leaveLabel(l), s: l.start, e: l.end }); });
-    if (calShow('event')) d.events.forEach(function (e) { if (e.end >= gStart && e.start <= gEnd) items.push({ k: 'event', t: e.title, s: e.start, e: e.end }); });
+    leavesIn(gStart, gEnd).forEach(function (l) { var k = leaveKey(l); if (calShow(k)) items.push({ k: k, t: leaveLabel(l), s: l.start, e: l.end, rk: 'lv', ref: l }); });
+    if (calShow('event')) d.events.forEach(function (e) { if (e.end >= gStart && e.start <= gEnd) items.push({ k: 'event', t: e.title, s: e.start, e: e.end, rk: 'ev', ref: e }); });
     if (calShow('task')) allOccurrences(gStart, gEnd, c.mine).forEach(function (o) { items.push({ k: o.done ? 'task done' : 'task', t: (o.task.cust ? '[' + o.task.cust + '] ' : '') + o.task.title, s: o.date, e: o.date }); });
     if (calShow('req')) (state.reqs.list || []).forEach(function (r) { if (r.due && ['접수', '검토중'].indexOf(r.status) !== -1) items.push({ k: 'req', t: '회신 ' + r.cust, s: r.due, e: r.due }); });
     if (calShow('doc')) (state.docs.list || []).forEach(function (x) { if (x.expires) items.push({ k: 'doc', t: '만료 ' + (x.biz ? x.biz + ' ' : '') + x.name, s: x.expires, e: x.expires }); });
     if (calShow('doc')) (state.custs || []).forEach(function (x) { if (x.end) items.push({ k: 'doc', t: '계약 만료 ' + x.name, s: x.end, e: x.end }); });
-    // 같은 사람·같은 종류가 이어진 날이면 막대 하나로 (예: 토·일 당직, 이어서 쓴 연차)
+    // 같은 사람·같은 종류가 이어진 날이면 막대 하나로 (예: 토·일 당직, 이어서 쓴 연차) — 합친 막대는 끌 수 없고 날짜를 눌러서 고쳐요
     items.sort(function (a, b) { return a.k + a.t < b.k + b.t ? -1 : a.k + a.t > b.k + b.t ? 1 : a.s < b.s ? -1 : 1; });
     items = items.reduce(function (out, it) {
       var p = out[out.length - 1];
-      if (p && /^(duty|leave|work)$/.test(it.k) && p.k === it.k && p.t === it.t && it.s <= dAdd(p.e, 1)) { if (it.e > p.e) p.e = it.e; return out; }
+      if (p && /^(duty|leave|work)$/.test(it.k) && p.k === it.k && p.t === it.t && it.s <= dAdd(p.e, 1)) { if (it.e > p.e) p.e = it.e; p.multi = true; return out; }
       out.push(Object.assign({}, it)); return out;
     }, []);
-    var weeks = '';
+    var mvs = [], weeks = '';
     for (var w = gStart; w <= gEnd; w = dAdd(w, 7)) {
       var we = dAdd(w, 6), segs = [];
       items.forEach(function (it) {
@@ -5444,11 +5588,13 @@
       segs.sort(function (a, b) { return (a.it.k === 'duty' ? 0 : 1) - (b.it.k === 'duty' ? 0 : 1) || b.n - a.n || (P[a.it.k.split(' ')[0]] - P[b.it.k.split(' ')[0]]) || a.c - b.c; });
       var lanes = [], more = [0, 0, 0, 0, 0, 0, 0], bars = '';
       segs.forEach(function (sg) {
-        var L = 0;
+        var L = 0, it = sg.it;
         for (; L < CAL_LANES; L++) { var ok = true; for (var i = sg.c; i < sg.c + sg.n; i++) if (lanes[L] && lanes[L][i]) { ok = false; break; } if (ok) break; }
         if (L >= CAL_LANES) { for (var j = sg.c; j < sg.c + sg.n; j++) more[j]++; return; }
         lanes[L] = lanes[L] || []; for (var q = sg.c; q < sg.c + sg.n; q++) lanes[L][q] = 1;
-        bars += '<div class="cal-bar k-' + sg.it.k.replace(' ', ' k-') + (sg.l ? ' cl' : '') + (sg.r ? ' cr' : '') + '" style="grid-column:' + (sg.c + 1) + ' / span ' + sg.n + ';grid-row:' + (L + 2) + '">' + esc(sg.it.t) + '</div>';
+        var mv = !it.multi && calCanMove(it.rk, it.ref) ? mvs.push(it) : 0;
+        bars += '<div class="cal-bar k-' + it.k.replace(' ', ' k-') + (sg.l ? ' cl' : '') + (sg.r ? ' cr' : '') + (mv ? ' mv' : '') + (it.ref && it.ref.id === c.flash ? ' pop' : '') + (it.ref && String(it.ref.id).indexOf('tmp') === 0 ? ' saving' : '') + '"' + (mv ? ' data-mv="' + (mv - 1) + '"' : '') +
+          ' style="grid-column:' + (sg.c + 1) + ' / span ' + sg.n + ';grid-row:' + (L + 2) + '" title="' + esc(it.t) + '">' + esc(it.t) + '</div>';
       });
       var cells = '';
       for (var k = 0; k < 7; k++) {
@@ -5459,20 +5605,46 @@
       }
       weeks += '<div class="cal-week">' + cells + bars + '</div>';
     }
+    c.flash = null;
+    var adm = state.user.role === 'admin', who = c.who || state.user.id;
     var chip = function (k, label) { return '<button type="button" class="chip cal-f k-' + k + (calShow(k) ? ' on' : '') + '" data-f="' + k + '">' + label + '</button>'; };
-    $('#calBody').innerHTML = '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px">' +
+    var pal = '<aside class="cal-pal"><div class="cal-pal-h">끌어다 놓기</div>' +
+      (adm ? '<label class="cal-who"><span>누구 기록으로</span><select class="input" id="cmWho">' + d.users.map(function (u) { return '<option value="' + esc(u.id) + '"' + (u.id === who ? ' selected' : '') + '>' + esc(u.name) + '</option>'; }).join('') + '</select></label>'
+        : '<div class="cal-who"><span>내 기록으로</span><b>' + esc(state.user.name) + '</b></div>') +
+      '<div class="cal-chips">' + CAL_CHIPS.map(function (x) { return '<button type="button" class="cal-chip k-' + x[1] + (c.arm === x[0] ? ' armed' : '') + '" data-chip="' + x[0] + '"><i></i><b>' + (x[0] === 'event' ? '일정 · 공지' : x[0]) + '</b><small>' + x[2] + '</small></button>'; }).join('') + '</div>' +
+      '<p class="cal-pal-tip" id="cmTip"></p></aside>';
+    $('#calBody').innerHTML = '<div class="card cal-card"><div class="row-between" style="flex-wrap:wrap;gap:10px;margin-bottom:12px">' +
       '<div class="cal-nav"><button class="btn btn-sm" id="cmPrev">◀</button><h2>' + y + '년 ' + m + '월</h2><button class="btn btn-sm" id="cmNext">▶</button><button class="btn btn-sm btn-ghost" id="cmToday">오늘</button></div>' +
       '<div class="actions"><label class="toggle small"><input type="checkbox" id="cmMine"' + (c.mine ? ' checked' : '') + '><span class="track"></span>내 할 일만</label><button class="btn btn-sm btn-primary" id="cmAdd">＋ 일정</button></div></div>' +
       '<div class="chips cal-filters">' + chip('holi', '공휴일') + chip('duty', '당직') + chip('leave', '휴가') + chip('work', '추가근무') + chip('task', '할 일') + (can('quote') ? chip('req', '견적 회신') + chip('doc', '만료(서류·계약)') : '') + chip('event', '일정') + '</div>' +
-      '<div class="cal-grid2"><div class="cal-wds">' + [1, 2, 3, 4, 5, 6, 0].map(function (i) { return '<div class="cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + WD[i] + '</div>'; }).join('') + '</div>' + weeks + '</div>' +
-      '<p class="hint" style="margin:10px 0 0">날짜를 누르면 그날 일정을 보고 추가할 수 있어요 · 공휴일은 구글 캘린더 "대한민국의 휴일" 기준 · 당직 순번은 휴가·근무 탭에서 정해요</p></div>';
-    $('#cmPrev').onclick = function () { c.ym = ymAdd(c.ym, -1); calMonth(); };
-    $('#cmNext').onclick = function () { c.ym = ymAdd(c.ym, 1); calMonth(); };
-    $('#cmToday').onclick = function () { c.ym = d.today.slice(0, 7); calMonth(); };
+      '<div class="cal-wrap">' + pal + '<div class="cal-grid2' + (c.arm ? ' arming' : '') + '"><div class="cal-wds">' + [1, 2, 3, 4, 5, 6, 0].map(function (i) { return '<div class="cal-wd' + (i === 0 ? ' sun' : i === 6 ? ' sat' : '') + '">' + WD[i] + '</div>'; }).join('') + '</div><div class="cal-weeks' + (dir ? ' slide-' + dir : '') + '">' + weeks + '</div></div></div>' +
+      '<p class="hint" style="margin:10px 0 0">날짜를 누르면 그날 일정을 보고 추가할 수 있어요 · 내 기록은 눌러서 고치고, 다른 날로 끌어서 옮겨요 · 공휴일은 구글 캘린더 "대한민국의 휴일" 기준 · 당직 순번은 휴가·근무 탭에서 정해요</p></div>';
+    var go = function (ymNew) { var dr = ymNew > c.ym ? 'l' : ymNew < c.ym ? 'r' : ''; c.ym = ymNew; calMonth(dr); };
+    $('#cmPrev').onclick = function () { go(ymAdd(c.ym, -1)); };
+    $('#cmNext').onclick = function () { go(ymAdd(c.ym, 1)); };
+    $('#cmToday').onclick = function () { go(d.today.slice(0, 7)); };
     $('#cmMine').onchange = function () { c.mine = this.checked; calMonth(); };
     $('#cmAdd').onclick = function () { editEvent({ start: d.today }); };
+    if (adm) $('#cmWho').onchange = function () { c.who = this.value; };
     $$('.cal-f').forEach(function (b) { b.onclick = function () { c.show[b.dataset.f] = !calShow(b.dataset.f); local('set', 'joil-calshow', c.show); calMonth(); }; });
-    $$('.cal-cell').forEach(function (cell) { cell.onclick = function () { openDay(cell.dataset.d); }; });
+    var arm = function (k) {
+      c.arm = c.arm === k ? null : k;
+      $$('.cal-chip').forEach(function (x) { x.classList.toggle('armed', x.dataset.chip === c.arm); });
+      $('#calBody .cal-grid2').classList.toggle('arming', !!c.arm);
+      $('#cmTip').textContent = c.arm ? '넣을 날짜를 누르세요 (칩을 다시 누르면 취소)' : '칩을 날짜로 끌어다 놓거나, 칩을 누른 뒤 날짜를 눌러요';
+    };
+    $('#cmTip').textContent = c.arm ? '넣을 날짜를 누르세요 (칩을 다시 누르면 취소)' : '칩을 날짜로 끌어다 놓거나, 칩을 누른 뒤 날짜를 눌러요';
+    $$('.cal-chip').forEach(function (b) {
+      var k = b.dataset.chip, def = CAL_CHIPS.filter(function (x) { return x[0] === k; })[0];
+      calDrag(b, { label: k === 'event' ? '일정 · 공지' : k, k: def[1], drop: function (date) { c.arm = null; calPlace(k, date); }, click: function () { arm(k); } });
+    });
+    $$('.cal-bar.mv').forEach(function (b) {
+      var it = mvs[+b.dataset.mv], ref = it.ref;
+      calDrag(b, { label: it.t, k: it.k, span: Math.round((dU(ref.end) - dU(ref.start)) / 86400000) + 1, start: ref.start,
+        drop: function (date, off) { calMove(it.rk, ref, Math.round((dU(date) - dU(ref.start)) / 86400000) - off); },
+        click: function () { if (it.rk === 'ev') editEvent(ref); else editLeave(ref); } });
+    });
+    $$('.cal-cell').forEach(function (cell) { cell.onclick = function () { if (c.arm) { var k = c.arm; arm(k); calPlace(k, cell.dataset.d); return; } openDay(cell.dataset.d); }; });
   }
 
   function openDay(s) {
