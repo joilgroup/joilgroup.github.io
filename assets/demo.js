@@ -367,12 +367,12 @@
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
       if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
       if ((req.action === 'drivers.list' || req.action === 'drivers.save') && !req._nb) { delete (req.driver || {}).birth; delete (req.driver || {}).black; delete (req.driver || {}).org; var dpr = handle(Object.assign({}, req, { _nb: 1 })); dpr.drivers = dpr.drivers.map(function (v) { var o = Object.assign({}, v); delete o.birth; return o; }); return dpr; } // 생년월일은 협력사에 안 보내요
-      [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
+      [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && req.action !== 'dispatch.must' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
       if (req.action === 'dispatch.tabs') { return { tabs: demoTabs(req.cust).filter(function (t) { return !t.hidden && me.dispTabs.indexOf(req.cust + t.suf) !== -1; }) }; }
     }
     if (['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
@@ -648,6 +648,8 @@
       case 'dispatch.priceSave': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); store.dispPrice = store.dispPrice || {}; var dpp = store.dispPrice[req.cust] = store.dispPrice[req.cust] || {}, dpv = Math.round(Number(String(req.price == null ? '' : req.price).replace(/[^0-9.]/g, ''))) || 0; if (dpv > 0) dpp[req.ym] = dpv; else delete dpp[req.ym]; save(); return { prices: dpp };
       case 'dispatch.codes': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); return { codes: (store.dispCodes || {})[req.cust] || {} };
       case 'dispatch.codesSave': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); store.dispCodes = store.dispCodes || {}; store.dispCodes[req.cust] = { sale: String((req.codes || {}).sale || ''), buy: (req.codes || {}).buy || {}, jo: String((req.codes || {}).jo || '') }; save(); return { codes: store.dispCodes[req.cust] };
+      case 'dispatch.must': if (me.role === 'partner' && me.dispTabs.every(function (k) { return String(k).replace(/\/.*$/, '') !== dCust(req.cust); })) fail('볼 수 없는 업체예요.'); return { list: (store.dispMust || {})[dCust(req.cust)] || [] };
+      case 'dispatch.mustSave': store.dispMust = store.dispMust || {}; var dms = {}; store.dispMust[dCust(req.cust)] = (req.list || []).map(function (v) { return String(v == null ? '' : v).trim().slice(0, 40); }).filter(function (v) { if (!v || dms[v]) return false; dms[v] = 1; return true; }).slice(0, 300); save(); return { list: store.dispMust[dCust(req.cust)] };
       case 'dispatch.map': var dm2 = {}; wk('dispMap').forEach(function (x) { dm2[x.fc] = x.dest; }); return { map: dm2 };
       case 'dispatch.ratesSave':
         if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');

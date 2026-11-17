@@ -159,7 +159,7 @@ function handle_(req) {
 
   var QUOTE_ACTIONS = ['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
     'docs.list', 'docs.upload', 'docs.update', 'docs.get', 'docs.zip', 'docs.delete', 'addr.list', 'companies', 'diesel.recent', 'quotes.addRoutes', 'rates.list', 'rates.get', 'rates.upload', 'rates.saveSpecials',
-    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
+    'reqs.list', 'reqs.get', 'reqs.save', 'reqs.upload', 'reqs.file', 'reqs.fileDelete', 'reqs.zip', 'reqs.delete', 'reqs.stepSave', 'reqs.stepDelete', 'reqs.import', 'custs.list', 'custs.save', 'custs.delete', 'manual.list', 'manual.save', 'manual.delete', 'manual.upload', 'manual.file', 'manual.fileDelete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.geo', 'dispatch.receipt', 'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   if (QUOTE_ACTIONS.indexOf(action) !== -1) requirePerm_(session, 'quote');
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
@@ -212,6 +212,8 @@ function handle_(req) {
     case 'dispatch.priceSave': dispNeedCost_(session); return { prices: dispPriceSave_(req) };
     case 'dispatch.codes': dispNeedCost_(session); return { codes: dispCodes_(req.cust) };
     case 'dispatch.codesSave': dispNeedCost_(session); return { codes: dispCodesSave_(req) };
+    case 'dispatch.must': return { list: dispMust_(req.cust) };
+    case 'dispatch.mustSave': return { list: dispMustSave_(req) };
     case 'dispatch.map': return { map: dispMap_() }; // 하차지 이름(삼다수 대리점 → 인천백석동 등)은 금액이 없어서 직원 모두 봐요
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
     case 'dispatch.receipt': return dispReceipt_(req.id);
@@ -2129,7 +2131,7 @@ function dispJoinSync_(cust, date, chg) {
   Object.keys(touched).forEach(function (k) { dispTouch_(k, date); });
 }
 /* ───────────── 협력사 계정: 배차시트만 (견적·분석·배차검색·관리자 등은 전부 막음) ───────────── */
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save']; // 월별 기록(dispatch.month·monthAll)은 협력사에게 안 열어요
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save']; // 월별 기록(dispatch.month·monthAll)은 협력사에게 안 열어요
 function partnerHandle_(session, action, req) {
   if (PARTNER_ACTIONS.indexOf(action) === -1) throw new Error('협력사 계정은 배차시트만 쓸 수 있어요.');
   var ok = function (k) { if (session.dispTabs.indexOf(String(k)) === -1) throw new Error('볼 수 없는 탭이에요.'); return String(k); };
@@ -2144,6 +2146,7 @@ function partnerHandle_(session, action, req) {
     case 'dispatch.save': ok(req.cust); return dispScrub_(dispSave_(session, req), session);
     case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: dispStamps_(req.keys, req.date) };
     case 'dispatch.geo': return { coords: dispGeo_(req.addrs) };
+    case 'dispatch.must': if (partnerCusts_(session).indexOf(dispCust_(req.cust)) === -1) throw new Error('볼 수 없는 업체예요.'); return { list: dispMust_(req.cust) };
     case 'dispatch.rates': return partnerRates_(session); // 자기 업체 운송비를 보기만 (단가표 수정은 못 함)
     case 'dispatch.receipt': var rf = findRow_(SHEET_RECEIPTS, RECEIPT_HEADER, req.id); if (!rf) throw new Error('사진을 찾을 수 없습니다.'); ok(rf.raw[1]); return dispReceipt_(req.id);
     case 'loading.list': var pcs = partnerCusts_(session); return { places: loadingList_().filter(function (x) { return pcs.indexOf(x.cust) !== -1; }) };
@@ -2218,6 +2221,12 @@ function dispPriceSave_(req) {
   } finally { lock.releaseLock(); }
 }
 /* 차도리(회계 프로그램) 등록 엑셀용 거래처 코드: 업체마다 { sale: 매출코드, buy: { 탭 접미사: 매입코드 }, jo: 조일배차 매입코드 } · 분석 권한 */
+/** 시간 조정·날짜 변경이 안 되는 센터 (오늘 꼭 가야 함): 업체별 이름 목록 · 금액이 없어서 협력사도 읽어요 */
+function dispMust_(cust) { return parseJson_(PropertiesService.getScriptProperties().getProperty('DISP_MUST_' + dispCust_(cust)), []) || []; }
+function dispMustSave_(req) {
+  var seen = {}, list = (req.list || []).map(function (v) { return String(v == null ? '' : v).trim().slice(0, 40); }).filter(function (v) { if (!v || seen[v]) return false; seen[v] = 1; return true; }).slice(0, 300);
+  PropertiesService.getScriptProperties().setProperty('DISP_MUST_' + dispCust_(req.cust), JSON.stringify(list)); return list;
+}
 function dispCodes_(cust) { return parseJson_(PropertiesService.getScriptProperties().getProperty('DISP_CODES_' + dispCust_(cust)), {}) || {}; }
 function dispCodesSave_(req) {
   var c = req.codes || {}, t = function (v) { return String(v == null ? '' : v).trim().slice(0, 30); }, buy = {};

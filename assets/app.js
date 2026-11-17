@@ -6847,7 +6847,39 @@
   function dispKgText(kg, pkg) { return pkg ? (kg ? won(kg) + ' · ' : '') + won(pkg) + '패키지' : won(kg); }
   function loadDispTabs(force) {
     var st = dispState(); if (st.tabList && st.tabList._cust === st.cust && !force) return Promise.resolve(st.tabList);
+    var cust = st.cust;
+    api('dispatch.must', { cust: cust }).then(function (r) { if (dispState().cust !== cust) return; st.mustList = r.list || []; st.mustOld = false; if (state.view === 'dispatch' && (st.mustList.length || st.mustShown)) drawDispDay(); }, function () { st.mustList = []; st.mustOld = true; });
     return api('dispatch.tabs', { cust: st.cust }).then(function (r) { setDispTabs(r.tabs); return st.tabList; });
+  }
+  /* ── 오늘 꼭 가야 하는 센터 (시간 조정·날짜 변경 불가): 목록은 서버(dispatch.must)에 업체별로 · 화면에만 빨간 표시, 문자·기사 링크에는 안 나가요 ──
+     센터 이름은 띄어쓰기·FC·층·괄호를 빼고 비교: 고양1 = 고양 1 = 고양1FC = 고양1 -2층 = 고양 1 FC - 2층 (고양10과는 다름) */
+  function dispMustKey(v) {
+    var s = String(v || '').replace(/\([^)]*\)/g, ' ').split(/\s*[-–—~]\s*/)[0];
+    s = s.replace(/(^|\s)(지하\s*)?B?\d+\s*(층|F)(?=\s|$)/gi, ' ').replace(/\s+/g, '').replace(/(FC|센터)$/i, '').replace(/(FC|센터)/gi, '');
+    return s.toUpperCase();
+  }
+  function dispMustFc(fc) {
+    var l = dispState().mustList || []; if (!l.length || !fc) return false;
+    var k = dispMustKey(fc); return !!k && l.some(function (x) { return dispMustKey(x) === k; });
+  }
+  function dispMustTag(fc) { return dispMustFc(fc) ? ' <span class="dp-must" title="시간 조정·날짜 변경이 어려운 센터예요">오늘 꼭 가야함</span>' : ''; }
+  function openDispMust() {
+    var st = dispState(), cust = st.cust;
+    modal({ eyebrow: cust + ' · 배차시트', title: '🚩 오늘 꼭 가야 하는 센터',
+      body: '<p class="muted small" style="margin:0 0 10px">시간 조정·날짜 변경이 어려운 센터예요. 이 센터 오더에는 배차시트에 빨간 <b>오늘 꼭 가야함</b> 표시가 떠요(우리·협력사 화면만 · 문자·기사 링크에는 안 나가요). 붙여넣은 시간 안내도 기사 공지로 옮기지 않고 내부 공지에만 남겨요.</p>' +
+        '<div class="field"><label>센터 이름 (한 줄에 하나)</label><textarea class="input memo" id="dmList" rows="10" placeholder="고양1&#10;인천30">' + esc((st.mustList || []).join('\n')) + '</textarea>' +
+        '<span class="hint">띄어쓰기·FC·층은 빼고 비교해요: 고양1 = 고양 1 = 고양1FC = 고양 1 FC - 2층 (고양10은 다른 센터)</span></div><p class="small" id="dmInfo" style="margin:0"></p>',
+      foot: '<button class="btn" data-close>취소</button><button class="btn btn-primary" id="dmSave">저장</button>',
+      onMount: function (m, close) {
+        var read = function () { return $('#dmList', m).value.split(/[\n,]/).map(function (x) { return x.trim(); }).filter(Boolean); };
+        var info = function () { var n = read().length, hit = {}; DISP_TABS.forEach(function (t) { var X = st.tabs && st.tabs[t[0]]; if (X) X.orders.forEach(function (o) { var k = dispMustKey(o.d.fc); if (read().some(function (x) { return dispMustKey(x) === k; })) hit[o.d.fc] = 1; }); }); $('#dmInfo', m).textContent = n + '곳' + (Object.keys(hit).length ? ' · 오늘(' + st.date + ') 해당 오더: ' + Object.keys(hit).join(', ') : ''); };
+        $('#dmList', m).oninput = info; info();
+        $('#dmSave', m).onclick = function () {
+          var btn = this; busy(btn, true, '저장 중');
+          api('dispatch.mustSave', { cust: cust, list: read() }).then(function (r) { st.mustList = r.list || []; st.mustOld = false; st.mustShown = true; close(); toast('꼭 가야 하는 센터 ' + st.mustList.length + '곳을 저장했어요.'); drawDispDay(); })
+            .catch(function (err) { busy(btn, false); toast(/알 수 없는|Unknown|action/i.test(err.message) ? '서버(Code.js)가 예전 버전이에요. Apps Script에 새 Code.js를 붙여넣고 새 버전으로 배포해 주세요.' : err.message, 'err'); });
+        };
+      } });
   }
   function setDispTabs(list) {
     var st = dispState();
@@ -7536,7 +7568,7 @@
       return pr.then(function () { return api('dispatch.day', { cust: key, date: date }); }).then(function (day) {
         return (day.orders || []).filter(function (o) { return dates[date][o.key] && !o.noteIn && !o.noteDrv; }).reduce(function (p2, o) {
           var t = dates[date][o.key];
-          return p2.then(function () { return api('dispatch.note', { cust: key, date: date, id: o.id, noteIn: t, noteDrv: dispTimeNote(t) ? dispShortTime(t) : '' }); }).then(function () { n++; });
+          return p2.then(function () { return api('dispatch.note', { cust: key, date: date, id: o.id, noteIn: t, noteDrv: dispTimeNote(t) && !dispMustFc(o.d.fc) ? dispShortTime(t) : '' }); }).then(function () { n++; });
         }, Promise.resolve());
       });
     }, Promise.resolve()).then(function () { return n; }).catch(function () { return n; });
@@ -7814,6 +7846,7 @@
         if (lack.length && !dispMini(t)) rows.push('<li><b>' + esc(tb[0]) + ' ' + esc(lab(X, n)) + '</b> ' + (lack.length === FS.length ? '차량정보 없음' : '빈 칸 <span class="muted small">' + esc(lack.join(', ')) + '</span>') + '</li>');
         if (past && !C.noMap) { var ss = truckStops(X, n), rc = (X.receipts || []).filter(function (x) { return x.no === n; }), got = ss.filter(function (s) { return rc.some(function (x) { return x.fc === s.fc; }); }).length; if (got < ss.length) rows.push('<li><b>' + esc(tb[0]) + ' ' + n + '호차</b> 인수증 ' + got + '/' + ss.length + '</li>'); }
       });
+      X.orders.forEach(function (o) { if (dispMustFc(o.d.fc)) rows.push('<li class="warn must"><b>' + esc(tb[0]) + (o.truck !== '' && o.truck != null ? ' ' + o.truck + '호차' : ' 미배정') + ' · ' + esc(o.d.fc) + '</b> 🚩 오늘 꼭 가야함 <span class="muted small">(시간 조정·날짜 변경 어려운 센터)</span></li>'); });
       X.orders.forEach(function (o) { if (o.noteIn) rows.push('<li class="note"><b>' + esc(tb[0]) + (o.truck !== '' && o.truck != null ? ' ' + o.truck + '호차' : ' 미배정') + ' · ' + esc(o.d.fc) + '</b> [내부] ' + esc(o.noteIn) + '</li>'); });
     });
     if (!DISP_TABS.some(function (tb) { return st.tabs[tb[0]] && st.tabs[tb[0]].orders.length; })) return '';
@@ -8004,7 +8037,7 @@
       return '<tr' + (hrs ? ' title="하차 가능시간: ' + esc(hrs) + '"' : '') + '>' +
         '<td class="tt-kind"' + (lsh ? ' style="background:' + lsh + '"' : '') + (otb ? ' title="' + esc(otb + ' 탭 오더 (합차)') + '"' : '') + '>' + esc(lk) + '</td>' +
         '<td>' + esc((findPlace(s.d.from) || {}).name || s.d.from || '') + '</td>' +
-        '<td class="tt-fc"' + (hrs ? ' data-hrs="' + esc('하차 가능시간 · ' + hrs) + '"' : '') + '><b>' + esc(s.fc) + '</b>' + (otb ? ' <span class="tt-re" title="합차로 묶인 탭">' + esc(otb) + '</span>' : '') + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + (ln.pk && s.n0 ? '' : notesOf(s.fc)) + '</td>' +
+        '<td class="tt-fc"' + (hrs ? ' data-hrs="' + esc('하차 가능시간 · ' + hrs) + '"' : '') + '><b>' + esc(s.fc) + '</b>' + dispMustTag(s.fc) + (otb ? ' <span class="tt-re" title="합차로 묶인 탭">' + esc(otb) + '</span>' : '') + (s.d.reFrom ? ' <span class="tt-re" title="회차 재배차">재배차 ' + esc(s.d.reFrom) + '</span>' : '') + (g.length ? ' <button class="tt-rcv" data-rcv="' + esc(g[g.length - 1].id) + '" title="' + esc(g[g.length - 1].at) + '">인수증 보기</button>' : '') + (ln.pk && s.n0 ? '' : notesOf(s.fc)) + '</td>' +
         '<td class="tt-addr"><div class="clip" title="' + esc(s.d.memo || s.d.addr) + '">' + esc(s.d.addr) + '</div></td>' +
         '<td class="num">' + won(ln.b) + '</td><td class="num' + (ln.pk ? ' tt-pkg' : '') + '">' + ln.kg + '</td>' +
         (i ? '' : TRK_FIELDS.map(function (f) { return '<td class="tt-in' + (blk && f[0] === 'car' ? ' tt-blk' : '') + '"' + rs + (blk && f[0] === 'car' ? ' title="⛔ 블랙(출입 금지) 기사"' : '') + '><input class="tt-input" data-tf="' + f[0] + '" data-tn="' + esc(key) + '" value="' + esc(t[f[0]] || '') + '" aria-label="' + f[1] + '"></td>'; }).join('') +
@@ -8083,7 +8116,7 @@
         '<div class="small" id="dpSaveSt"></div></div>' +
         dispSummaryHtml(st) +
         (isPartner() ? '' : '<div class="dp-tabs" id="dpTabs">' + DISP_TABS.filter(function (t) { return t[0] === st.tab || st.tabs[t[0]].orders.length; }).map(function (t) { var x = st.tabs[t[0]], n = x.orders.length, nt = dispTrucks(x).length; return '<button type="button" data-tab="' + esc(t[0]) + '" class="' + (t[0] === st.tab ? 'on' : '') + '"><b>' + esc(t[0]) + '</b></button>'; }).join('') +
-          (function () { var rest = DISP_TABS.filter(function (t) { return t[0] !== st.tab && !st.tabs[t[0]].orders.length; }); return '<span class="dp-tabx">' + (rest.length ? '<select class="input input-sm" id="dpTabMore"><option value="">＋ 다른 탭 열기 (' + rest.length + ')</option>' + rest.map(function (t) { return '<option>' + esc(t[0]) + '</option>'; }).join('') + '</select>' : '') + (isPartner() ? '' : '<button type="button" class="btn btn-sm btn-ghost" id="dpTabMgr">탭 관리</button>') + '</span>'; })() + '</div>') +
+          (function () { var rest = DISP_TABS.filter(function (t) { return t[0] !== st.tab && !st.tabs[t[0]].orders.length; }); return '<span class="dp-tabx">' + (rest.length ? '<select class="input input-sm" id="dpTabMore"><option value="">＋ 다른 탭 열기 (' + rest.length + ')</option>' + rest.map(function (t) { return '<option>' + esc(t[0]) + '</option>'; }).join('') + '</select>' : '') + (isPartner() ? '' : '<button type="button" class="btn btn-sm btn-ghost" id="dpTabMgr">탭 관리</button><button type="button" class="btn btn-sm btn-ghost" id="dpMustMgr" title="시간 조정·날짜 변경이 어려운 센터 목록">🚩 꼭 가야 하는 센터' + ((st.mustList || []).length ? ' ' + st.mustList.length : '') + '</button>') + '</span>'; })() + '</div>') +
         (isPartner() ? '' : '<details class="dp-paste"' + (orders.length ? '' : ' open') + '><summary><b>① ' + esc(st.tab) + ' 오더 붙여넣기</b> <span class="muted small">' + (C.pasteHint ? C.pasteHint(st) : '엑셀에서 오더를 복사해서 붙여넣으세요 (이미 있는 줄은 건너뜀)') + '</span></summary>' +
         '<textarea class="input" id="dpPasteIn" rows="4" placeholder="' + esc(st.tab) + ' 오더를 여기에 붙여넣기 (Ctrl+V)"></textarea><div class="actions" style="margin-top:6px"><span class="small muted" id="dpPasteInfo"></span><button class="btn btn-sm btn-primary" id="dpImport" disabled>' + esc(st.tab) + '에 가져오기</button></div></details>') + '</div>' +
       '<div class="card"' + (isPartner() || C.noOrderTable ? ' style="display:none"' : ' style="margin-top:16px"') + '><div class="row-between" style="flex-wrap:wrap;gap:8px;margin-bottom:10px"><div><div class="eyebrow">Orders · ② ' + esc(st.tab) + ' 오더</div><h3 style="margin:0">' + (C.orderHead ? C.orderHead(orders, tb, tk) : orders.length + '줄 · ' + won(tb) + '번들 · ' + won(tk) + 'kg') + (unassigned ? ' <span class="small" style="color:var(--orange)">호차 미배정 ' + unassigned + '줄</span>' : '') + (C.orderWarn ? C.orderWarn(orders) : '') + '</h3></div>' +
@@ -8093,7 +8126,7 @@
           orders.map(function (o) {
             var on = !!st.sel[o.id], t = o.truck;
             return '<tr data-o="' + esc(o.id) + '" class="' + (t === '' || t == null ? 'un' : '') + (on ? ' on' : '') + '"' + (t === '' || t == null ? '' : ' style="background:' + TRUCK_SHADES[(Number(t) - 1) % TRUCK_SHADES.length] + '"') + '><td class="dp-drag" title="끌어서 순서 바꾸기">⠿</td><td><input type="checkbox" data-sel="' + esc(o.id) + '"' + (on ? ' checked' : '') + (isPartner() ? ' disabled' : '') + '></td>' +
-              '<td><input class="input input-sm num dp-tno" data-t="' + esc(o.id) + '" value="' + (t === '' || t == null ? '' : t) + '" inputmode="numeric"' + (isPartner() ? ' disabled' : '') + '></td><td class="left"><b>' + esc(o.d.fc) + '</b>' + (isPartner() ? '' : ' <button type="button" class="dp-edit" data-oedit="' + esc(o.id) + '" title="오더 고치기 (번들·무게 등)">고치기</button>') + (o.d.reFrom ? ' <span class="tt-re">재배차 ' + esc(o.d.reFrom) + '</span>' : '') + '</td>' + (C.ordCells ? C.ordCells(o, st.tab) : '<td class="left small">' + esc(o.d.dest) + '</td><td class="left small">' + esc(o.d.item) + '</td>' +
+              '<td><input class="input input-sm num dp-tno" data-t="' + esc(o.id) + '" value="' + (t === '' || t == null ? '' : t) + '" inputmode="numeric"' + (isPartner() ? ' disabled' : '') + '></td><td class="left"><b>' + esc(o.d.fc) + '</b>' + dispMustTag(o.d.fc) + (isPartner() ? '' : ' <button type="button" class="dp-edit" data-oedit="' + esc(o.id) + '" title="오더 고치기 (번들·무게 등)">고치기</button>') + (o.d.reFrom ? ' <span class="tt-re">재배차 ' + esc(o.d.reFrom) + '</span>' : '') + '</td>' + (C.ordCells ? C.ordCells(o, st.tab) : '<td class="left small">' + esc(o.d.dest) + '</td><td class="left small">' + esc(o.d.item) + '</td>' +
               '<td class="num"' + (dispPkg(o.d.bundle) ? ' title="' + esc(o.d.bundle) + '"' : '') + '>' + won(dispOrderB(o)) + '</td><td class="num">' + dispKgText(dispNum(o.d.kg), dispPkg(o.d.bundle)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div>' + (C.addrFlag ? C.addrFlag(o) : '') + geoFlag(o) + '</td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td>') + '<td class="left dp-note">' + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
@@ -8111,6 +8144,7 @@
     $$('[data-tab]', box).forEach(function (b) { b.onclick = function () { st.tab = b.dataset.tab; st.sel = {}; drawDispDay(); syncRoute(); }; });
     var tm = $('#dpTabMore'); if (tm) tm.onchange = function () { if (!this.value) return; st.tab = this.value; st.sel = {}; drawDispDay(); syncRoute(); };
     var tmg = $('#dpTabMgr'); if (tmg) tmg.onclick = openDispTabs;
+    var mmg = $('#dpMustMgr'); if (mmg) mmg.onclick = openDispMust;
     var parsed = null;
     if ($('#dpPasteIn')) $('#dpPasteIn').oninput = function () {
       parsed = C.parse ? C.parse(this.value, st.tab, st.date) : { items: [], warn: '이 업체는 오더 붙여넣기 양식이 없어요.' }; var by = {}, fr = {}; parsed.items.forEach(function (x) { by[x.date] = (by[x.date] || 0) + 1; fr[x.d.from] = 1; });
