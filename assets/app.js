@@ -69,10 +69,10 @@
   var TIMEOUT_MS = 30000, SAVE_TIMEOUT_MS = 45000; // 저장은 서버에서 끝까지 돌아서, 화면이 먼저 포기하면 '실패'로 보이지만 실제로는 저장돼요 → 더 기다려요
   var inflight = {};
 
-  function sendOnce(req) {
+  function sendOnce(req, waitMs) {
     if (DEMO) return window.JoilDemo.call(req);
     var ctrl = window.AbortController ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, /^(quoteBatch|admin\.saveTariff|analysis\.upload|analysis\.load|docs\.upload|docs\.get|docs\.zip)$/.test(req.action) ? 120000 : READ_ACTIONS.indexOf(req.action) !== -1 ? TIMEOUT_MS : SAVE_TIMEOUT_MS) : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, /^(quoteBatch|admin\.saveTariff|analysis\.upload|analysis\.load|docs\.upload|docs\.get|docs\.zip)$/.test(req.action) ? 120000 : waitMs || (READ_ACTIONS.indexOf(req.action) !== -1 ? TIMEOUT_MS : SAVE_TIMEOUT_MS)) : null;
     // 캐시·쿠키가 끼어들지 않도록: 매번 고유 주소, 캐시 사용 안 함, 쿠키 안 보냄
     return fetch(API_URL + (API_URL.indexOf('?') === -1 ? '?' : '&') + '_t=' + Date.now() + Math.random().toString(36).slice(2, 6), {
       method: 'POST', body: JSON.stringify(req), cache: 'no-store', credentials: 'omit', redirect: 'follow',
@@ -133,6 +133,8 @@
     // 저장이 몰려 서버가 차례를 못 줬을 때(BUSY)는 아무것도 안 쓴 상태라 조금 뒤 알아서 다시 보내요 (두 번까지)
     var busyTry = function (n) { return sendOnce(req).catch(function (err) { if (!/^BUSY\|/.test(err.message || '') || n >= 2) throw err; return new Promise(function (r) { setTimeout(r, 1500 + n * 1500); }).then(function () { return busyTry(n + 1); }); }); };
     var p = netWatch(action, busyTry(0).catch(function (err) {
+      // 조회가 늦어 시간이 지나면 한 번만 더 (더 길게) 기다려요: 서버는 첫 요청을 계속 처리하고 있어서 두 번째는 대개 빨라요 (배포 직후·아침 첫 요청)
+      if (isRead && err.slow) return sendOnce(req, 60000);
       if (!isRead || !err.retry) throw err;
       return new Promise(function (r) { setTimeout(r, 900); }).then(function () { return sendOnce(req); });
     }), key);

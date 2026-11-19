@@ -96,14 +96,16 @@ function doGet() {
 }
 
 function doPost(e) {
-  var out;
+  var out, t0 = Date.now(), act = '';
   try {
-    var req = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    var req = JSON.parse((e && e.postData && e.postData.contents) || '{}'); act = String(req.action || '');
     out = handle_(req);
     out.ok = true;
   } catch (err) {
     out = { ok: false, error: (err && err.message) || String(err) };
   }
+  var ms = Date.now() - t0; out.ms = ms;
+  if (ms > 3000) try { console.log('느린 요청 ' + act + ' ' + ms + 'ms'); } catch (e2) { /* 기록 실패는 무시 */ } // Apps Script '실행' 기록에서 어떤 요청이 느린지 보려고
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 

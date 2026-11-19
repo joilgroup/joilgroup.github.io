@@ -14,5 +14,10 @@ T.run(async function () {
   await p.evaluate(function () { var d = document.querySelector('#dpDate'); d.value = '2026-09-01'; d.dispatchEvent(new Event('change', { bubbles: true })); });
   await p.waitForSelector('#netRetry', { timeout: 15000 }); ok('실패하면 다시 시도 버튼', /응답하지 않았어요/.test(await T.text(p, '#netBar')));
   await p.click('#netX'); ok('닫기', !(await p.$('#netBar')));
+  // 조회가 한 번 시간 초과돼도 한 번 더 기다려서 열려요 (배포 직후·아침 첫 요청)
+  await p.evaluate(function () { window.JoilDemo.call = window.__call0; var c = window.JoilDemo.call, n = 0; window.JoilDemo.call = function (req) { if ((req.action === 'dispatch.day' || req.action === 'dispatch.dayAll') && n++ < 1) { var e = new Error('서버 응답이 너무 늦습니다.'); e.slow = true; return Promise.reject(e); } return c(req); }; });
+  await p.evaluate(function () { location.hash = '#/home'; }); await p.waitForTimeout(800); await p.evaluate(function () { location.hash = '#/dispatch'; });
+  await p.waitForSelector('#dpDate', { timeout: 10000 }); await p.waitForTimeout(1500);
+  ok('한 번 늦어도 다시 받아서 열림 (실패 안내 없음)', !(await p.$('#netRetry')) && !/너무 늦습니다/.test(await T.text(p, '#dpBody') || ''), await T.text(p, '#dpBody'));
   await T.done(o);
 });
