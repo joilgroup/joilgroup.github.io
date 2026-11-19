@@ -35,7 +35,7 @@ var SS = { getSheetByName: function (n) { return sheets[n] || null; }, insertShe
 var props = {}, cache = {};
 var p2 = function (n) { return ('0' + n).slice(-2); };
 var ctx = { console: console, JSON: JSON, Math: Math, Date: Date,
-  SpreadsheetApp: { getActive: function () { return SS; }, getActiveSpreadsheet: function () { return SS; }, openById: function () { return SS; } },
+  SpreadsheetApp: { flush: function () {}, getActive: function () { return SS; }, getActiveSpreadsheet: function () { return SS; }, openById: function () { return SS; } },
   LockService: { getScriptLock: function () { return { waitLock: function () {}, tryLock: function () { return true; }, releaseLock: function () {}, hasLock: function () { return true; } }; } },
   PropertiesService: { getScriptProperties: function () { return { getProperty: function (k) { return k in props ? props[k] : null; }, setProperty: function (k, v) { props[k] = String(v); }, getProperties: function () { return Object.assign({}, props); }, deleteProperty: function (k) { delete props[k]; } }; } },
   CacheService: { getScriptCache: function () { return { get: function (k) { return cache[k] || null; }, put: function (k, v) { cache[k] = v; }, remove: function (k) { delete cache[k]; }, putAll: function () {}, getAll: function () { return {}; }, removeAll: function () {} }; } },

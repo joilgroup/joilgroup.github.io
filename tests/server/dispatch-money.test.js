@@ -36,3 +36,9 @@ ok('단가 지우기', !('2026-10' in call('adm', 'dispatch.priceSave', { cust: 
 r = call('adm', 'dispatch.codesSave', { cust: '쿠팡부자재', codes: { sale: ' S1 ', buy: { '': 'B1', '/평택': 'B2' }, jo: 'J1' } });
 ok('차도리 코드 저장·읽기', r.codes.sale === 'S1' && call('adm', 'dispatch.codes', { cust: '쿠팡부자재' }).codes.buy['/평택'] === 'B2', r.error);
 ok('직원·협력사 코드 거절', !!call('stf', 'dispatch.codes', { cust: '쿠팡부자재' }).error && !!call('ptn', 'dispatch.codes', { cust: '쿠팡부자재' }).error);
+// 저장이 몰려 잠금 차례가 안 오면 BUSY로 알려요 (아무것도 안 씀 → 화면이 다시 보냄)
+var LS = M.ctx.LockService.getScriptLock; M.ctx.LockService.getScriptLock = function () { return { tryLock: function () { return false; }, waitLock: function () { throw new Error('x'); }, releaseLock: function () {}, hasLock: function () { return false; } }; };
+var before = JSON.stringify(S['배차호차'].d);
+r = call('adm', 'dispatch.save', { cust: C, date: D, patch: 1, orders: [], drop: [], trucks: [{ token: tk, no: 1, set: { cost: 1 } }] });
+M.ctx.LockService.getScriptLock = LS;
+ok('잠금 차례가 안 오면 BUSY · 시트는 그대로', /^BUSY\|/.test(r.error || '') && JSON.stringify(S['배차호차'].d) === before, r.error);

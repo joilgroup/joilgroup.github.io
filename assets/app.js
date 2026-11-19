@@ -130,12 +130,14 @@
     var key = isRead ? JSON.stringify(req) : null;
     if (key && inflight[key]) return inflight[key];
 
-    var p = netWatch(action, sendOnce(req).catch(function (err) {
+    // 저장이 몰려 서버가 차례를 못 줬을 때(BUSY)는 아무것도 안 쓴 상태라 조금 뒤 알아서 다시 보내요 (두 번까지)
+    var busyTry = function (n) { return sendOnce(req).catch(function (err) { if (!/^BUSY\|/.test(err.message || '') || n >= 2) throw err; return new Promise(function (r) { setTimeout(r, 1500 + n * 1500); }).then(function () { return busyTry(n + 1); }); }); };
+    var p = netWatch(action, busyTry(0).catch(function (err) {
       if (!isRead || !err.retry) throw err;
       return new Promise(function (r) { setTimeout(r, 900); }).then(function () { return sendOnce(req); });
     }), key);
     p = p.catch(function (err) {
-      var msg = (err && err.message) || String(err);
+      var msg = ((err && err.message) || String(err)).replace(/^BUSY\|/, '');
       if (/알 수 없는 요청/.test(msg)) msg = '서버 코드가 예전 버전입니다. 관리자가 Apps Script 코드를 최신으로 바꾸고 새 버전으로 배포해야 합니다. (SETUP.md "업데이트가 나왔을 때")';
       if (/로그인이 만료|로그인이 필요|사용이 중지/.test(msg) && action !== 'login') {
         clearSession();

@@ -2296,7 +2296,7 @@ function dispMerge_(cust, date, req) {
   return list;
 }
 function dispSave_(session, req) {
-  var cust = dispCust_(req.cust), date = dispDate_(req.date), lock = LockService.getScriptLock(); lock.waitLock(20000);
+  var cust = dispCust_(req.cust), date = dispDate_(req.date), lock = dispLock_(), drvCh = false;
   var memo0 = ROWS_MEMO_; ROWS_MEMO_ = {}; // 이 저장 안에서는 업체·날짜 칸 훑은 결과를 같이 써요 (호차 줄을 지우거나 더하면 그 시트 것은 버려요)
   try {
     var isPatch = !!req.patch, pset = isPatch ? req.trucks || [] : []; // 합차 전파용: 이번에 바뀐 칸
@@ -2344,10 +2344,18 @@ function dispSave_(session, req) {
     delete ROWS_MEMO_['IDX|' + SHEET_DISP_TRK]; // 호차 줄이 지워지거나 늘어서 다시 훑어요 (오더 줄은 자리가 그대로)
     if (Object.keys(moved).length) dispReceiptsMove_(cust, date, moved);
     dispJoinSync_(cust, date, pset.map(function (p) { return { token: p.token, keys: DISP_JOIN_KEYS.filter(function (k) { return p.set && p.set[k] !== undefined; }) }; }).filter(function (c) { return c.token && c.keys.length; }));
-    var drvCh = !isPatch || pset.some(function (p) { return p.set && ['car', 'driver', 'phone', 'ton'].some(function (k) { return p.set[k] !== undefined; }); }); // 차량정보를 안 바꾼 저장(호차 배정·상태 등)은 기사 풀을 건드리지 않아요
+    drvCh = !isPatch || pset.some(function (p) { return p.set && ['car', 'driver', 'phone', 'ton'].some(function (k) { return p.set[k] !== undefined; }); }); // 차량정보를 안 바꾼 저장(호차 배정·상태 등)은 기사 풀을 건드리지 않아요
     if (drvCh) { try { driverCollect_(session, date, trucks); } catch (e) { /* 기사 풀 실패는 배차 저장에 영향 없음 */ } }
-    var out = dispDay_(cust, date); if (drvCh) out.drivers = driverList_(); out.stamp = dispTouch_(cust, date); return out;
+    SpreadsheetApp.flush();
   } finally { ROWS_MEMO_ = memo0; lock.releaseLock(); }
+  // 돌려줄 화면 데이터는 잠금을 푼 뒤에 읽어요 (다음 사람 저장이 그만큼 덜 기다려요)
+  var stamp = dispTouch_(cust, date), out = dispDay_(cust, date); if (drvCh) out.drivers = driverList_(); out.stamp = stamp; return out;
+}
+/** 배차 저장 잠금: 다른 저장이 끝나길 30초까지 기다려요 · 그래도 차례가 안 오면 BUSY (아무것도 안 썼으니 화면이 알아서 다시 보내요) */
+function dispLock_() {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) throw new Error('BUSY|다른 저장이 몰려 차례를 기다리다 시간이 지났어요. 잠시 후 다시 저장해 주세요.');
+  return lock;
 }
 /** 회차 오더 다시 배차: 고른 오더를 다른(또는 같은) 날짜에 호차 미배정으로 복사 (공지는 빼고, 어디서 왔는지 표시) */
 function dispCopyOrders_(session, req) {
