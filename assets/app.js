@@ -7130,11 +7130,15 @@
   /* 매입 단가 (분석 권한) */
   function rateFromName(from) { var p = findPlace(from); return (p && p.rateFrom) || String(from || '').replace(/물류센터|센터|물류/g, '').trim(); }
   /* 자동 톤수: 중량 기준과 파렛(=번들) 기준 중 더 큰 차 (8톤은 자동으로 고르지 않아요) */
-  var TON_BY_KG = [[1000, '1톤'], [2500, '2.5톤'], [3500, '3.5톤'], [5000, '5톤'], [10000, '11톤'], [Infinity, '14톤']];
-  var TON_BY_PLT = [[2, '1톤'], [3, '2.5톤'], [4, '3.5톤'], [10, '5톤'], [16, '11톤'], [Infinity, '14톤']];
-  function autoTon(kg, plt) {
-    var pick = function (tbl, v) { for (var i = 0; i < tbl.length; i++) if (v <= tbl[i][0]) return tbl[i][1]; return tbl[tbl.length - 1][1]; };
-    var rank = function (t) { return RATE_TONS.map(function (x) { return x[0]; }).indexOf(t); }, a = pick(TON_BY_KG, kg || 0), b = pick(TON_BY_PLT, plt || 0);
+  /* 운송비 톤수: 무게·번들 각각 표에 대 보고 더 큰 차 · 2026-11-01 배차분부터 8톤 구간(5,000kg 초과~8,000kg · 11~14번들) — 그 전 날짜는 예전 기준 그대로(마감 끝난 달 매입이 바뀌지 않게) */
+  var TON_FROM = '2026-11-01';
+  var TON_BY_KG = [[1000, '1톤'], [2500, '2.5톤'], [3500, '3.5톤'], [5000, '5톤'], [8000, '8톤'], [10000, '11톤'], [Infinity, '14톤']];
+  var TON_BY_PLT = [[2, '1톤'], [3, '2.5톤'], [4, '3.5톤'], [10, '5톤'], [14, '8톤'], [16, '11톤'], [Infinity, '14톤']];
+  var TON_BY_KG0 = [[1000, '1톤'], [2500, '2.5톤'], [3500, '3.5톤'], [5000, '5톤'], [10000, '11톤'], [Infinity, '14톤']];
+  var TON_BY_PLT0 = [[2, '1톤'], [3, '2.5톤'], [4, '3.5톤'], [10, '5톤'], [16, '11톤'], [Infinity, '14톤']];
+  function autoTon(kg, plt, date) {
+    var old = date && date < TON_FROM, pick = function (tbl, v) { for (var i = 0; i < tbl.length; i++) if (v <= tbl[i][0]) return tbl[i][1]; return tbl[tbl.length - 1][1]; };
+    var rank = function (t) { return RATE_TONS.map(function (x) { return x[0]; }).indexOf(t); }, a = pick(old ? TON_BY_KG0 : TON_BY_KG, kg || 0), b = pick(old ? TON_BY_PLT0 : TON_BY_PLT, plt || 0);
     return rank(b) > rank(a) ? b : a;
   }
   /** 센터 → 단가표 도착명: 직접 고친 값 > 주소의 시·군으로 단가표에서 찾기 */
@@ -7157,7 +7161,7 @@
     if (ji && !J) return { joinPart: true, total: null, stops: [], miss: [], vias: 0, max: null, ton: '' }; // 묶인 탭이 화면에 없어요 (협력사)
     if (J) { D = J.D; no = J.no; }
     var stops = truckStops(D, no); if (!stops.length) return null;
-    var C = custDef(st), kg = stops.reduce(function (a, s) { return a + s.kg; }, 0), ton = C.ton || autoTon(kg, stops.reduce(function (a, s) { return a + s.b; }, 0)), origin = rateFromName(stops[0].d.from), miss = [], best = null;
+    var C = custDef(st), kg = stops.reduce(function (a, s) { return a + s.kg; }, 0), ton = C.ton || autoTon(kg, stops.reduce(function (a, s) { return a + s.b; }, 0), D.date), origin = rateFromName(stops[0].d.from), miss = [], best = null;
     stops.forEach(function (s) {
       var dn = C.destName ? { name: C.destName(s.d, D.tab), auto: false } : destName(s.fc, s.d.addr, origin, s.d.dest); s.dest = dn;
       var p = dn.name && ratePrice(origin, dn.name, ton, D.date);
