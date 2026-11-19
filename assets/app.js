@@ -66,13 +66,13 @@
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
   var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
-  var TIMEOUT_MS = 25000;
+  var TIMEOUT_MS = 30000, SAVE_TIMEOUT_MS = 45000; // 저장은 서버에서 끝까지 돌아서, 화면이 먼저 포기하면 '실패'로 보이지만 실제로는 저장돼요 → 더 기다려요
   var inflight = {};
 
   function sendOnce(req) {
     if (DEMO) return window.JoilDemo.call(req);
     var ctrl = window.AbortController ? new AbortController() : null;
-    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, /^(quoteBatch|admin\.saveTariff|analysis\.upload|analysis\.load|docs\.upload|docs\.get|docs\.zip)$/.test(req.action) ? 120000 : TIMEOUT_MS) : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, /^(quoteBatch|admin\.saveTariff|analysis\.upload|analysis\.load|docs\.upload|docs\.get|docs\.zip)$/.test(req.action) ? 120000 : READ_ACTIONS.indexOf(req.action) !== -1 ? TIMEOUT_MS : SAVE_TIMEOUT_MS) : null;
     // 캐시·쿠키가 끼어들지 않도록: 매번 고유 주소, 캐시 사용 안 함, 쿠키 안 보냄
     return fetch(API_URL + (API_URL.indexOf('?') === -1 ? '?' : '&') + '_t=' + Date.now() + Math.random().toString(36).slice(2, 6), {
       method: 'POST', body: JSON.stringify(req), cache: 'no-store', credentials: 'omit', redirect: 'follow',
@@ -88,7 +88,7 @@
         }
       })
       .catch(function (err) {
-        if (err && err.name === 'AbortError') throw retryable('서버 응답이 너무 늦습니다. 잠시 후 다시 시도하세요.');
+        if (err && err.name === 'AbortError') { var e2 = new Error('서버 응답이 너무 늦습니다. 잠시 후 다시 시도하세요.'); e2.slow = true; throw e2; } // 늦을 때 바로 또 보내면 서버가 더 밀려요 → 자동 재시도 안 함
         if (err && /Failed to fetch|NetworkError|Load failed/.test(err.message)) throw retryable('서버에 연결할 수 없습니다. 인터넷 연결을 확인하세요.');
         throw err;
       })
@@ -104,16 +104,36 @@
 
   function retryable(msg) { var e = new Error(msg); e.retry = true; return e; }
 
+  /* 서버가 늦을 때: 5초 넘게 기다리면 화면 아래에 '기다리는 중' 안내 · 끝내 응답이 없으면 '다시 시도' (뒤에서 도는 확인 요청은 조용히) */
+  var NET_QUIET = /^(dispatch\.stamp|info\.|stock\.|dieselPrice|diesel\.recent|publicSettings)$/, netSlow = 0, netFail = false, netFails = {};
+  function netBar() {
+    var el = document.getElementById('netBar');
+    if (!netSlow && !netFail) { if (el) el.remove(); return; }
+    if (!el) { el = document.createElement('div'); el.id = 'netBar'; el.className = 'net-bar'; document.body.appendChild(el); }
+    var sig = netSlow ? 'slow' : 'fail'; if (el.dataset.s === sig) return; el.dataset.s = sig; // 같은 상태면 그대로 (누르려던 버튼이 바뀌지 않게)
+    el.className = 'net-bar' + (netFail && !netSlow ? ' fail' : '');
+    el.innerHTML = netSlow ? '<span class="spinner"></span> 서버 응답을 기다리는 중이에요… <small>여럿이 함께 쓰는 시간엔 조금 걸려요</small>' : '서버가 응답하지 않았어요. <button type="button" class="btn btn-sm" id="netRetry">다시 시도</button><button type="button" class="net-x" id="netX" title="닫기">×</button>';
+    var b = document.getElementById('netRetry'); if (b) b.onclick = function () { netFail = false; netFails = {}; netBar(); render(); };
+    var x = document.getElementById('netX'); if (x) x.onclick = function () { netFail = false; netFails = {}; netBar(); };
+  }
+  function netWatch(action, p, key) {
+    if (DEMO && !window.__netWatch || NET_QUIET.test(action)) return p;
+    var on = false, t = setTimeout(function () { on = true; netSlow++; netBar(); }, 5000);
+    var done = function (ok, err) { clearTimeout(t); if (on) netSlow--; if (ok) delete netFails[key || action]; else if (err && (err.slow || err.retry) && READ_ACTIONS.indexOf(action) !== -1 && action !== 'me') netFails[key || action] = 1; netFail = Object.keys(netFails).length > 0; netBar(); }; // 실패한 그 요청이 다시 성공해야 안내가 사라져요 // 첫 화면(me)은 실패하면 자체 '다시 시도' 화면이 있어요
+    p.then(function () { done(true); }, function (err) { done(false, err); });
+    return p;
+  }
+
   function api(action, payload) {
     var req = Object.assign({ action: action, token: state.token }, payload || {});
     var isRead = READ_ACTIONS.indexOf(action) !== -1;
     var key = isRead ? JSON.stringify(req) : null;
     if (key && inflight[key]) return inflight[key];
 
-    var p = sendOnce(req).catch(function (err) {
+    var p = netWatch(action, sendOnce(req).catch(function (err) {
       if (!isRead || !err.retry) throw err;
       return new Promise(function (r) { setTimeout(r, 900); }).then(function () { return sendOnce(req); });
-    });
+    }), key);
     p = p.catch(function (err) {
       var msg = (err && err.message) || String(err);
       if (/알 수 없는 요청/.test(msg)) msg = '서버 코드가 예전 버전입니다. 관리자가 Apps Script 코드를 최신으로 바꾸고 새 버전으로 배포해야 합니다. (SETUP.md "업데이트가 나왔을 때")';

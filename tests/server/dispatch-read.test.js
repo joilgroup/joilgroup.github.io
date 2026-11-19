@@ -43,6 +43,21 @@ var cells = 0, orig = M.Sheet.prototype.getRange; M.Sheet.prototype.getRange = f
 M.ctx.dispDay_('쿠팡부자재', '2026-10-05'); var total = S['배차오더'].d.length * S['배차오더'].d[0].length + S['배차호차'].d.length * S['배차호차'].d[0].length;
 M.Sheet.prototype.getRange = orig;
 ok('하루 열 때 시트 전체보다 훨씬 적게 읽음', cells < total / 2, cells + ' / ' + total);
+// 저장·날짜 변경·기사 링크도 그날 줄만 읽고 바뀐 줄만 써요 (오전에 여럿이 배차할 때 서버가 밀리지 않게) — 업체·날짜 두 칸 훑기는 빼고 셈
+function measure(fn) {
+  var rd = 0, wr = 0, o = M.Sheet.prototype.getRange; M.Sheet.prototype.getRange = function (r0, c0, nr, nc) { var R = o.apply(this, arguments), g = R.getValues, sv = R.setValues; R.getValues = function () { if ((nc || 1) > 2) rd += (nr || 1) * (nc || 1); return g(); }; R.setValues = function (v) { wr += v.length * (v[0] || []).length; return sv(v); }; return R; };
+  try { fn(); } finally { M.Sheet.prototype.getRange = o; } return { rd: rd, wr: wr };
+}
+var big = S['배차오더'].d.length * S['배차오더'].d[0].length, dd = call('adm', 'dispatch.day', { cust: '쿠팡부자재', date: '2026-10-06' });
+var sv = measure(function () { r = call('adm', 'dispatch.save', { cust: '쿠팡부자재', date: '2026-10-06', patch: 1, orders: dd.orders.map(function (o, i) { return { id: o.id, truck: 1 + (i % 2), seq: i + 1 }; }), drop: [], trucks: [{ token: dd.trucks[0].token, no: 1, set: { status: '배차완료' } }] }); });
+ok('호차 저장: 시트 전체보다 훨씬 적게 읽고 씀', !r.error && sv.rd < big / 3 && sv.wr < 100, [r.error, sv, big]);
+ok('차량정보를 안 바꾼 저장은 기사 풀 목록을 다시 안 보냄', !r.drivers);
+r = call('adm', 'dispatch.save', { cust: '쿠팡부자재', date: '2026-10-06', patch: 1, orders: [], drop: [], trucks: [{ token: dd.trucks[0].token, no: 1, set: { car: '99가9999', driver: '새기사', phone: '010-0000-0001' } }] });
+ok('차량정보를 바꾸면 기사 풀에 들어가고 목록도 보냄', !!r.drivers && r.drivers.some(function (v) { return v.car === '99가9999'; }), r.error);
+var lk = measure(function () { r = call('', 'drv.get', { t: dd.trucks[0].token }); });
+ok('기사 링크: 시트 전체를 안 읽음', !r.error && lk.rd < big / 3, [r.error, lk]);
+var dm = call('adm', 'dispatch.day', { cust: '쿠팡부자재', date: '2026-10-10' });
+if (dm.orders.length) { var mv = measure(function () { r = call('adm', 'dispatch.moveOrders', { cust: '쿠팡부자재', date: '2026-10-10', ids: [dm.orders[0].id], toDate: '2026-10-12' }); }); ok('날짜 변경: 시트 전체를 안 읽음', !r.error && mv.rd < big / 3, [r.error, mv]); }
 
 // 오래된 '바뀐 시각' 기록 지우기
 M.props['DST|쿠팡부자재|2020-01-01'] = String(Date.now() - 100 * 86400000); M.props['DST|쿠팡부자재|2026-10-05'] = String(Date.now() - 86400000); delete M.cache['DST_GC'];
