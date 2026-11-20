@@ -78,13 +78,53 @@ export function fromJson(body: any): Pos[] {
   return out;
 }
 
-const reply = (status: number, msg = "") => new Response(msg, { status, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "content-type" };
+const reply = (status: number, msg = "") => new Response(msg, { status, headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8" } });
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json; charset=utf-8" } });
+
+/** 한국 날짜 (YYYY-MM-DD) */
+export const kstDate = (t: Date) => new Date(t.getTime() + 9 * 3600_000).toISOString().slice(0, 10);
+
+/* ── 용차 위치 링크 (브라우저): /track/l/<token>
+   GET  → { plate, date, today, state: ready|started|ended|expired }   (링크 화면이 보여 줄 것만)
+   POST { lat, lng, accuracy, speed(m/s), heading, battery(0~100), t(ms) } 또는 { points: [...] } → 저장 · 처음이면 started_at
+   POST { end: true } → ended_at (기사가 '종료')
+   본문은 text/plain 으로 보내도 됨(브라우저가 미리 묻는 요청을 안 보내게). 링크 날짜(한국)가 지나면 410. */
+async function linkMode(req: Request, token: string, action: string) {
+  if (!/^[a-f0-9]{24,64}$/.test(token)) return reply(404, "no link");
+  const rows = await rest("track_links?token=eq." + token + "&select=token,vehicle_id,date,started_at,ended_at,vehicles(plate,active)").then((r) => r.json());
+  const L = rows[0];
+  if (!L || !L.vehicles) return reply(404, "no link");
+  const now = new Date(), today = kstDate(now);
+  const state = L.ended_at ? "ended" : today > L.date ? "expired" : L.started_at ? "started" : "ready";
+  if (req.method === "GET") return json(200, { plate: L.vehicles.plate, date: L.date, today, state });
+  const body = JSON.parse((await req.text()) || "{}");
+  if (body.end || action === "end") {
+    if (!L.ended_at) await rest("track_links?token=eq." + token, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ ended_at: now.toISOString() }) });
+    return json(200, { state: "ended" });
+  }
+  if (state === "ended" || state === "expired") return json(410, { state });
+  if (today < L.date) return json(409, { state: "early", date: L.date });
+  // 늦게 보낸 점(화면이 꺼졌다 켜지며 모아 보낸 것)은 링크 날짜 안이고 미래가 아닐 때만
+  const pts = (Array.isArray(body.points) ? body.points : [body]).slice(0, 200).map((p: any) => {
+    const lat = num(p.lat), lng = num(p.lng), t = num(p.t);
+    const time = t && t <= now.getTime() + 120_000 ? new Date(Math.min(t, now.getTime())) : now;
+    if (lat === null || lng === null || Math.abs(lat) > 90 || Math.abs(lng) > 180 || kstDate(time) !== L.date) return null;
+    const sp = num(p.speed), hd = num(p.heading), bt = num(p.battery);
+    return { vehicle_id: L.vehicle_id, fix_time: time.toISOString(), lat, lng, speed: sp === null || sp < 0 ? null : sp * 3.6, heading: hd === null || hd < 0 ? null : hd, accuracy: num(p.accuracy), battery: bt === null || bt < 0 ? null : bt };
+  }).filter(Boolean);
+  if (pts.length) await rest("positions?on_conflict=vehicle_id,fix_time", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(pts) });
+  if (!L.started_at) await rest("track_links?token=eq." + token, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ started_at: now.toISOString() }) });
+  return json(200, { state: "started", saved: pts.length });
+}
 
 Deno.serve(async (req) => {
   try {
+    if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(req.url);
     const seg = url.pathname.split("/").filter(Boolean);
     const i = seg.indexOf("track");
+    if (seg[i + 1] === "l") return await linkMode(req, String(seg[i + 2] || ""), String(seg[i + 3] || ""));
     const key = (i >= 0 && seg[i + 1]) || url.searchParams.get("key") || "";
     let list: Pos[] = [];
     const ct = req.headers.get("content-type") || "";
