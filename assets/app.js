@@ -555,7 +555,7 @@
   function trSms(v, l) {
     var d = l.date.split('-');
     return '[차량 위치 공유 요청]\n' + Number(d[1]) + '/' + Number(d[2]) + ' ' + v.plate + ' 배송하는 동안 차량 위치를 공유해 주세요.\n' +
-      '아래 링크를 열고 \'위치 공유 시작\'을 누른 뒤 그 화면을 켜 두시면 5분마다 위치가 전송돼요. 배송이 끝나면 \'종료\'를 눌러 주세요. (밤 12시 자동 종료 · 앱 설치 필요 없음)\n' + trLinkUrl(l.token);
+      '아래 링크를 열고 안내대로 해 주세요. 무료 앱(Traccar Client)을 깔면 화면을 꺼도 되고, 앱 없이 링크 화면을 켜 두는 방법도 있어요. 배송이 끝나면 \'종료\'를 눌러 주세요. (밤 12시가 지나면 위치를 받지 않아요)\n' + trLinkUrl(l.token);
   }
   /** 용차 위치 링크: 앱 설치 없이 문자 링크로 그날 하루 */
   function trLinks(pre) {
@@ -567,7 +567,7 @@
         '<div class="field"><label>기사 이름</label><input class="input" id="tlName"></div><div class="field"><label>기사 연락처</label><input class="input" id="tlPhone" inputmode="tel" placeholder="010-0000-0000"></div></div>' +
         '<datalist id="tlPlates">' + plates.map(function (p) { return '<option value="' + esc(p) + '">'; }).join('') + '</datalist>' +
         '<button class="btn btn-primary" id="tlMake">링크 만들기</button><div id="tlOut"></div>' +
-        '<div class="hint" style="margin-top:12px">⚠ 링크 방식은 기사 폰에서 <b>그 링크 화면이 켜져 있을 때만</b> 위치가 들어와요(화면을 끄거나 내비로 가면 잠시 멈춤). 끊김 없이 보려면 앱(Traccar)을 쓰세요. 없는 차량번호는 \'용차\'로 자동 등록돼요.</div>' +
+        '<div class="hint" style="margin-top:12px">링크 화면에서 기사가 두 방법 중 골라요: <b>앱</b>(Traccar 설치 후 주소 붙여넣기 · 화면 꺼도 됨) 또는 <b>앱 없이</b>(그 화면을 켜 둔 동안만). 어느 쪽이든 종료·밤 12시 뒤 위치는 저장하지 않아요. 없는 차량번호는 \'용차\'로 자동 등록돼요.</div>' +
         '<div id="tlToday" style="margin-top:14px"></div>',
       onMount: function (m) {
         var out = $('#tlOut', m);
@@ -718,6 +718,7 @@
         '<li><b>서버 주소</b>(Server URL)에 위 주소를 통째로 붙여넣어요.</li>' +
         '<li><b>간격</b>(Frequency, 위치 보내는 간격)은 <b>300</b>(초 = 5분). <b>거리</b>(Distance)·<b>각도</b>(Angle)는 <b>0</b>으로 바꿔요. 그대로 두면 몇 초마다 보내서 배터리가 빨리 닳아요.</li>' +
         '<li>위치 정확도(Accuracy)는 <b>높음</b>(High), 오프라인 저장(Offline buffering)은 <b>켜기</b>. 신호가 끊긴 동안의 위치도 나중에 보내요.</li>' +
+        '<li>고급 설정의 <b>정지 감지</b>(Stop detection)는 <b>끄기</b>. 켜 두면 차가 서 있는 동안 안 보내서 회색이 돼요. (켜 두려면 대신 <b>하트비트</b>(Heartbeat)를 <b>300</b>으로)</li>' +
         '<li>맨 위 <b>서비스 상태</b>(Service status / 추적 켜기)를 켜요. 위치 권한은 <b>항상 허용</b>으로 해 주세요.</li>' +
         '<li>폰 설정 → 애플리케이션 → Traccar Client → 배터리 → <b>제한 없음</b>(최적화 안 함)으로 해요. 안 하면 화면을 끄고 얼마 뒤 멈춰요.</li>' +
         '<li>5~10분 뒤 이 화면에서 그 차의 마지막 시각이 바뀌면 끝이에요. 안 바뀌면 기기 ID 철자와 서버 주소를 다시 확인해 주세요.</li></ol>' +

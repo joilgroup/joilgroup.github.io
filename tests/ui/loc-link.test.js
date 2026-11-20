@@ -3,7 +3,7 @@ var T = require('../lib/browser.js'), ok = T.ok;
 var TK = 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4', srv = { state: 'ready', posts: [], down: false, date: '2026-11-20', today: '2026-11-20' };
 T.run(async function () {
   var o = await T.open({ login: false, config: "window.JOIL_CONFIG={API_URL:'',TRACK_URL:'https://fake.track/functions/v1/track'};",
-    context: { viewport: { width: 390, height: 800 }, geolocation: { latitude: 37.5, longitude: 127.0, accuracy: 10 }, permissions: ['geolocation'] } }), p = o.page;
+    context: { viewport: { width: 390, height: 800 }, geolocation: { latitude: 37.5, longitude: 127.0, accuracy: 10 }, permissions: ['geolocation', 'clipboard-read', 'clipboard-write'] } }), p = o.page;
   await p.route('https://fake.track/**', function (r) {
     var u = r.request().url(), m = r.request().method();
     if (srv.down && m === 'POST') return r.abort();
@@ -22,7 +22,14 @@ T.run(async function () {
 
   await go();
   var t = await T.text(p, '#app');
-  ok('처음: 차량번호·날짜·동의 안내·시작 버튼 (아직 안 보냄)', /00가0001 · 11월 20일 하루/.test(t) && /동의하고 위치 공유 시작/.test(t) && /화면을 켜 둬야/.test(t) && srv.posts.length === 0, t);
+  ok('처음: 차량번호·날짜·동의 안내·시작 버튼 (아직 안 보냄)', /00가0001 · 11월 20일 하루/.test(t) && /동의하고 이 화면으로 공유 시작/.test(t) && /화면을 켜 둬야/.test(t) && /방법 1 · 앱/.test(t) && /Traccar Client 설치/.test(t) && /정지 감지/.test(t) && srv.posts.length === 0, t);
+  await p.click('#cp'); await p.waitForTimeout(300);
+  var clip = await p.evaluate(function () { return navigator.clipboard.readText(); });
+  ok('앱 방식: 주소 복사 = 이 링크 전용 받는 주소', clip === 'https://fake.track/functions/v1/track/l/' + TK && /복사했어요/.test(await T.text(p, '#cp')), clip);
+  srv.state = 'started'; await go();
+  t = await T.text(p, '#app');
+  ok('앱으로 보내는 중인 링크를 열면: 안내 + 종료 버튼 (이 화면은 저절로 시작 안 함)', /지금 위치가 들어오고 있어요/.test(t) && !!(await p.$('#stop')) && srv.posts.length === 0, t);
+  srv.state = 'ready'; await go();
   await p.click('#go'); await p.waitForTimeout(1200);
   var pts = srv.posts.map(function (b) { return b.points || []; }).reduce(function (a, b) { return a.concat(b); }, []);
   ok('시작: 바로 위치 1개 전송', pts.length === 1 && pts[0].lat === 37.5 && pts[0].lng === 127, srv.posts);

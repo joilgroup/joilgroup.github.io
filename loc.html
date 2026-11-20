@@ -49,6 +49,8 @@
   var hm = function (t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); };
   var md = function (s) { var p = String(s).split('-'); return Number(p[1]) + '월 ' + Number(p[2]) + '일'; };
   var url = function (x) { return base + '/l/' + token + (x || ''); };
+  // 앱(Traccar)에 넣을 주소 = 이 링크 전용 (기기 ID는 아무거나 · 밤 12시·종료 뒤에는 서버가 버림)
+  var appUrl = function () { return url(); };
   function call(body) {
     // text/plain: 브라우저가 미리 묻는 요청(OPTIONS)을 안 보내게
     return fetch(url(), body ? { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) } : {}).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j.status = r.status; return j; }); });
@@ -56,14 +58,29 @@
   function head() { return '<h1>위치 공유</h1><div class="sub">' + (info ? esc(info.plate) + ' · ' + md(info.date) + ' 하루' : '') + '</div>'; }
   function draw(st) {
     if (st === 'bad') { app.innerHTML = '<h1>위치 공유</h1><div class="card"><p class="err" style="margin:0">링크가 맞지 않아요.</p><p class="muted small">문자로 받은 링크를 다시 눌러 주세요.</p></div>'; return; }
-    if (st === 'ended' || st === 'expired') { app.innerHTML = head() + '<div class="card"><div class="state"><span class="dot"></span>' + (st === 'ended' ? '위치 공유를 마쳤어요' : '이 링크는 기간이 끝났어요') + '</div><p class="muted small" style="margin:8px 0 0">더 이상 위치를 보내지 않아요. 이 화면은 닫으셔도 돼요.</p></div>'; return; }
+    if (st === 'ended' || st === 'expired') { app.innerHTML = head() + '<div class="card"><div class="state"><span class="dot"></span>' + (st === 'ended' ? '위치 공유를 마쳤어요' : '이 링크는 기간이 끝났어요') + '</div><p class="muted small" style="margin:8px 0 0">더 이상 위치를 받지 않아요. 이 화면은 닫으셔도 돼요. <b>Traccar 앱을 쓰셨으면 앱의 연속 추적을 꺼 주세요.</b></p></div>'; return; }
     if (st === 'early') { app.innerHTML = head() + '<div class="card"><p style="margin:0"><b>' + md(info.date) + '</b>에 쓰는 링크예요. 그날 다시 눌러 주세요.</p></div>'; return; }
     if (st === 'ready') {
-      app.innerHTML = head() + '<div class="card"><p style="margin:0 0 6px"><b>배송하는 동안 이 차의 위치를 배차 담당자에게 보여 줘요.</b></p><ul class="small">' +
-        '<li>5분마다 지금 위치만 보내요. 다른 정보는 보내지 않아요.</li><li>배송 확인에만 쓰고, <b>종료</b>를 누르거나 오늘 밤 12시가 되면 자동으로 멈춰요.</li><li>위치 권한을 물으면 <b>허용</b>을 눌러 주세요.</li></ul>' +
-        '<button class="btn main" id="go">동의하고 위치 공유 시작</button></div>' +
-        '<div class="card warn small"><b>이 화면을 켜 둬야 위치가 전송돼요.</b> 화면을 끄거나 내비·카톡으로 가면 잠시 멈추고, 이 화면으로 돌아오면 다시 보내요.</div>' + (errMsg ? '<div class="card err small">' + esc(errMsg) + '</div>' : '');
-      document.getElementById('go').onclick = start; return;
+      var on = info && info.state === 'started';
+      app.innerHTML = head() + '<div class="card small"><p style="margin:0 0 6px;font-size:16px"><b>배송하는 동안 이 차의 위치를 배차 담당자에게 보여 줘요.</b></p><ul>' +
+        '<li>5분마다 지금 위치만 보내요. 다른 정보는 보내지 않아요.</li><li>배송 확인에만 쓰고, <b>종료</b>를 누르거나 오늘 밤 12시가 지나면 더 받지 않아요.</li></ul>' +
+        (on ? '<p style="margin:10px 0 0"><span class="dot on" style="display:inline-block;vertical-align:middle;margin-right:6px"></span><b>지금 위치가 들어오고 있어요.</b> 배송이 끝나면 아래 종료를 눌러 주세요.</p><button class="btn stop" id="stop">배송 끝 · 위치 공유 종료</button>' : '') + '</div>' +
+        '<div class="card"><div class="state" style="font-size:18px">방법 1 · 앱 (화면 꺼도 됨 · 추천)</div><ol class="small" style="margin:8px 0 0;padding-left:20px">' +
+        '<li><a href="https://play.google.com/store/apps/details?id=org.traccar.client"><b>Play 스토어에서 Traccar Client 설치</b></a> (무료)</li>' +
+        '<li>아래 <b>주소 복사</b>를 누르고, 앱 <b>설정 변경 → 서버 URL</b>에 붙여넣기<button class="btn" id="cp" style="min-height:48px;font-size:16px;margin-top:8px">주소 복사</button></li>' +
+        '<li>같은 설정에서 <b>거리 → 0</b>, 고급의 <b>정지 감지 → 끄기</b> <span class="muted">(안 바꾸면 몇 초마다 보내거나, 서 있을 때 멈춰요)</span></li>' +
+        '<li>앱 처음 화면에서 <b>연속 추적</b> 켜기 · 위치 권한은 <b>항상 허용</b></li>' +
+        '<li>배송이 끝나면 앱의 <b>연속 추적을 끄고</b>, 이 링크를 다시 열어 <b>종료</b>를 눌러 주세요.</li></ol></div>' +
+        '<div class="card"><div class="state" style="font-size:18px">방법 2 · 앱 없이 이 화면으로</div><p class="small" style="margin:6px 0 0"><b>이 화면을 켜 둬야</b> 위치가 전송돼요. 화면을 끄거나 내비·카톡으로 가면 멈추고, 돌아오면 다시 보내요.</p>' +
+        '<button class="btn main" id="go">동의하고 이 화면으로 공유 시작</button></div>' + (errMsg ? '<div class="card err small">' + esc(errMsg) + '</div>' : '');
+      document.getElementById('go').onclick = start;
+      document.getElementById('cp').onclick = function () {
+        var u = appUrl(), b = this, done = function () { b.textContent = '복사했어요 ✓ 앱에 붙여넣으세요'; };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(u).then(done, function () { prompt('아래 주소를 길게 눌러 복사해 주세요', u); });
+        else prompt('아래 주소를 길게 눌러 복사해 주세요', u);
+      };
+      if (on) document.getElementById('stop').onclick = stop;
+      return;
     }
     app.innerHTML = head() + '<div class="card"><div class="state"><span class="dot' + (errMsg ? '' : ' on') + '"></span>' + (errMsg ? '위치를 못 받고 있어요' : '위치 공유 중') + '</div>' +
       '<p class="small" style="margin:8px 0 0">' + (sentAt ? '마지막 전송 <b>' + hm(sentAt) + '</b>' : keptAt ? '아직 전송 전' : '첫 위치를 찾는 중…') + (battery != null ? ' · 배터리 ' + battery + '%' : '') + (queue().length ? ' · 못 보낸 위치 ' + queue().length + '개(연결되면 보내요)' : '') + '</p>' +
@@ -114,9 +131,9 @@
     draw(st);
   }
   function stop() {
-    if (!confirm('위치 공유를 끝낼까요? 다시 켤 수 없어요.')) return;
+    if (!confirm('위치 공유를 끝낼까요? 다시 켤 수 없어요. (앱을 쓰셨으면 앱의 연속 추적도 꺼 주세요)')) return;
     var b = document.getElementById('stop'); b.disabled = true; b.textContent = '끝내는 중…';
-    tick(true);
+    if (watch != null) tick(true);
     call({ end: true }).then(function () { finish('ended'); }).catch(function () { b.disabled = false; b.textContent = '배송 끝 · 위치 공유 종료'; alert('인터넷 연결을 확인하고 다시 눌러 주세요.'); });
   }
   document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible' && watch != null) { wake(); tick(); } });
@@ -127,8 +144,8 @@
     info = r;
     if (r.state === 'ended' || r.state === 'expired') { put(OK, null); put(QK, null); return draw(r.state); }
     if (r.today < r.date) return draw('early');
-    // 전에 시작했던 링크를 다시 열면 바로 이어서 (권한은 이미 허용됨)
-    if (get(OK) || r.state === 'started') start(); else draw('ready');
+    // 이 폰 화면으로 시작했던 링크를 다시 열면 바로 이어서 (권한은 이미 허용됨) · 앱으로 보내는 중이면 안내만
+    if (get(OK)) start(); else draw('ready');
   }).catch(function () { app.innerHTML = '<h1>위치 공유</h1><div class="card"><p class="err" style="margin:0">인터넷 연결을 확인하고 새로고침해 주세요.</p></div>'; });
 })();
 </script>

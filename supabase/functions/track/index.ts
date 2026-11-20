@@ -97,8 +97,23 @@ async function linkMode(req: Request, token: string, action: string) {
   if (!L || !L.vehicles) return reply(404, "no link");
   const now = new Date(), today = kstDate(now);
   const state = L.ended_at ? "ended" : today > L.date ? "expired" : L.started_at ? "started" : "ready";
+  // Traccar 앱이 링크 주소로 보낸 것 (용차가 화면을 꺼도 되게): 기기 ID는 보지 않고 링크로 차를 정함.
+  // 링크가 끝났거나(종료·밤 12시) 아직 날짜 전이면 저장하지 않고 200 — 오류를 주면 앱이 계속 모아 두고 다시 보내요.
+  const url = new URL(req.url), text = req.method === "POST" ? await req.text() : "";
+  const q = new URLSearchParams(url.search);
+  const isJsonApp = /"coords"/.test(text), isQueryApp = q.has("lat") || q.has("location") || (!/^\s*[\[{]/.test(text) && /(^|&)lat=/.test(text));
+  if (isJsonApp || isQueryApp) {
+    let list: Pos[] = [];
+    if (isJsonApp) list = fromJson(JSON.parse(text));
+    else { if (!q.get("lat") && !q.get("location") && text) new URLSearchParams(text).forEach((v, k) => q.set(k, v)); if (!q.get("id")) q.set("id", "link"); const p = fromQuery(q); if (p) list = [p]; }
+    if (state === "ended" || state === "expired" || today < L.date) return reply(200, "closed");
+    const pts = list.filter((p) => kstDate(p.t) === L.date && p.t.getTime() <= now.getTime() + 120_000).map((p) => ({ vehicle_id: L.vehicle_id, fix_time: p.t.toISOString(), lat: p.lat, lng: p.lng, speed: p.speed, heading: p.heading, accuracy: p.accuracy, battery: p.battery }));
+    if (pts.length) await rest("positions?on_conflict=vehicle_id,fix_time", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" }, body: JSON.stringify(pts) });
+    if (!L.started_at && pts.length) await rest("track_links?token=eq." + token, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ started_at: now.toISOString() }) });
+    return reply(200);
+  }
   if (req.method === "GET") return json(200, { plate: L.vehicles.plate, date: L.date, today, state });
-  const body = JSON.parse((await req.text()) || "{}");
+  const body = JSON.parse(text || "{}");
   if (body.end || action === "end") {
     if (!L.ended_at) await rest("track_links?token=eq." + token, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ ended_at: now.toISOString() }) });
     return json(200, { state: "ended" });
