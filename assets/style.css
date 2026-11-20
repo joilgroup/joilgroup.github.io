@@ -1648,7 +1648,7 @@ body.cal-dragging * { cursor: grabbing !important; }
 
 /* 도착지 특이사항 (센터마다 멘트) */
 .nt.cn { display: inline-block; color: #6B4A00; background: #FFF8DD; border: 1px solid #E8C860; border-radius: 5px; padding: 0 6px; margin: 0 4px 2px 0; font-weight: 650; }
-.tt-note.cn { display: inline-block; color: #6B4A00; background: #FFF8DD; border: 1px solid #E8C860; border-radius: 5px; padding: 0 6px; font-weight: 650; }
+.tt-note.cn { display: table; max-width: none; white-space: nowrap; margin-top: 3px; line-height: 1.35; color: #6B4A00; background: #FFF8DD; border: 1px solid #E8C860; border-radius: 5px; padding: 0 6px; font-weight: 650; }
 .nt.cn.lock, .tt-note.cn.lock { color: #fff; background: #D63A28; border-color: #D63A28; }
 .dp-todo li.cn { color: #6B4A00; } .dp-todo li.must { color: #B42A1A; }
 .cn-tb td { vertical-align: middle; } .cn-tb td:first-child { width: 22%; } .cn-tb .input { width: 100%; }
