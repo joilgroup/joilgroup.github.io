@@ -963,6 +963,8 @@
         var ru = user(req.id), tp = temp(); ru.pw = tp; ru.mustChange = true; save(); return { tempPassword: tp };
       case 'admin.getLogs': return { logs: store.logs };
       case 'admin.saveTrackKeys': if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(String(req.url || 'https://demo.supabase.co'))) fail('Supabase 주소는 https://○○○.supabase.co 형식이에요.'); store.keys.track = true; save(); return { keys: store.keys };
+      case 'admin.sbStatus': return { connected: !!store.keys.track, counts: {}, error: '', sbAuth: false, backupOn: false, backupLast: null }; // 서버 이전 도구: 데모엔 Supabase·구글 시트가 없어서 상태만
+      case 'admin.sbCopy': case 'admin.sbCompare': case 'admin.sbBackupNow': case 'admin.sbBackupOn': case 'admin.sbBackupOff': fail('데모 모드에서는 서버 이전 도구를 쓸 수 없어요. (실제 서버에서 눌러 주세요)');
       case 'admin.saveKeys':
         if (req.kakao) store.keys.kakao = true;
         if (req.opinet) store.keys.opinet = true;

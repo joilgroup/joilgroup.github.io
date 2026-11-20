@@ -56,7 +56,8 @@
   <script>
   (function () {
     'use strict';
-    var API_URL = (window.JOIL_CONFIG && window.JOIL_CONFIG.API_URL) || '';
+    var CFG = window.JOIL_CONFIG || {}, API_URL = CFG.API_URL || '';
+    if (API_URL && CFG.SB_FN && CFG.SB_ROUTE === 'dispatch') API_URL = CFG.SB_FN; // 서버 이전 뒤: 기사 링크도 Supabase 함수로 (docs/서버이전.md)
     var T = String(location.hash || '').replace(/^#\/?/, '');
     var app = document.getElementById('app'), data = null, busy = {};
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }

@@ -5,6 +5,25 @@
   var API_URL = (window.JOIL_CONFIG && window.JOIL_CONFIG.API_URL) || '';
   var DEMO = !API_URL;
   var app = document.getElementById('app');
+  /* 서버 이전 갈림길 (docs/서버이전.md): 액션마다 어느 서버로 보낼지. 기본 = 전부 지금 서버(Apps Script) → 동작 변화 없음.
+     config.js 에 SB_FN(Supabase 함수 joil 주소)과 SB_ROUTE: 'dispatch' 를 넣으면 로그인·계정·배차 액션(SB_ACTIONS)만 Supabase 로.
+     한 기기에서만 먼저 시험: 주소창 끝에 #sb-on / #sb-off (그 기기에만 기억 · 다시 로그인해야 해요) */
+  var CFG = window.JOIL_CONFIG || {};
+  var SB_ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
+    'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
+    'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
+    'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
+  var SB_ROUTE = (function () {
+    if (DEMO || !CFG.SB_FN) return '';
+    try { var h = location.hash; if (h === '#sb-on' || h === '#sb-off') { localStorage.setItem('joil-sb-route', h === '#sb-on' ? 'dispatch' : 'off'); history.replaceState(null, '', location.pathname + location.search); } var v = localStorage.getItem('joil-sb-route'); if (v) return v === 'off' ? '' : v; } catch (e) { /* 저장소 막힘 */ }
+    return CFG.SB_ROUTE || '';
+  })();
+  function apiUrl(action) { return SB_ROUTE === 'dispatch' && SB_ACTIONS.indexOf(action) !== -1 ? CFG.SB_FN : API_URL; }
+  /** 15초마다 부르는 '바뀐 시각'은 Supabase 함수 대신 DB 직접 조회(RPC joil_stamps · 공개 키) — 함수 무료 호출 수(월 50만)를 아끼려고 */
+  function sbStamp(req) {
+    return fetch(CFG.SB_REST.replace(/\/+$/, '') + '/rest/v1/rpc/joil_stamps', { method: 'POST', cache: 'no-store', credentials: 'omit', headers: { 'Content-Type': 'application/json', apikey: CFG.SB_ANON }, body: JSON.stringify({ p_token: req.token, p_keys: req.keys || [], p_date: req.date }) })
+      .then(function (res) { return res.json().then(function (j) { if (!res.ok) throw new Error((j && j.message) || '서버 연결 오류 (' + res.status + ')'); return j; }); });
+  }
 
   var state = {
     token: storage('get', 'joil-token') || local('get', 'joil-keep'),
@@ -71,10 +90,12 @@
 
   function sendOnce(req, waitMs) {
     if (DEMO) return window.JoilDemo.call(req);
+    var URL0 = apiUrl(req.action);
+    if (URL0 !== API_URL && req.action === 'dispatch.stamp' && CFG.SB_REST && CFG.SB_ANON) return sbStamp(req);
     var ctrl = window.AbortController ? new AbortController() : null;
     var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, /^(quoteBatch|admin\.saveTariff|analysis\.upload|analysis\.load|docs\.upload|docs\.get|docs\.zip)$/.test(req.action) ? 120000 : waitMs || (READ_ACTIONS.indexOf(req.action) !== -1 ? TIMEOUT_MS : SAVE_TIMEOUT_MS)) : null;
     // 캐시·쿠키가 끼어들지 않도록: 매번 고유 주소, 캐시 사용 안 함, 쿠키 안 보냄
-    return fetch(API_URL + (API_URL.indexOf('?') === -1 ? '?' : '&') + '_t=' + Date.now() + Math.random().toString(36).slice(2, 6), {
+    return fetch(URL0 + (URL0.indexOf('?') === -1 ? '?' : '&') + '_t=' + Date.now() + Math.random().toString(36).slice(2, 6), {
       method: 'POST', body: JSON.stringify(req), cache: 'no-store', credentials: 'omit', redirect: 'follow',
       signal: ctrl ? ctrl.signal : undefined
     })
@@ -4200,6 +4221,12 @@
       '<div class="field"><label>서비스 키 (service_role / secret)</label><input class="input" id="sbKey" type="password" autocomplete="off" placeholder="' + (k.track ? '바꿀 때만 입력' : '서비스 키 붙여넣기') + '"></div></div>' +
       '<span class="hint" style="display:block;margin:-6px 0 10px">Supabase 화면 → Project Settings → API Keys의 서비스 키예요. 모든 위치 기록을 읽을 수 있는 키라 여기(서버)에만 넣고, 다른 곳에 붙여넣지 마세요. 저장할 때 한 번 연결을 시험해요.</span>' +
       '<button class="btn btn-sm" id="saveSb">Supabase 연결 저장</button></div>' +
+      (k.track ? '<div class="group" id="sbMig"><div class="group-head"><h3>서버 이전 준비 (Supabase)</h3><span class="small muted">' + (SB_ROUTE ? '이 기기: Supabase 사용 중' : '지금은 구글 시트가 원본') + '</span></div>' +
+        '<p class="hint" style="margin:-6px 0 12px">시험 복사는 시트를 Supabase로 <b>복사만</b> 해요(시트는 그대로 · 여러 번 눌러도 중복 없음). 비교는 같은 달의 오더·호차 수와 금액 합계를 양쪽에서 계산해 다른 곳만 보여 줘요. 자세한 순서는 저장소 docs/서버이전.md.</p>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-sm" id="sbStat">상태 보기</button><button class="btn btn-sm" id="sbCopy">시험 복사</button>' +
+        '<input class="input" id="sbYm" type="month" style="width:150px" value="' + new Date().toISOString().slice(0, 7) + '"><button class="btn btn-sm" id="sbCmp">비교</button>' +
+        '<button class="btn btn-sm" id="sbBak">백업 지금</button><button class="btn btn-sm" id="sbBakOn">자동 백업 켜기</button><button class="btn btn-sm" id="sbBakOff">자동 백업 끄기</button></div>' +
+        '<div class="small" id="sbOut" style="margin-top:10px;white-space:pre-wrap"></div></div>' : '') +
       '<div class="group"><div class="group-head"><h3>주소 · 경로 저장소 (캐시)</h3><span class="small muted" id="cacheInfo">확인 중…</span></div>' +
       '<p class="hint" style="margin:-6px 0 12px">한 번 조회한 주소와 경로를 서버 시트에 저장해 두고 다시 씁니다. 도로·통행료가 바뀌었다고 생각되면 비우세요. (다음 조회 때 카카오에서 새로 받아옵니다)</p>' +
       '<button class="btn btn-sm btn-danger" id="clearCache">캐시 비우기</button></div>' +
@@ -4219,6 +4246,7 @@
       api('admin.saveTrackKeys', { url: url, key: key }).then(function (r) { state.admin.keys = r.keys; toast('차량 위치 서버를 연결했어요.'); adminKeys(); })
         .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
     };
+    if (k.track) sbMigWire();
     function showCache(c) { var el = $('#cacheInfo'); if (el) el.textContent = '주소 ' + won(c.addresses) + '개 · 경로 ' + won(c.routes) + '개 저장됨'; }
     if (state.admin.cache) showCache(state.admin.cache);
     $('#clearCache').onclick = function () {
@@ -4231,6 +4259,28 @@
       var btn = this; busy(btn, true, '확인 중…');
       api('admin.testKakao').then(function (r) { toast(r.message); }).catch(function (err) { toast(err.message, 'err'); }).then(function () { busy(btn, false); });
     };
+  }
+
+  /* 서버 이전 준비 버튼들 (관리자 → API 키). 결과는 글자로만 — 금액 합계는 관리자 화면 밖으로 안 나가요 */
+  function sbMigWire() {
+    var out = function (t) { var el = $('#sbOut'); if (el) el.textContent = t; };
+    var stat = function (r) { var c = r.counts || {}; return (r.error ? '연결 문제: ' + r.error + '\n' : '') + '표별 줄 수: ' + Object.keys(c).map(function (k) { return k + ' ' + won(c[k]); }).join(' · ') + '\n자동 백업: ' + (r.backupOn ? '켜짐' : '꺼짐') + (r.backupLast ? ' (마지막 ' + r.backupLast.at + ')' : '') + ' · 구글 쪽 Supabase 로그인 받기(SB_AUTH): ' + (r.sbAuth ? '켜짐' : '꺼짐'); };
+    var run = function (btn, label, fn) { busy(btn, true, label); fn().catch(function (err) { out('오류: ' + err.message); toast(err.message, 'err'); }).then(function () { busy(btn, false); }); };
+    $('#sbStat').onclick = function () { run(this, '확인 중…', function () { return api('admin.sbStatus').then(function (r) { out(stat(r)); }); }); };
+    $('#sbCopy').onclick = function () {
+      if (!confirm('구글 시트의 계정·배차 자료를 Supabase로 복사할까요? (시트는 바뀌지 않아요 · Supabase 쪽 시험 표를 새로 채워요)')) return;
+      var btn = this, log = [];
+      var step = function (st) { return api('admin.sbCopy', st).then(function (r) { if (r.table) { log.push(r.table + ' ' + won(r.copied) + '줄'); out('복사 중… ' + log.join(' · ')); } if (r.done) { out('복사 끝 · ' + log.join(' · ') + '\n표별 줄 수: ' + Object.keys(r.counts || {}).map(function (k) { return k + ' ' + won(r.counts[k]); }).join(' · ')); return; } return step({ step: r.step, from: r.from }); }); };
+      run(btn, '복사 중…', function () { return step({ step: 0, from: 0 }); });
+    };
+    $('#sbCmp').onclick = function () {
+      var ym = $('#sbYm').value; run(this, '비교 중…', function () { return api('admin.sbCompare', { ym: ym }).then(function (r) {
+        out(r.ym + ' · 오더 시트 ' + won(r.total.sheet.orders) + ' / Supabase ' + won(r.total.sb.orders) + ' · 호차 시트 ' + won(r.total.sheet.trucks) + ' / Supabase ' + won(r.total.sb.trucks) + '\n' + (r.same ? '✅ 모두 같아요.' : '⚠ 다른 곳 ' + r.diffs.length + '개:\n' + r.diffs.map(function (d) { return '- ' + d.what + ' ' + d.key + ': 시트 ' + won(d.sheet) + ' / Supabase ' + won(d.sb); }).join('\n')));
+      }); });
+    };
+    $('#sbBak').onclick = function () { run(this, '백업 중…', function () { return api('admin.sbBackupNow').then(function (r) { out('백업 끝 (구글 드라이브 "조일 Supabase 백업")\n' + stat(r.status)); }); }); };
+    $('#sbBakOn').onclick = function () { run(this, '켜는 중…', function () { return api('admin.sbBackupOn').then(function (r) { out(stat(r)); }); }); };
+    $('#sbBakOff').onclick = function () { run(this, '끄는 중…', function () { return api('admin.sbBackupOff').then(function (r) { out(stat(r)); }); }); };
   }
 
   /* ───────── 주소 자동완성 (B2) ───────── */
