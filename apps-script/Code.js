@@ -17,15 +17,15 @@ var TZ = 'Asia/Seoul';
 var USER_COLS = ['아이디', '이름', '권한', '사용여부', '비밀번호해시', '솔트', '비밀번호변경필요', '생성일', '마지막로그인', '메뉴권한', '배차탭'];
 
 /* 메뉴 권한: quote(견적 계산·조회기록·견적모음), analysis(매출매입 분석). 관리자는 전부. */
-var PERMS = ['quote', 'analysis', 'search'];
+var PERMS = ['quote', 'analysis', 'search', 'track']; // track = 차량 위치
 function permsOf_(role, raw) {
-  if (role === 'admin') return ['quote', 'analysis', 'search', 'admin'];
+  if (role === 'admin') return ['quote', 'analysis', 'search', 'track', 'admin'];
   if (role === 'partner') return ['dispatch']; // 협력사: 배차시트만
   if (raw == null || raw === '') return ['quote']; // 예전에 만든 계정은 견적만
   return String(raw).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return PERMS.indexOf(x) !== -1; });
 }
 function requirePerm_(session, perm) {
-  if (session.perms.indexOf(perm) === -1) throw new Error({ analysis: '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.', search: '배차검색 권한이 없습니다. 관리자에게 요청하세요.' }[perm] || '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.');
+  if (session.perms.indexOf(perm) === -1) throw new Error({ analysis: '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.', search: '배차검색 권한이 없습니다. 관리자에게 요청하세요.', track: '차량 위치 권한이 없습니다. 관리자에게 요청하세요.' }[perm] || '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.');
 }
 
 /* ───────────── 메뉴 & 초기 설정 ───────────── */
@@ -166,7 +166,11 @@ function handle_(req) {
   // 배차검색도 분석 데이터(월별 엑셀)를 같이 씀
   if (action === 'analysis.index' || action === 'analysis.load') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) requirePerm_(session, 'analysis'); }
   if (/^notes\./.test(action)) requirePerm_(session, 'analysis');
+  if (/^track\./.test(action) && session.role !== 'admin') requirePerm_(session, 'track'); // 관리자는 예전에 로그인한 세션(권한 목록에 track 없음)도 바로
   switch (action) {
+    case 'track.list': return trackList_();
+    case 'track.route': return trackRoute_(req.id, req.date);
+    case 'track.save': return trackSave_(req.vehicle || {});
     case 'analysis.index': return analysisIndex_(session);
     case 'analysis.load': return analysisLoad_(req.keys);
     case 'dieselPrice': return dieselPrice_();
@@ -280,6 +284,7 @@ function handle_(req) {
     case 'admin.resetPassword': return resetPassword_(req.id);
     case 'admin.getLogs': return { logs: getLogs_(Number(req.limit) || 200) };
     case 'admin.saveKeys': return saveKeys_(req.kakao, req.opinet);
+    case 'admin.saveTrackKeys': return trackKeysSave_(req.url, req.key);
     case 'admin.testKakao': return testKakao_();
     case 'admin.cacheInfo': return { cache: cacheInfo_() };
     case 'admin.clearCache': return { cache: clearCache_() };
@@ -535,7 +540,7 @@ function saveSettings_(settings) {
 
 function keyStatus_() {
   var p = PropertiesService.getScriptProperties();
-  return { kakao: !!p.getProperty('KAKAO_REST_KEY'), opinet: !!p.getProperty('OPINET_KEY') };
+  return { kakao: !!p.getProperty('KAKAO_REST_KEY'), opinet: !!p.getProperty('OPINET_KEY'), track: !!p.getProperty('SB_KEY') };
 }
 
 /** 키는 저장만 하고 절대 화면으로 돌려보내지 않습니다. */
@@ -4157,3 +4162,76 @@ function randomPassword_() {
 function firstToken_(s) { return String(s || '').split(' ')[0]; }
 function now_() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'); }
 function fmt_(v) { return v instanceof Date ? Utilities.formatDate(v, TZ, 'yyyy-MM-dd HH:mm') : String(v || ''); }
+
+/* ───────────── 차량 위치 (Supabase · 서버 이전 1단계) ─────────────
+   기사 폰 Traccar 앱 → Supabase 함수 'track' 이 위치 저장(supabase/ 폴더) → 여기서 서비스 키로 읽어 화면에 줘요.
+   서비스 키는 스크립트 속성 SB_KEY 에만(관리자 화면에서 입력, 화면으로 돌려보내지 않음). Supabase 표는 RLS 로 브라우저에서 못 읽어요. */
+var TRACK_COLS = 'id,plate,device_id,driver_name,driver_phone,affiliation,company,ton,body_type,memo,active,last_time,last_lat,last_lng,last_speed,last_battery,last_received';
+
+function sb_(method, path, body, prefer) {
+  var p = PropertiesService.getScriptProperties(), url = p.getProperty('SB_URL'), key = p.getProperty('SB_KEY');
+  if (!url || !key) throw new Error('차량 위치 서버(Supabase)가 아직 연결되지 않았어요. 관리자 화면 → 외부 키에서 Supabase 주소와 서비스 키를 넣어 주세요.');
+  var h = { apikey: key };
+  if (/^eyJ/.test(key)) h.Authorization = 'Bearer ' + key; // 예전 형식(JWT) 키만 Authorization 도 필요
+  if (prefer) h.Prefer = prefer;
+  var o = { method: method, headers: h, muteHttpExceptions: true };
+  if (body != null) { o.contentType = 'application/json'; o.payload = JSON.stringify(body); }
+  var res = UrlFetchApp.fetch(url.replace(/\/+$/, '') + '/rest/v1/' + path, o), code = res.getResponseCode(), txt = res.getContentText();
+  if (code >= 300) {
+    if (code === 409 || /duplicate key/.test(txt)) throw new Error('같은 차량번호나 기기 ID가 이미 등록돼 있어요.');
+    if (code === 401 || code === 403) throw new Error('Supabase 서비스 키가 맞지 않아요. 관리자 화면에서 다시 넣어 주세요.');
+    throw new Error('차량 위치 서버 오류 (' + code + ')');
+  }
+  return txt ? JSON.parse(txt) : null;
+}
+/** 기기 ID 비교용 (받는 함수 norm 과 같게): 띄어쓰기·하이픈 빼고 대문자 */
+function trackNorm_(s) { return String(s || '').replace(/[\s-]/g, '').toUpperCase(); }
+
+/** 기사 앱에 넣을 서버 주소(비밀 키 포함) — 6시간 기억 */
+function trackAppUrl_() {
+  var c = CacheService.getScriptCache(), hit = c.get('TRACK_APPURL');
+  if (hit) return hit;
+  var k = sb_('get', 'app_settings?key=eq.track_key&select=value'), base = String(PropertiesService.getScriptProperties().getProperty('SB_URL')).replace(/\/+$/, '');
+  var u = k && k[0] ? base + '/functions/v1/track/' + k[0].value : '';
+  if (u) c.put('TRACK_APPURL', u, 21600);
+  return u;
+}
+
+function trackList_() {
+  return { vehicles: sb_('get', 'vehicles?select=' + TRACK_COLS + '&order=plate'), appUrl: trackAppUrl_(), now: new Date().toISOString() };
+}
+
+/** 하루(한국 시간) 경로 */
+function trackRoute_(id, date) {
+  if (!/^\d+$/.test(String(id)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new Error('차량과 날짜를 확인해 주세요.');
+  var from = new Date(date + 'T00:00:00+09:00'), to = new Date(from.getTime() + 864e5);
+  var rows = sb_('get', 'positions?vehicle_id=eq.' + id + '&fix_time=gte.' + encodeURIComponent(from.toISOString()) + '&fix_time=lt.' + encodeURIComponent(to.toISOString()) + '&select=fix_time,lat,lng,speed,battery&order=fix_time&limit=5000');
+  return { points: (rows || []).map(function (r) { return { t: r.fix_time, lat: r.lat, lng: r.lng, speed: r.speed, battery: r.battery }; }) };
+}
+
+/** 차량 등록·수정 (지우기 대신 '사용 안 함' — 위치 기록을 남기려고) */
+function trackSave_(v) {
+  var str = function (x, n) { return String(x == null ? '' : x).trim().slice(0, n || 100); };
+  var row = { plate: str(v.plate, 30), device_id: trackNorm_(v.device_id || v.plate).slice(0, 60), driver_name: str(v.driver_name, 40), driver_phone: str(v.driver_phone, 30),
+    affiliation: str(v.affiliation, 10), company: str(v.company, 60), ton: str(v.ton, 20), body_type: str(v.body_type, 30), memo: str(v.memo, 500), active: v.active !== false, updated_at: new Date().toISOString() };
+  if (!row.plate) throw new Error('차량번호를 넣어 주세요.');
+  if (['', '지입', '직영', '용차'].indexOf(row.affiliation) === -1) throw new Error('소속은 지입·직영·용차 중 하나예요.');
+  var id = String(v.id || '');
+  if (id && !/^\d+$/.test(id)) throw new Error('차량을 다시 골라 주세요.');
+  var r = id ? sb_('patch', 'vehicles?id=eq.' + id, row, 'return=representation') : sb_('post', 'vehicles', row, 'return=representation');
+  if (!r || !r.length) throw new Error('차량을 찾지 못했어요. 새로고침해 주세요.');
+  return trackList_();
+}
+
+/** 관리자: Supabase 주소·서비스 키 저장 (키는 돌려보내지 않음) — 저장 전에 한 번 읽어 보고 틀리면 되돌림 */
+function trackKeysSave_(url, key) {
+  var p = PropertiesService.getScriptProperties(), old = { u: p.getProperty('SB_URL'), k: p.getProperty('SB_KEY') };
+  url = String(url || '').trim() || old.u; key = String(key || '').trim() || old.k;
+  if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(String(url))) throw new Error('Supabase 주소는 https://○○○.supabase.co 형식이에요.');
+  if (!key) throw new Error('서비스 키를 넣어 주세요.');
+  p.setProperty('SB_URL', url.replace(/\/+$/, '')); p.setProperty('SB_KEY', key);
+  CacheService.getScriptCache().remove('TRACK_APPURL');
+  try { sb_('get', 'vehicles?select=id&limit=1'); }
+  catch (e) { if (old.u) p.setProperty('SB_URL', old.u); else p.deleteProperty('SB_URL'); if (old.k) p.setProperty('SB_KEY', old.k); else p.deleteProperty('SB_KEY'); throw e; }
+  return { keys: keyStatus_() };
+}
