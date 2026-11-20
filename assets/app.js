@@ -65,7 +65,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
+  var READ_ACTIONS = ['me', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
   var TIMEOUT_MS = 30000, SAVE_TIMEOUT_MS = 45000; // 저장은 서버에서 끝까지 돌아서, 화면이 먼저 포기하면 '실패'로 보이지만 실제로는 저장돼요 → 더 기다려요
   var inflight = {};
 
@@ -105,7 +105,7 @@
   function retryable(msg) { var e = new Error(msg); e.retry = true; return e; }
 
   /* 서버가 늦을 때: 5초 넘게 기다리면 화면 아래에 '기다리는 중' 안내 · 끝내 응답이 없으면 '다시 시도' (뒤에서 도는 확인 요청은 조용히) */
-  var NET_QUIET = /^(dispatch\.stamp|info\.|stock\.|dieselPrice|diesel\.recent|publicSettings)$/, netSlow = 0, netFail = false, netFails = {};
+  var NET_QUIET = /^(dispatch\.stamp|track\.list|info\.|stock\.|dieselPrice|diesel\.recent|publicSettings)$/, netSlow = 0, netFail = false, netFails = {};
   function netBar() {
     var el = document.getElementById('netBar');
     if (!netSlow && !netFail) { if (el) el.remove(); return; }
@@ -380,6 +380,7 @@
     if (q) grp('quote', '견적', [['calc', '단건 계산'], ['bulk', '대량 계산'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록']]);
     grp('data', '업체·자료', [q && ['dispatch', '배차시트'], can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['manual', '업무 매뉴얼'], q && ['owners', '업무 담당표'], q && ['inq', '문의 기록'], q && ['rates', '업체단가'], q && ['docs', '서류함']]);
     if (any) grp('info', '일정·정보', [['cal', '일정'], ['info', '물류정보']]);
+    if (can('track')) out.push(['track', '차량 위치']);
     if (can('analysis')) grp('an', '분석', [['analysis', '매출매입 분석'], ['report', '팀 월간 보고서']]);
     if (state.user.role === 'admin') out.push(['admin', '관리자']);
     return out;
@@ -492,9 +493,171 @@
     else if (state.view === 'dispatch') renderDispatch();
     else if (state.view === 'report') renderReport();
     else if (state.view === 'work') renderWork();
+    else if (state.view === 'track') renderTrack();
     else renderCalc();
     var mainEl = $('#main'); if (mainEl) mainEl.classList.toggle('wide', state.view === 'dispatch');
     syncRoute();
+  }
+
+  /* ───────── 차량 위치 (Supabase · '차량 위치' 권한) ─────────
+     기사 폰 Traccar 앱이 5분마다 보낸 위치를 조일 서버(track.*)가 Supabase에서 읽어 줘요. 15분 넘게 안 들어온 차는 회색. */
+  var TRACK_OLD_MIN = 15, trackTimer = 0;
+  function trSt() { return state.track || (state.track = { list: null, sel: null, date: today(), q: '', route: null }); }
+  function trAgo(iso) {
+    if (!iso) return { txt: '위치 없음', old: true };
+    var m = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+    var txt = m < 1 ? '방금' : m < 60 ? m + '분 전' : m < 1440 ? Math.floor(m / 60) + '시간 ' + (m % 60) + '분 전' : Math.floor(m / 1440) + '일 전';
+    return { txt: txt, old: m >= TRACK_OLD_MIN };
+  }
+  function trTime(iso) { var d = new Date(iso); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+  function trInfo(v) { return [v.company, v.affiliation, v.ton ? v.ton + (/톤|t$/i.test(v.ton) ? '' : '톤') : '', v.body_type].filter(Boolean).join(' · '); }
+  function renderTrack() {
+    var st = trSt();
+    $('#main').innerHTML = '<div class="card"><div class="tr-head"><div><div class="eyebrow">Tracking · 차량 위치</div><h2>차량 위치</h2></div>' +
+      '<div class="tr-tools"><input class="input" type="date" id="trDate" value="' + esc(st.date) + '"><button class="btn btn-sm" id="trReload">새로고침</button><button class="btn btn-sm" id="trGuide">앱 설정 안내</button><button class="btn btn-sm btn-primary" id="trAdd">차량 등록</button></div></div>' +
+      '<div class="tr-wrap"><div class="tr-side"><input class="input" id="trQ" placeholder="차량번호·기사·업체 찾기" value="' + esc(st.q) + '"><div id="trList" class="tr-list"><div class="muted small" style="padding:14px"><span class="spinner dark"></span> 불러오는 중…</div></div></div>' +
+      '<div><div class="dp-map tr-map" id="trMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div><div id="trRoute" class="small" style="margin-top:8px"></div></div></div>' +
+      '<p class="hint" style="margin:10px 0 0">위치는 기사 폰 앱이 5분마다 보내요. ' + TRACK_OLD_MIN + '분 넘게 안 들어온 차는 회색이에요. 차를 누르면 고른 날짜의 경로가 나와요.</p></div>';
+    st.map = null; st.marks = []; st.line = null;
+    $('#trDate').onchange = function () { st.date = this.value || today(); if (st.sel) trRoute(); };
+    $('#trReload').onclick = function () { trLoad(); };
+    $('#trAdd').onclick = function () { trEdit(null); };
+    $('#trGuide').onclick = function () { trGuide(st.list && st.list.filter(function (v) { return v.id === st.sel; })[0]); };
+    $('#trQ').oninput = function () { st.q = this.value; trDrawList(); };
+    kakaoMaps().then(function (K) {
+      var el = $('#trMap'); if (!el || state.view !== 'track') return;
+      el.innerHTML = ''; st.K = K; st.map = new K.Map(el, { center: new K.LatLng(36.5, 127.8), level: 12 }); mapTouch(el, st.map, K);
+      st.fit = true; trDrawMap();
+    }).catch(function (e) { var el = $('#trMap'); if (el) el.innerHTML = '<div class="err-text small" style="padding:20px">' + esc(e.message) + '</div>'; });
+    trLoad();
+    clearInterval(trackTimer);
+    trackTimer = setInterval(function () { if (state.view !== 'track' || !$('#trList')) return clearInterval(trackTimer); if (!document.hidden && !document.querySelector('.backdrop')) trLoad(true); }, 60000);
+  }
+  function trLoad(quiet) {
+    var st = trSt();
+    return api('track.list').then(function (r) {
+      st.list = r.vehicles || []; st.appUrl = r.appUrl || ''; st.err = '';
+      trDrawList(); trDrawMap(); if (st.sel && quiet) trRoute(true);
+    }).catch(function (e) {
+      if (quiet) return;
+      st.err = e.message; var el = $('#trList'); if (!el) return;
+      el.innerHTML = '<div class="small" style="padding:14px"><p class="err-text" style="margin:0 0 8px">' + esc(e.message) + '</p>' + (/연결되지 않았어요/.test(e.message) && state.user.role !== 'admin' ? '<p class="muted" style="margin:0">관리자에게 연결을 요청하세요.</p>' : '') + '</div>';
+    });
+  }
+  function trShown() {
+    var st = trSt(), q = st.q.replace(/\s/g, '').toLowerCase();
+    return (st.list || []).filter(function (v) { return !q || [v.plate, v.driver_name, v.company, v.memo, v.device_id].join(' ').replace(/\s/g, '').toLowerCase().indexOf(q) !== -1; });
+  }
+  function trDrawList() {
+    var st = trSt(), el = $('#trList'); if (!el || !st.list) return;
+    var rows = trShown();
+    if (!st.list.length) { el.innerHTML = '<div class="muted small" style="padding:14px">등록된 차량이 없어요. <b>차량 등록</b>을 눌러 추가하고, 기사 폰에 앱을 설정해 주세요.</div>'; return; }
+    el.innerHTML = rows.map(function (v) {
+      var a = trAgo(v.last_time);
+      return '<button type="button" class="tr-item' + (st.sel === v.id ? ' on' : '') + (v.active ? '' : ' off') + '" data-tv="' + v.id + '">' +
+        '<span class="tr-dot' + (a.old ? ' old' : '') + '"></span><span class="tr-main"><b>' + esc(v.plate) + '</b> ' + esc(v.driver_name || '') + (v.active ? '' : ' <span class="muted">(사용 안 함)</span>') +
+        '<span class="muted small">' + esc(trInfo(v)) + '</span></span><span class="tr-when small' + (a.old ? ' muted' : '') + '">' + esc(a.txt) + (v.last_battery != null ? '<br><span class="muted">🔋' + Math.round(v.last_battery) + '%</span>' : '') + '</span>' +
+        '<span class="tr-edit" data-te="' + v.id + '" title="고치기">✎</span></button>';
+    }).join('') || '<div class="muted small" style="padding:14px">찾는 차량이 없어요.</div>';
+    $$('[data-tv]', el).forEach(function (b) {
+      b.onclick = function (e) {
+        var id = Number(b.dataset.tv), v = st.list.filter(function (x) { return x.id === id; })[0];
+        if (e.target.closest('[data-te]')) return trEdit(v);
+        st.sel = st.sel === id ? null : id; st.route = null; trDrawList();
+        if (st.sel) trRoute(); else { st.fit = true; trDrawMap(); $('#trRoute').innerHTML = ''; }
+      };
+    });
+  }
+  function trDrawMap() {
+    var st = trSt(), K = st.K, map = st.map; if (!map || !st.list) return;
+    (st.marks || []).forEach(function (m) { m.setMap(null); }); st.marks = [];
+    if (st.line) { st.line.setMap(null); st.line = null; }
+    var bounds = new K.LatLngBounds(), n = 0, one = null;
+    var pin = function (lat, lng, html, cls, onClick) {
+      var d = document.createElement('div'); d.className = 'tpin ' + (cls || ''); d.innerHTML = html; if (onClick) d.onclick = onClick;
+      var pos = new K.LatLng(lat, lng); bounds.extend(pos); n++; one = pos;
+      st.marks.push(new K.CustomOverlay({ map: map, position: pos, content: d, yAnchor: 1.15, xAnchor: 0.5 }));
+    };
+    var sel = st.sel && st.list.filter(function (v) { return v.id === st.sel; })[0], pts = st.route && st.route.points || [];
+    if (sel && pts.length) {
+      var path = pts.map(function (p) { return new K.LatLng(p.lat, p.lng); });
+      if (path.length > 1) st.line = new K.Polyline({ map: map, path: path, strokeWeight: 5, strokeColor: '#F07A22', strokeOpacity: 0.85, strokeStyle: 'solid' });
+      pin(pts[0].lat, pts[0].lng, '출발 ' + trTime(pts[0].t), 'start');
+      var last = pts[pts.length - 1];
+      pin(last.lat, last.lng, esc(sel.plate) + ' · ' + trTime(last.t), trAgo(last.t).old ? 'old' : '');
+      path.forEach(function (p) { bounds.extend(p); });
+    } else {
+      st.list.forEach(function (v) {
+        if (!v.active || v.last_lat == null || (sel && v.id !== sel.id)) return;
+        var a = trAgo(v.last_time);
+        pin(v.last_lat, v.last_lng, esc(v.plate) + ' · ' + esc(a.txt), a.old ? 'old' : '', function () { st.sel = v.id; st.route = null; trDrawList(); trRoute(); });
+      });
+    }
+    if (n && (st.fit || sel)) { if (n > 1) map.setBounds(bounds, 50, 50, 50, 50); else { map.setCenter(one); map.setLevel(6); } }
+    st.fit = false;
+  }
+  function trRoute(quiet) {
+    var st = trSt(), id = st.sel, date = st.date, el = $('#trRoute');
+    var v = (st.list || []).filter(function (x) { return x.id === id; })[0]; if (!v) return;
+    if (el && !quiet) el.innerHTML = '<span class="spinner dark"></span> ' + esc(v.plate) + ' ' + esc(date) + ' 경로 불러오는 중…';
+    return api('track.route', { id: id, date: date }).then(function (r) {
+      if (st.sel !== id || st.date !== date) return;
+      st.route = r; trDrawMap(); el = $('#trRoute'); if (!el) return;
+      var p = r.points;
+      el.innerHTML = '<b>' + esc(v.plate) + '</b> ' + esc(date) + ' · ' + (p.length ? '위치 ' + p.length + '개 · ' + trTime(p[0].t) + ' ~ ' + trTime(p[p.length - 1].t) : '이날 들어온 위치가 없어요' + (v.last_time ? ' (마지막 위치: ' + esc(trAgo(v.last_time).txt) + ')' : '')) +
+        ' <button class="btn btn-sm btn-ghost" id="trAll">전체 차량 보기</button>';
+      $('#trAll').onclick = function () { st.sel = null; st.route = null; st.fit = true; trDrawList(); trDrawMap(); $('#trRoute').innerHTML = ''; };
+    }).catch(function (e) { if (!quiet) { el = $('#trRoute'); if (el) el.innerHTML = '<span class="err-text">' + esc(e.message) + '</span>'; } });
+  }
+  function trEdit(v) {
+    var st = trSt(), x = v || { active: true }, f = function (k) { return esc(x[k] == null ? '' : x[k]); };
+    var inp = function (k, label, ph, extra) { return '<div class="field"><label>' + label + '</label><input class="input" data-tf="' + k + '" value="' + f(k) + '" placeholder="' + esc(ph || '') + '"' + (extra || '') + '></div>'; };
+    modal({ eyebrow: '차량 위치', title: v ? v.plate + ' 고치기' : '차량 등록', wide: true,
+      body: '<div class="form-grid">' + inp('plate', '차량번호 *', '예) 12가3456') + inp('device_id', '앱 기기 ID', '비우면 차량번호(띄어쓰기 뺌)') +
+        inp('driver_name', '기사 이름', '') + inp('driver_phone', '기사 연락처', '010-0000-0000', ' inputmode="tel"') +
+        '<div class="field"><label>소속</label><select class="input" data-tf="affiliation">' + ['', '지입', '직영', '용차'].map(function (o) { return '<option value="' + o + '"' + (x.affiliation === o ? ' selected' : '') + '>' + (o || '선택 안 함') + '</option>'; }).join('') + '</select></div>' +
+        inp('company', '업체', '') + inp('ton', '톤수', '예) 5톤', ' list="trTons"') + inp('body_type', '차종', '윙바디·카고 등', ' list="trBodies"') + '</div>' +
+        '<datalist id="trTons">' + ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤', '25톤'].map(function (o) { return '<option value="' + o + '">'; }).join('') + '</datalist>' +
+        '<datalist id="trBodies">' + ['윙바디', '카고', '탑차', '냉동탑차', '냉장탑차', '리프트', '츄레라'].map(function (o) { return '<option value="' + o + '">'; }).join('') + '</datalist>' +
+        '<div class="field"><label>메모</label><textarea class="input" data-tf="memo" rows="2">' + f('memo') + '</textarea></div>' +
+        '<label class="small"><input type="checkbox" data-tf="active"' + (x.active ? ' checked' : '') + '> 사용 중 (끄면 이 차 위치를 더 받지 않아요 · 지난 기록은 남아요)</label>' +
+        '<p class="hint">기사 위치는 개인위치정보예요. 앱을 켜기 전에 기사 본인 동의를 받아 주세요.</p>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="trSave">저장</button>',
+      onMount: function (m, close) {
+        $('#trSave', m).onclick = function () {
+          var btn = this, o = { id: v ? v.id : '' };
+          $$('[data-tf]', m).forEach(function (i) { o[i.dataset.tf] = i.type === 'checkbox' ? i.checked : i.value.trim(); });
+          if (!o.plate) return toast('차량번호를 넣어 주세요.', 'err');
+          busy(btn, true, '저장 중…');
+          api('track.save', { vehicle: o }).then(function (r) {
+            st.list = r.vehicles || []; st.appUrl = r.appUrl || st.appUrl; close(); trDrawList(); trDrawMap(); toast(o.plate + ' 저장했어요.');
+            if (!v) trGuide(st.list.filter(function (y) { return y.plate === o.plate; })[0]);
+          }).catch(function (e) { busy(btn, false); toast(e.message, 'err'); });
+        };
+      }
+    });
+  }
+  /** 기사에게 줄 Traccar Client 설정 안내 (차를 고르면 그 차 기기 ID로) */
+  function trGuide(v) {
+    var st = trSt(), url = st.appUrl, dev = v ? v.device_id : '';
+    var row = function (label, val, id, empty) { return '<div class="tr-copy"><span class="muted small">' + label + '</span><code id="' + id + '">' + esc(val || empty || '—') + '</code>' + (val ? '<button class="btn btn-sm" data-copy="' + id + '">복사</button>' : '') + '</div>'; };
+    modal({ eyebrow: '차량 위치 · 기사 폰 설정', title: v ? v.plate + ' 앱 설정 안내' : '앱 설정 안내', wide: true,
+      body: row('서버 주소 (Server URL)', url, 'trU') + row('기기 ID (Device identifier)', dev, 'trD', '차량 목록에서 차를 고른 뒤 다시 눌러 주세요') +
+        '<p class="hint err-text" style="margin:4px 0 12px">서버 주소에는 비밀 키가 들어 있어요. 이 차 기사에게만 보내 주세요.</p>' +
+        '<ol class="tr-steps">' +
+        '<li>기사 폰(안드로이드) <b>Play 스토어</b>에서 <b>Traccar Client</b>를 설치해요. (무료)</li>' +
+        '<li>앱을 열고 설정에서 <b>기기 ID</b>(Device identifier)를 위 값으로 바꿔요. 차량번호를 띄어쓰기 없이 넣으면 돼요.</li>' +
+        '<li><b>서버 주소</b>(Server URL)에 위 주소를 통째로 붙여넣어요.</li>' +
+        '<li><b>간격</b>(Frequency, 위치 보내는 간격)은 <b>300</b>(초 = 5분). <b>거리</b>(Distance)·<b>각도</b>(Angle)는 <b>0</b>으로 바꿔요. 그대로 두면 몇 초마다 보내서 배터리가 빨리 닳아요.</li>' +
+        '<li>위치 정확도(Accuracy)는 <b>높음</b>(High), 오프라인 저장(Offline buffering)은 <b>켜기</b>. 신호가 끊긴 동안의 위치도 나중에 보내요.</li>' +
+        '<li>맨 위 <b>서비스 상태</b>(Service status / 추적 켜기)를 켜요. 위치 권한은 <b>항상 허용</b>으로 해 주세요.</li>' +
+        '<li>폰 설정 → 애플리케이션 → Traccar Client → 배터리 → <b>제한 없음</b>(최적화 안 함)으로 해요. 안 하면 화면을 끄고 얼마 뒤 멈춰요.</li>' +
+        '<li>5~10분 뒤 이 화면에서 그 차의 마지막 시각이 바뀌면 끝이에요. 안 바뀌면 기기 ID 철자와 서버 주소를 다시 확인해 주세요.</li></ol>' +
+        '<p class="hint">앱 버전마다 메뉴 이름이 조금 달라요(괄호 안 영어 이름을 찾아 주세요). 기사 위치는 개인위치정보라서 앱을 켜기 전에 기사 본인에게 서면 동의를 받아 주세요.</p>',
+      onMount: function (m) {
+        $$('[data-copy]', m).forEach(function (b) { b.onclick = function () { copyText($('#' + b.dataset.copy, m).textContent).then(function () { toast('복사했어요.'); }, function () { toast('복사하지 못했어요. 길게 눌러 복사해 주세요.', 'err'); }); }; });
+      }
+    });
   }
 
   /* ───────── 로그인 ───────── */
@@ -3827,10 +3990,10 @@
       (a.nuKind === 'partner'
         ? '<div class="field" style="grid-column:span 2"><label>볼 배차 탭 <span class="muted">(배차시트만 쓰고, 고른 탭만 보여요)</span></label><div class="chips" id="nuTabs">' + (a.dtabs || []).map(function (t) { return '<button type="button" class="chip" data-tk="' + esc(t.key) + '">' + esc(t.name) + '</button>'; }).join('') + '</div></div>'
         : '<div class="field"><label>메뉴 권한</label><div class="chips" id="nuPerms">' +
-          '<button type="button" class="chip on" data-p="quote">견적</button><button type="button" class="chip" data-p="analysis">분석</button><button type="button" class="chip" data-p="search">배차검색</button><button type="button" class="chip" data-p="admin">관리자</button></div></div>') +
+          '<button type="button" class="chip on" data-p="quote">견적</button><button type="button" class="chip" data-p="analysis">분석</button><button type="button" class="chip" data-p="search">배차검색</button><button type="button" class="chip" data-p="track">차량 위치</button><button type="button" class="chip" data-p="admin">관리자</button></div></div>') +
       '<div class="field"><button class="btn btn-primary" type="submit" style="width:100%;padding:12px">발급하기</button></div>' +
       '</form><p class="hint" style="margin:0">임시 비밀번호가 한 번만 표시됩니다. 직원은 첫 로그인 때 비밀번호를 바꿉니다.<br>' +
-      '<b>견적</b> = 단건·대량 계산, 조회기록, 견적모음 · <b>분석</b> = 매출매입 분석 · <b>배차검색</b> = 지난 배차의 금액·차량 찾기 (금액 보임) · <b>관리자</b> = 모든 메뉴와 설정<br><b>협력사</b> = 배차시트만 (고른 탭만 보이고, 차량정보·상태 입력과 문자 복사만 · 운송비는 보기만 · 정보넘김은 못 고름 · 견적·분석·배차검색·관리자·내부 공지는 못 봐요)</p></div>' +
+      '<b>견적</b> = 단건·대량 계산, 조회기록, 견적모음 · <b>분석</b> = 매출매입 분석 · <b>배차검색</b> = 지난 배차의 금액·차량 찾기 (금액 보임) · <b>차량 위치</b> = 기사 폰 앱 위치 지도·차량 등록 · <b>관리자</b> = 모든 메뉴와 설정<br><b>협력사</b> = 배차시트만 (고른 탭만 보이고, 차량정보·상태 입력과 문자 복사만 · 운송비는 보기만 · 정보넘김은 못 고름 · 견적·분석·배차검색·관리자·내부 공지는 못 봐요)</p></div>' +
       [['admin', '관리자'], ['user', '직원'], ['partner', '협력사']].map(function (sec, si) {
         var list = a.users.filter(function (u) { return sec[0] === 'user' ? (u.role !== 'admin' && u.role !== 'partner') : u.role === sec[0]; });
         if (!list.length && sec[0] === 'partner') return '';
@@ -3843,7 +4006,7 @@
             ? '<div class="chips perm-chips">' + (a.dtabs || []).map(function (t) { var on = (u.dispTabs || []).indexOf(t.key) !== -1; return '<button type="button" class="chip ' + (on ? 'on' : '') + '" data-uid="' + esc(u.id) + '" data-ptab="' + esc(t.key) + '">' + esc(t.name) + '</button>'; }).join('') + '</div>'
             : u.role === 'admin'
             ? '<span class="role-badge">ADMIN</span>' + (self ? '' : ' <button class="btn btn-ghost btn-sm" data-demote="' + esc(u.id) + '">관리자 해제</button>')
-            : '<div class="chips perm-chips">' + [['quote', '견적'], ['analysis', '분석'], ['search', '배차검색']].map(function (p) {
+            : '<div class="chips perm-chips">' + [['quote', '견적'], ['analysis', '분석'], ['search', '배차검색'], ['track', '차량 위치']].map(function (p) {
               var on = (u.perms || []).indexOf(p[0]) !== -1;
               return '<button type="button" class="chip ' + (on ? 'on' : '') + '" data-uid="' + esc(u.id) + '" data-perm="' + p[0] + '">' + p[1] + '</button>';
             }).join('') + '<button type="button" class="chip ghost" data-promote="' + esc(u.id) + '">관리자로</button></div>') + '</td>' +
@@ -3963,6 +4126,11 @@
       '<div class="group"><div class="group-head"><h3>오피넷 API 키 (선택)</h3><span class="status-pill ' + (k.opinet ? 'ok' : 'no') + '">' + (k.opinet ? '설정됨' : '미설정') + '</span></div>' +
       '<div class="field"><input class="input" id="opinetKey" type="password" autocomplete="off" placeholder="' + (k.opinet ? '변경할 때만 입력' : '오피넷 무료 API 키') + '">' +
       '<span class="hint">경유가 자동 조회용입니다. 기본 설정 → 유류비에서 "오피넷 자동 조회"를 켜야 사용됩니다.</span></div></div>' +
+      '<div class="group"><div class="group-head"><h3>차량 위치 서버 (Supabase)</h3><span class="status-pill ' + (k.track ? 'ok' : 'no') + '">' + (k.track ? '연결됨' : '미연결') + '</span></div>' +
+      '<div class="form-grid"><div class="field"><label>프로젝트 주소</label><input class="input" id="sbUrl" autocomplete="off" placeholder="' + (k.track ? '바꿀 때만 입력' : 'https://○○○.supabase.co') + '"></div>' +
+      '<div class="field"><label>서비스 키 (service_role / secret)</label><input class="input" id="sbKey" type="password" autocomplete="off" placeholder="' + (k.track ? '바꿀 때만 입력' : '서비스 키 붙여넣기') + '"></div></div>' +
+      '<span class="hint" style="display:block;margin:-6px 0 10px">Supabase 화면 → Project Settings → API Keys의 서비스 키예요. 모든 위치 기록을 읽을 수 있는 키라 여기(서버)에만 넣고, 다른 곳에 붙여넣지 마세요. 저장할 때 한 번 연결을 시험해요.</span>' +
+      '<button class="btn btn-sm" id="saveSb">Supabase 연결 저장</button></div>' +
       '<div class="group"><div class="group-head"><h3>주소 · 경로 저장소 (캐시)</h3><span class="small muted" id="cacheInfo">확인 중…</span></div>' +
       '<p class="hint" style="margin:-6px 0 12px">한 번 조회한 주소와 경로를 서버 시트에 저장해 두고 다시 씁니다. 도로·통행료가 바뀌었다고 생각되면 비우세요. (다음 조회 때 카카오에서 새로 받아옵니다)</p>' +
       '<button class="btn btn-sm btn-danger" id="clearCache">캐시 비우기</button></div>' +
@@ -3974,6 +4142,13 @@
       api('admin.saveKeys', { kakao: kakao, opinet: opinet }).then(function (r) {
         state.admin.keys = r.keys; toast('키를 저장했습니다.'); adminKeys();
       }).catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
+    };
+    $('#saveSb').onclick = function () {
+      var url = $('#sbUrl').value.trim(), key = $('#sbKey').value.trim();
+      if (!url && !key) return toast('Supabase 주소나 서비스 키를 넣으세요.', 'err');
+      var btn = this; busy(btn, true, '연결 시험 중…');
+      api('admin.saveTrackKeys', { url: url, key: key }).then(function (r) { state.admin.keys = r.keys; toast('차량 위치 서버를 연결했어요.'); adminKeys(); })
+        .catch(function (err) { busy(btn, false); toast(err.message, 'err'); });
     };
     function showCache(c) { var el = $('#cacheInfo'); if (el) el.textContent = '주소 ' + won(c.addresses) + '개 · 경로 ' + won(c.routes) + '개 저장됨'; }
     if (state.admin.cache) showCache(state.admin.cache);

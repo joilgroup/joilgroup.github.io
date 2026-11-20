@@ -1662,3 +1662,29 @@ body.cal-dragging * { cursor: grabbing !important; }
 .net-bar .btn { background: #fff; color: var(--ink); border-color: #fff; }
 .net-x { background: none; border: 0; color: #fff; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; opacity: .8; }
 @media (max-width: 640px) { .net-bar small { display: none; } }
+
+/* 차량 위치 */
+.tr-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+.tr-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tr-tools .input { width: auto; padding: 6px 10px; }
+.tr-wrap { display: grid; grid-template-columns: 340px 1fr; gap: 14px; align-items: start; }
+.tr-side { display: flex; flex-direction: column; gap: 8px; }
+.tr-list { max-height: min(62vh, 560px); overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+.tr-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 10px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; font: inherit; color: inherit; }
+.tr-item:hover { background: var(--panel-2); }
+.tr-item.on { background: rgba(240, 122, 34, .12); }
+.tr-item.off { opacity: .55; }
+.tr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tr-when { text-align: right; white-space: nowrap; }
+.tr-edit { padding: 2px 6px; border-radius: 6px; color: var(--muted, #888); }
+.tr-edit:hover { background: var(--line); }
+.tr-dot { width: 10px; height: 10px; border-radius: 50%; background: #2F9E57; flex: none; }
+.tr-dot.old { background: #A9A39A; }
+.tpin { background: #1E1C19; color: #fff; font: 700 12px/1 Pretendard, sans-serif; padding: 6px 8px; border-radius: 8px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.35); border: 2px solid #fff; cursor: pointer; }
+.tpin.old { background: #8E887F; }
+.tpin.start { background: #F07A22; }
+.tr-copy { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.tr-copy code { flex: 1; min-width: 0; word-break: break-all; background: var(--panel-2); padding: 6px 8px; border-radius: 8px; font-size: 12.5px; }
+.tr-copy > span { width: 100%; }
+.tr-steps { padding-left: 20px; margin: 0; line-height: 1.7; }
+@media (max-width: 980px) { .tr-wrap { grid-template-columns: 1fr; } .tr-list { max-height: 40vh; } }

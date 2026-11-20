@@ -67,6 +67,11 @@
 - **도착지 특이사항**(센터마다 멘트, 예: 14시부터 하차가능·카고차량 배차가능·오늘 꼭 가야함): 서버 시트 '도착지특이사항'(업체·센터·멘트·협력사·기사·시간고정) — `dispatch.notes`(협력사는 협력사에도·기사에게도 멘트만)·`dispatch.notesSave`(직원). 예전 '꼭 가야 하는 센터'(스크립트 속성 `DISP_MUST_업체`)는 처음 읽을 때 옮기고 지워요. 화면은 오더·호차에 저장하지 않고 `dispCn(fc)`로 바로 붙여요(오더 공지 칸 `dispCnHtml`·호차 표·오늘 할 일 📌, `truckNotes`에 섞임) — '기사에게도'는 문자·기사 링크(`drvGet_`) 공지로, '시간·날짜 변경 불가'(`dispMustFc`)는 붙여넣기 때 시간 안내를 기사 공지로 안 옮겨요. 이름 비교는 `dispMustKey`(서버 `dispCnKey_`, 띄어쓰기·FC·층·괄호·"-" 뒤 빼기, 고양1 ≠ 고양10). 센터 이름은 코드에 넣지 않아요.
 - 주소 좌표: 카카오 주소 검색(서버) + 못 찾으면 덜 엄격하게 다시 찾기, 끝내 못 찾으면 화면에 "⚠ 위치 못 찾음".
 
+## 차량 위치 (Supabase · 서버 이전 1단계)
+- 기사 폰 **Traccar Client**(안드로이드 무료 앱) → Supabase 함수 `track`(`supabase/functions/track`)이 저장 → 조일 서버 `track.list`·`track.route`·`track.save`가 서비스 키(스크립트 속성 `SB_URL`·`SB_KEY`, 관리자 → API 키에서 입력 `admin.saveTrackKeys`)로 읽어 화면 `renderTrack`에. 자세한 건 `supabase/README.md`.
+- 권한 `track`(관리자가 직원마다 켬, 관리자는 늘), 협력사는 못 봄. 15분(`TRACK_OLD_MIN`) 넘게 안 들어온 차는 회색. 기기 ID 기본 = 차량번호(띄어쓰기·- 빼고 대문자, 받는 함수 `norm`·서버 `trackNorm_` 같게).
+- 앱 주소의 비밀 키는 DB `app_settings.track_key`(저장소·채팅에 적지 않음). 같은 차 위치는 1분에 1개만(DB 트리거). Supabase 표를 바꾸면 `supabase/migrations/`에 새 번호 파일로.
+
 ## 일정 달력 (공용)
 - 달력 탭(`calMonth`)은 왼쪽 칩 모음(`CAL_CHIPS`)을 날짜로 끌어다 놓아 휴가·근무·당직·일정을 넣어요(`calDrag` = 마우스·손가락 공통 pointer 끌기, `calPlace`). 기록 막대는 본인 것(관리자는 모두)만 끌어 옮기고(`calMove`) 누르면 수정 창. 이어진 날을 합친 막대·순번 규칙 당직은 못 끌어요.
 - 저장은 `calOpt`: 화면 먼저 바꾸고 뒤에서 저장, 실패하면 서버 상태로 되돌림. 서버 액션은 예전 그대로(`cal.leaveSave`·`cal.eventSave`).

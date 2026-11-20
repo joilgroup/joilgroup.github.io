@@ -38,8 +38,8 @@
     return out;
   })();
   function dieselStatus() { return { count: dieselRows.length, first: dieselRows[0][0], last: dieselRows[dieselRows.length - 1][0], lastPrice: dieselRows[dieselRows.length - 1][1], triggerOn: false, hasKey: !!store.keys.opinet }; } // 분석 데이터는 용량이 커서 메모리에만 (새로고침하면 사라짐)
-  function permsOf(u) { return u.role === 'admin' ? ['quote', 'analysis', 'search', 'admin'] : u.role === 'partner' ? ['dispatch'] : (u.perms || ['quote']); }
-  function needPerm(me, p) { if (me.perms.indexOf(p) === -1) fail(p === 'analysis' ? '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.' : '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.'); }
+  function permsOf(u) { return u.role === 'admin' ? ['quote', 'analysis', 'search', 'track', 'admin'] : u.role === 'partner' ? ['dispatch'] : (u.perms || ['quote']); }
+  function needPerm(me, p) { if (me.perms.indexOf(p) === -1) fail(p === 'analysis' ? '분석 메뉴 권한이 없습니다. 관리자에게 요청하세요.' : p === 'track' ? '차량 위치 권한이 없습니다. 관리자에게 요청하세요.' : '견적 메뉴 권한이 없습니다. 관리자에게 요청하세요.'); }
 
   function loadSessions() { try { return JSON.parse(sessionStorage.getItem('joil-demo-sessions') || '{}'); } catch (e) { return {}; } }
   function saveSessions() { try { sessionStorage.setItem('joil-demo-sessions', JSON.stringify(sessions)); } catch (e) { /* 무시 */ } }
@@ -384,6 +384,8 @@
     if (req.action === 'analysis.index' || req.action === 'analysis.load') { if (me.perms.indexOf('analysis') === -1 && me.perms.indexOf('search') === -1) needPerm(me, 'analysis'); }
     if (/^notes\./.test(req.action)) needPerm(me, 'analysis');
     if (/^reqs\./.test(req.action)) needPerm(me, 'quote');
+    if (/^track\./.test(req.action) && me.role !== 'admin') needPerm(me, 'track');
+    if (/^track\./.test(req.action)) return demoTrack(req);
     switch (req.action) {
       case 'work.list': case 'work.stamp': case 'work.op': var wf = load(); if (wf) { store.work = wf.work || []; store.workStamp = wf.workStamp || {}; } // 다른 창(폰 대신)에서 적은 것도 보이게
         if (req.action === 'work.op') return workOp(me, req);
@@ -954,12 +956,13 @@
         if (p.hasOwnProperty('active')) uu.active = !!p.active;
         if (p.role) uu.role = p.role === 'admin' || p.role === 'partner' ? p.role : 'user';
         if (Array.isArray(p.dispTabs)) uu.dispTabs = p.dispTabs.slice();
-        if (Array.isArray(p.perms)) uu.perms = p.perms.filter(function (x) { return x === 'quote' || x === 'analysis' || x === 'search'; });
+        if (Array.isArray(p.perms)) uu.perms = p.perms.filter(function (x) { return x === 'quote' || x === 'analysis' || x === 'search' || x === 'track'; });
         if (p.name != null) { var nn = String(p.name).trim().slice(0, 30); if (!nn) fail('이름을 넣으세요.'); uu.name = nn; calStore().staff.forEach(function (x) { if (x.account === uu.id) x.name = nn; }); }
         save(); return {};
       case 'admin.resetPassword':
         var ru = user(req.id), tp = temp(); ru.pw = tp; ru.mustChange = true; save(); return { tempPassword: tp };
       case 'admin.getLogs': return { logs: store.logs };
+      case 'admin.saveTrackKeys': if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(String(req.url || 'https://demo.supabase.co'))) fail('Supabase 주소는 https://○○○.supabase.co 형식이에요.'); store.keys.track = true; save(); return { keys: store.keys };
       case 'admin.saveKeys':
         if (req.kakao) store.keys.kakao = true;
         if (req.opinet) store.keys.opinet = true;
@@ -967,6 +970,49 @@
       case 'admin.testKakao': return { message: '데모 모드에서는 실제 카카오 연결을 시험하지 않습니다.' };
       case 'admin.cacheInfo': return { cache: { addresses: 0, routes: 0 } };
       case 'admin.clearCache': return { cache: { addresses: 0, routes: 0 } };
+    }
+    fail('알 수 없는 요청입니다: ' + req.action);
+  }
+
+  /* 차량 위치 (데모): 가짜 차량 3대 · 위치는 시각으로 만들어 냄(5분 간격, 한 대는 오래 안 들어옴) — 실제는 Supabase */
+  function demoTrack(req) {
+    if (!store.track) {
+      store.track = [
+        { id: 1, plate: '00가0001', device_id: '00가0001', driver_name: '가짜기사1', driver_phone: '', affiliation: '지입', company: '데모업체', ton: '5톤', body_type: '윙바디', memo: '', active: true, base: [37.40, 127.10], stale: 0 },
+        { id: 2, plate: '00나0002', device_id: '00나0002', driver_name: '가짜기사2', driver_phone: '', affiliation: '용차', company: '데모업체', ton: '11톤', body_type: '카고', memo: '', active: true, base: [36.35, 127.38], stale: 0 },
+        { id: 3, plate: '00다0003', device_id: '00다0003', driver_name: '가짜기사3', driver_phone: '', affiliation: '직영', company: '데모업체', ton: '1톤', body_type: '탑차', memo: '앱 꺼짐 예시', active: true, base: [35.18, 129.07], stale: 50 }
+      ];
+      save();
+    }
+    var at = function (v, t) { var k = t / 3.6e6; return { lat: v.base[0] + Math.sin(k + v.id) * 0.08, lng: v.base[1] + Math.cos(k * 0.8 + v.id) * 0.1 }; };
+    var view = function (v) {
+      var o = {}; Object.keys(v).forEach(function (k) { if (k !== 'base' && k !== 'stale') o[k] = v[k]; });
+      if (v.base) { var t = Math.floor((Date.now() - (v.stale || 0) * 60000) / 300000) * 300000, p = at(v, t); o.last_time = new Date(t).toISOString(); o.last_lat = p.lat; o.last_lng = p.lng; o.last_speed = 40; o.last_battery = 70 + v.id * 5; }
+      else { o.last_time = null; o.last_lat = null; o.last_lng = null; o.last_speed = null; o.last_battery = null; }
+      return o;
+    };
+    var list = function () { return { vehicles: store.track.slice().sort(function (a, b) { return a.plate < b.plate ? -1 : 1; }).map(view), appUrl: 'https://demo.supabase.co/functions/v1/track/demo-key', now: new Date().toISOString() }; };
+    var norm = function (x) { return String(x || '').replace(/[\s-]/g, '').toUpperCase(); };
+    if (req.action === 'track.list') return list();
+    if (req.action === 'track.route') {
+      var v = store.track.filter(function (x) { return x.id === Number(req.id); })[0];
+      if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(String(req.date))) fail('차량과 날짜를 확인해 주세요.');
+      if (!v.base) return { points: [] };
+      var from = new Date(req.date + 'T06:00:00+09:00').getTime(), end = Math.min(new Date(req.date + 'T19:00:00+09:00').getTime(), Date.now() - (v.stale || 0) * 60000), pts = [];
+      for (var t = from; t <= end; t += 300000) { var q = at(v, t); pts.push({ t: new Date(t).toISOString(), lat: q.lat, lng: q.lng, speed: 40, battery: 80 }); }
+      return { points: pts };
+    }
+    if (req.action === 'track.save') {
+      var x = req.vehicle || {}, plate = String(x.plate || '').trim(), dev = norm(x.device_id || plate), id = Number(x.id) || 0;
+      if (!plate) fail('차량번호를 넣어 주세요.');
+      if (['', '지입', '직영', '용차'].indexOf(String(x.affiliation || '')) === -1) fail('소속은 지입·직영·용차 중 하나예요.');
+      if (store.track.some(function (y) { return y.id !== id && (y.plate === plate || norm(y.device_id) === dev); })) fail('같은 차량번호나 기기 ID가 이미 등록돼 있어요.');
+      var row = id ? store.track.filter(function (y) { return y.id === id; })[0] : null;
+      if (id && !row) fail('차량을 찾지 못했어요. 새로고침해 주세요.');
+      if (!row) { row = { id: store.track.reduce(function (a, y) { return Math.max(a, y.id); }, 0) + 1 }; store.track.push(row); }
+      ['driver_name', 'driver_phone', 'affiliation', 'company', 'ton', 'body_type', 'memo'].forEach(function (k) { row[k] = String(x[k] == null ? '' : x[k]).trim(); });
+      row.plate = plate; row.device_id = dev; row.active = x.active !== false;
+      save(); return list();
     }
     fail('알 수 없는 요청입니다: ' + req.action);
   }
