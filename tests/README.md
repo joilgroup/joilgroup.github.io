@@ -15,6 +15,7 @@ node tests/run.js month      # 파일 이름에 month가 들어간 것만
 - `lib/mock.js` — 구글 Apps Script(SpreadsheetApp·LockService·PropertiesService 등)를 흉내 낸 목. `apps-script/Code.js`를 node에서 불러 `M.call('adm' | 'stf' | 'ptn', '액션', {...})`으로 호출해요(관리자·직원·협력사). 시트에 쓸 때 줄 너비가 헤더와 다르면 실패로 잡아요.
 - `lib/browser.js` — Playwright로 사이트를 **데모 모드**로 여는 도우미(`open`·`api`·`dispatch`·`paste`·`tab`·`relog`·`slow`). 바깥 인터넷은 막아서 카카오 지도·엑셀 내려받기는 확인하지 못해요(지도는 가짜 지도로 동작만 확인).
 - `server/*.test.js` — 서버: 그날 줄만 읽기, 금액 칸·권한, 로그인 유지.
+- `server/sb-*.test.js` · `sb/` — 서버 이전(Supabase) 새 서버: 이 컴퓨터에 **빈 Postgres 를 잠깐 띄워**(`sb/pg.js`, 마이그레이션 적용) 지금 서버(Code.js 목)와 같은 요청 → 같은 응답인지(`sb-parity`), 시험 복사·비교(`sb-copy`), 로그인·권한(`sb-auth`), Deno 로 함수 입구(`sb-deno`). Postgres·Deno 가 없으면 건너뜀. 처음엔 `tests/sb` 에 postgres.js·Deno 를 받아요(저장소에는 안 올라감). `node tests/run.js sb` 로 이것만.
 - `ui/*.test.js` — 화면: 오더 붙여넣기·공지, 월별 기록·금액, 날짜 이동 속도, 지도, 메뉴·창·검색칸.
 
 ## 테스트를 추가할 때

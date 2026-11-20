@@ -1,4 +1,4 @@
-# Supabase (차량 위치 · 서버 이전 1단계)
+# Supabase (차량 위치 · 서버 이전)
 
 조일 사이트를 구글 시트 + Apps Script에서 Supabase로 옮기는 첫 단계예요. 지금은 **차량 위치**만 여기에 있어요.
 키·실데이터는 이 폴더에 넣지 않아요(저장소가 공개예요).
@@ -17,3 +17,11 @@
 - 조일 서버(`apps-script/Code.js`의 `track.*`)는 스크립트 속성 `SB_URL`·`SB_KEY`(관리자 → API 키에서 입력)로 PostgREST를 읽어요.
 
 용량: 20대 × 5분 간격 × 하루 14시간 ≈ 하루 0.5MB → 무료 500MB로 약 2~3년. 넘으면 오래된 기록을 줄이거나 유료 요금제.
+
+## 서버 이전 2·3단계 (로그인·계정·배차) — 브랜치 `claude/supabase-migration`, 아직 실제 프로젝트에 적용 안 함
+자세한 계획·결정·돌아오면 할 일은 **`docs/서버이전.md`**.
+- `migrations/004_joil_core.sql` — 새 스키마 `joil`(계정·세션·배차 표 전부). 위 차량 위치 표는 건드리지 않아요.
+- `migrations/005_joil_stamp_rpc.sql` — `joil_stamps`(15초 확인 = 공개 키 RPC, 함수 호출 수 아낌) · `joil_whoami`(구글 쪽 토큰 확인).
+- `migrations/006_joil_copy_tools.sql` — 시트 → Supabase 시험 복사·비교·백업 함수 (서비스 키만).
+- `functions/joil/` — 새 서버(`core.js` = Code.js 로그인·계정·배차 액션을 같은 약속으로, `index.ts` = Deno 입구). 배포: `supabase functions deploy joil --no-verify-jwt`.
+- 시험: `node tests/run.js sb` (이 컴퓨터에 빈 Postgres·Deno 를 잠깐 띄워서 · 실제 프로젝트 안 씀).

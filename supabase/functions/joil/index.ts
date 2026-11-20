@@ -15,6 +15,12 @@ Deno.serve(async (r: Request) => {
   if (r.method === 'GET') return new Response('조일 서버(Supabase)가 정상 작동 중입니다.', { headers: { ...CORS, 'content-type': 'text/plain; charset=utf-8' } });
   let req: Record<string, unknown> = {};
   try { req = JSON.parse(await r.text() || '{}'); } catch (_e) { /* 아래에서 알 수 없는 요청 */ }
-  const out = await server.call(req);
-  return new Response(JSON.stringify(out), { headers: { ...CORS, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+  const out = await server.call(req), body = JSON.stringify(out);
+  const headers: Record<string, string> = { ...CORS, 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+  // 무료 전송량(월 5GB)을 아끼려고 큰 응답은 gzip (배차 날짜 JSON 은 1/8 정도로 줄어요 · 브라우저가 알아서 풀어요)
+  if (body.length > 2048 && /gzip/.test(r.headers.get('accept-encoding') || '')) {
+    headers['content-encoding'] = 'gzip';
+    return new Response(new Blob([body]).stream().pipeThrough(new CompressionStream('gzip')), { headers });
+  }
+  return new Response(body, { headers });
 });

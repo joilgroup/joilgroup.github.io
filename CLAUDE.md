@@ -73,6 +73,12 @@
 - **용차 위치 링크**(앱 없이): '차량 위치 → 용차 위치 링크'(`trLinks`)에서 서버 `track.linkMake`(없는 차는 '용차'로 등록)·`track.linkEnd`(값 이름 `link` — `token`은 로그인 토큰) → Supabase `track_links`(링크 날짜 하루, `ended_at`) → 기사는 문자 링크 `loc.html?t=…`(설정 `TRACK_URL`)에서 동의 후 시작, 받는 함수 `/track/l/<token>`(GET 상태·POST 위치/종료, text/plain, 날짜 지나면 410). 브라우저라 **그 화면이 켜져 있을 때만** 5분마다 보냄(Wake Lock, 다시 보이면 바로 전송, 못 보낸 점은 localStorage에 모았다 보냄). 화면을 꺼도 되게 하려면 링크 화면의 '방법 1 · 앱': Traccar 서버 URL에 **링크 전용 주소**(`/track/l/<token>`)를 붙여넣음 — 받는 함수가 앱 형식(JSON `coords`·쿼리 `lat`)을 알아보고 기기 ID 대신 링크로 차를 정함, 종료·날짜 지나면 저장 없이 200(오류를 주면 앱이 계속 모아 재전송). 앱은 거리 0·정지 감지 끄기가 필요(기본 75m면 몇 초마다 보내 무료 호출 한도 위험, 정지 감지면 서 있을 때 안 보냄).
 - 앱 주소의 비밀 키는 DB `app_settings.track_key`(저장소·채팅에 적지 않음). 같은 차 위치는 1분에 1개만(DB 트리거). Supabase 표를 바꾸면 `supabase/migrations/`에 새 번호 파일로.
 
+## 서버 이전 (Supabase 2·3단계 · 브랜치 `claude/supabase-migration` · 전환 전)
+- 계획·결정·돌아오면 할 일·되돌리기: **`docs/서버이전.md`**. 전환 전까지 원본은 구글 시트.
+- 새 서버 `supabase/functions/joil/core.js` = Code.js 로그인·계정·배차 액션을 **같은 이름(끝 `_` 뺌)·같은 응답**으로 옮긴 것 → **배차·계정 서버 코드를 고치면 core.js 도 같이** 고치고 `node tests/run.js sb`(같은 요청 → 같은 응답 비교) 통과 확인.
+- 화면 갈림길: `app.js` `SB_ACTIONS`·`apiUrl()` — `config.js` `SB_ROUTE: 'dispatch'`(또는 기기별 `#sb-on`)일 때만 Supabase. 15초 확인은 RPC `joil_stamps`(함수 호출 수 아낌). 서버에 배차 액션을 추가하면 `SB_ACTIONS`·core.js `ACTIONS` 에도.
+- Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
+
 ## 일정 달력 (공용)
 - 달력 탭(`calMonth`)은 왼쪽 칩 모음(`CAL_CHIPS`)을 날짜로 끌어다 놓아 휴가·근무·당직·일정을 넣어요(`calDrag` = 마우스·손가락 공통 pointer 끌기, `calPlace`). 기록 막대는 본인 것(관리자는 모두)만 끌어 옮기고(`calMove`) 누르면 수정 창. 이어진 날을 합친 막대·순번 규칙 당직은 못 끌어요.
 - 저장은 `calOpt`: 화면 먼저 바꾸고 뒤에서 저장, 실패하면 서버 상태로 되돌림. 서버 액션은 예전 그대로(`cal.leaveSave`·`cal.eventSave`).
