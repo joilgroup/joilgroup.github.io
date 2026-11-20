@@ -9,6 +9,10 @@ window.JOIL_CONFIG = {
   DRIVER_URL: 'https://truck-stopinfo.github.io/',
   // 차량 위치 받는 함수 주소 (Supabase · 비밀 키 아님 — 용차 위치 링크 화면 loc.html 이 씀)
   TRACK_URL: 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/track',
+  // 서버 이전(Supabase · docs/서버이전.md): 새 서버 주소와 공개 키(공개용이라 여기 있어도 됨). SB_ROUTE 가 없으면 지금처럼 전부 Apps Script
+  SB_FN: 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/joil',
+  SB_REST: 'https://etvpifkfyrxvvpqqrsza.supabase.co',
+  SB_ANON: 'sb_publishable_kNRcMBnVAyV0xdng-QzrhQ_gGYKz8Bz',
   // 카카오 지도 JavaScript 키 (화면에 들어가는 공개용 키 · 카카오 개발자 사이트에 등록한 주소에서만 작동)
   KAKAO_JS_KEY: 'f70cb8ae1c6ad8cba10d83b8a9c6cf33'
 };
