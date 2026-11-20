@@ -514,7 +514,7 @@
   function renderTrack() {
     var st = trSt();
     $('#main').innerHTML = '<div class="card"><div class="tr-head"><div><div class="eyebrow">Tracking · 차량 위치</div><h2>차량 위치</h2></div>' +
-      '<div class="tr-tools"><input class="input" type="date" id="trDate" value="' + esc(st.date) + '"><button class="btn btn-sm" id="trReload">새로고침</button><button class="btn btn-sm" id="trGuide">앱 설정 안내</button><button class="btn btn-sm btn-primary" id="trAdd">차량 등록</button></div></div>' +
+      '<div class="tr-tools"><input class="input" type="date" id="trDate" value="' + esc(st.date) + '"><button class="btn btn-sm" id="trReload">새로고침</button><button class="btn btn-sm" id="trGuide">앱 설정 안내</button><button class="btn btn-sm" id="trAdd">차량 등록</button><button class="btn btn-sm btn-primary" id="trLink">용차 위치 링크</button></div></div>' +
       '<div class="tr-wrap"><div class="tr-side"><input class="input" id="trQ" placeholder="차량번호·기사·업체 찾기" value="' + esc(st.q) + '"><div id="trList" class="tr-list"><div class="muted small" style="padding:14px"><span class="spinner dark"></span> 불러오는 중…</div></div></div>' +
       '<div><div class="dp-map tr-map" id="trMap"><div class="muted small" style="padding:20px"><span class="spinner dark"></span> 지도 불러오는 중…</div></div><div id="trRoute" class="small" style="margin-top:8px"></div></div></div>' +
       '<p class="hint" style="margin:10px 0 0">위치는 기사 폰 앱이 5분마다 보내요. ' + TRACK_OLD_MIN + '분 넘게 안 들어온 차는 회색이에요. 차를 누르면 고른 날짜의 경로가 나와요.</p></div>';
@@ -522,6 +522,7 @@
     $('#trDate').onchange = function () { st.date = this.value || today(); if (st.sel) trRoute(); };
     $('#trReload').onclick = function () { trLoad(); };
     $('#trAdd').onclick = function () { trEdit(null); };
+    $('#trLink').onclick = function () { trLinks(); };
     $('#trGuide').onclick = function () { trGuide(st.list && st.list.filter(function (v) { return v.id === st.sel; })[0]); };
     $('#trQ').oninput = function () { st.q = this.value; trDrawList(); };
     kakaoMaps().then(function (K) {
@@ -536,12 +537,79 @@
   function trLoad(quiet) {
     var st = trSt();
     return api('track.list').then(function (r) {
-      st.list = r.vehicles || []; st.appUrl = r.appUrl || ''; st.err = '';
+      st.list = r.vehicles || []; st.appUrl = r.appUrl || ''; st.links = r.links || []; st.err = '';
       trDrawList(); trDrawMap(); if (st.sel && quiet) trRoute(true);
     }).catch(function (e) {
       if (quiet) return;
       st.err = e.message; var el = $('#trList'); if (!el) return;
       el.innerHTML = '<div class="small" style="padding:14px"><p class="err-text" style="margin:0 0 8px">' + esc(e.message) + '</p>' + (/연결되지 않았어요/.test(e.message) && state.user.role !== 'admin' ? '<p class="muted" style="margin:0">관리자에게 연결을 요청하세요.</p>' : '') + '</div>';
+    });
+  }
+  /** 오늘 이 차의 위치 링크 상태 (가장 최근 것) */
+  function trLinkOf(id) {
+    var st = trSt(), l = (st.links || []).filter(function (x) { return x.vehicle_id === id && x.date === today(); }).pop();
+    if (!l) return null;
+    return l.ended_at ? { txt: '링크 종료', cls: 'end', l: l } : l.started_at ? { txt: '링크 공유 중', cls: 'on', l: l } : { txt: '링크 대기', cls: '', l: l };
+  }
+  function trLinkUrl(tk) { return location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '') + 'loc.html?t=' + tk; }
+  function trSms(v, l) {
+    var d = l.date.split('-');
+    return '[차량 위치 공유 요청]\n' + Number(d[1]) + '/' + Number(d[2]) + ' ' + v.plate + ' 배송하는 동안 차량 위치를 공유해 주세요.\n' +
+      '아래 링크를 열고 \'위치 공유 시작\'을 누른 뒤 그 화면을 켜 두시면 5분마다 위치가 전송돼요. 배송이 끝나면 \'종료\'를 눌러 주세요. (밤 12시 자동 종료 · 앱 설치 필요 없음)\n' + trLinkUrl(l.token);
+  }
+  /** 용차 위치 링크: 앱 설치 없이 문자 링크로 그날 하루 */
+  function trLinks(pre) {
+    var st = trSt(), plates = (st.list || []).map(function (v) { return v.plate; });
+    modal({ eyebrow: '차량 위치 · 앱 없이', title: '용차 위치 링크', wide: true,
+      body: '<p class="small" style="margin:0 0 10px">기사에게 문자로 링크를 보내면, 기사가 링크를 열고 <b>위치 공유 시작</b>을 눌렀을 때부터 <b>종료</b>를 누르거나 그날 밤 12시까지 5분마다 위치가 들어와요. 앱 설치는 필요 없어요.</p>' +
+        '<div class="form-grid"><div class="field"><label>차량번호 *</label><input class="input" id="tlPlate" list="tlPlates" placeholder="예) 12가3456" value="' + esc(pre || '') + '"></div>' +
+        '<div class="field"><label>날짜</label><input class="input" type="date" id="tlDate" value="' + esc(today()) + '" min="' + esc(today()) + '"></div>' +
+        '<div class="field"><label>기사 이름</label><input class="input" id="tlName"></div><div class="field"><label>기사 연락처</label><input class="input" id="tlPhone" inputmode="tel" placeholder="010-0000-0000"></div></div>' +
+        '<datalist id="tlPlates">' + plates.map(function (p) { return '<option value="' + esc(p) + '">'; }).join('') + '</datalist>' +
+        '<button class="btn btn-primary" id="tlMake">링크 만들기</button><div id="tlOut"></div>' +
+        '<div class="hint" style="margin-top:12px">⚠ 링크 방식은 기사 폰에서 <b>그 링크 화면이 켜져 있을 때만</b> 위치가 들어와요(화면을 끄거나 내비로 가면 잠시 멈춤). 끊김 없이 보려면 앱(Traccar)을 쓰세요. 없는 차량번호는 \'용차\'로 자동 등록돼요.</div>' +
+        '<div id="tlToday" style="margin-top:14px"></div>',
+      onMount: function (m) {
+        var out = $('#tlOut', m);
+        var show = function (v, l) {
+          var sms = trSms(v, l), ph = String(v.driver_phone || '').replace(/[^0-9]/g, '');
+          out.innerHTML = '<div class="tr-copy" style="margin-top:12px"><span class="muted small">' + esc(v.plate) + ' · ' + esc(l.date) + ' 문자 내용</span><code id="tlSms" style="white-space:pre-wrap">' + esc(sms) + '</code></div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-sm" id="tlCopy">문자 내용 복사</button><button class="btn btn-sm" id="tlCopyUrl">링크만 복사</button>' +
+            '<a class="btn btn-sm" href="sms:' + esc(ph) + '?body=' + encodeURIComponent(sms) + '">폰 문자 앱으로 보내기</a></div>';
+          $('#tlCopy', m).onclick = function () { copyText(sms).then(function () { toast('문자 내용을 복사했어요.'); }); };
+          $('#tlCopyUrl', m).onclick = function () { copyText(trLinkUrl(l.token)).then(function () { toast('링크를 복사했어요.'); }); };
+        };
+        var drawToday = function () {
+          var el = $('#tlToday', m), ls = (st.links || []).slice().reverse(); if (!el) return;
+          el.innerHTML = ls.length ? '<div class="small"><b>오늘·앞으로 링크</b></div>' + ls.map(function (l) {
+            var v = (st.list || []).filter(function (x) { return x.id === l.vehicle_id; })[0] || { plate: '?' };
+            var s = l.ended_at ? '종료' : l.started_at ? '공유 중' : '대기';
+            return '<div class="tr-copy small" style="margin:6px 0 0"><span style="width:auto;flex:1"><b>' + esc(v.plate) + '</b> ' + esc(v.driver_name || '') + ' · ' + esc(l.date) + ' · ' + s + '</span>' +
+              '<button class="btn btn-sm" data-tlshow="' + esc(l.token) + '">문자 다시 보기</button>' + (l.ended_at ? '' : '<button class="btn btn-sm btn-ghost" data-tlend="' + esc(l.token) + '">끝내기</button>') + '</div>';
+          }).join('') : '';
+          $$('[data-tlshow]', el).forEach(function (b) { b.onclick = function () { var l = st.links.filter(function (x) { return x.token === b.dataset.tlshow; })[0], v = st.list.filter(function (x) { return x.id === l.vehicle_id; })[0]; if (v) show(v, l); }; });
+          $$('[data-tlend]', el).forEach(function (b) { b.onclick = function () {
+            if (!confirm('이 링크로 위치 받기를 끝낼까요? 기사 화면도 멈춰요.')) return;
+            busy(b, true, '…');
+            api('track.linkEnd', { link: b.dataset.tlend }).then(function (r) { st.list = r.vehicles || st.list; st.links = r.links || []; drawToday(); trDrawList(); toast('링크를 끝냈어요.'); }).catch(function (e) { busy(b, false); toast(e.message, 'err'); });
+          }; });
+        };
+        drawToday();
+        $('#tlPlate', m).onchange = function () {
+          var val = this.value.trim(), v = (st.list || []).filter(function (x) { return x.plate === val; })[0];
+          if (v) { if (!$('#tlName', m).value) $('#tlName', m).value = v.driver_name || ''; if (!$('#tlPhone', m).value) $('#tlPhone', m).value = v.driver_phone || ''; }
+        };
+        $('#tlMake', m).onclick = function () {
+          var btn = this, plate = $('#tlPlate', m).value.trim();
+          if (!plate) return toast('차량번호를 넣어 주세요.', 'err');
+          busy(btn, true, '만드는 중…');
+          api('track.linkMake', { plate: plate, date: $('#tlDate', m).value || today(), driver_name: $('#tlName', m).value.trim(), driver_phone: $('#tlPhone', m).value.trim() }).then(function (r) {
+            busy(btn, false); st.list = r.vehicles || []; st.links = r.links || []; trDrawList(); trDrawMap(); drawToday();
+            var l = st.links.filter(function (x) { return x.token === r.token; })[0], v = l && st.list.filter(function (x) { return x.id === l.vehicle_id; })[0];
+            if (v) show(v, l);
+          }).catch(function (e) { busy(btn, false); toast(/알 수 없는/.test(e.message) ? '서버(Code.js)를 새 버전으로 배포해야 링크를 만들 수 있어요.' : e.message, 'err'); });
+        };
+      }
     });
   }
   function trShown() {
@@ -553,9 +621,9 @@
     var rows = trShown();
     if (!st.list.length) { el.innerHTML = '<div class="muted small" style="padding:14px">등록된 차량이 없어요. <b>차량 등록</b>을 눌러 추가하고, 기사 폰에 앱을 설정해 주세요.</div>'; return; }
     el.innerHTML = rows.map(function (v) {
-      var a = trAgo(v.last_time);
+      var a = trAgo(v.last_time), lk = trLinkOf(v.id);
       return '<button type="button" class="tr-item' + (st.sel === v.id ? ' on' : '') + (v.active ? '' : ' off') + '" data-tv="' + v.id + '">' +
-        '<span class="tr-dot' + (a.old ? ' old' : '') + '"></span><span class="tr-main"><b>' + esc(v.plate) + '</b> ' + esc(v.driver_name || '') + (v.active ? '' : ' <span class="muted">(사용 안 함)</span>') +
+        '<span class="tr-dot' + (a.old ? ' old' : '') + '"></span><span class="tr-main"><b>' + esc(v.plate) + '</b> ' + esc(v.driver_name || '') + (v.active ? '' : ' <span class="muted">(사용 안 함)</span>') + (lk ? ' <span class="tr-lk ' + lk.cls + '">🔗 ' + lk.txt + '</span>' : '') +
         '<span class="muted small">' + esc(trInfo(v)) + '</span></span><span class="tr-when small' + (a.old ? ' muted' : '') + '">' + esc(a.txt) + (v.last_battery != null ? '<br><span class="muted">🔋' + Math.round(v.last_battery) + '%</span>' : '') + '</span>' +
         '<span class="tr-edit" data-te="' + v.id + '" title="고치기">✎</span></button>';
     }).join('') || '<div class="muted small" style="padding:14px">찾는 차량이 없어요.</div>';

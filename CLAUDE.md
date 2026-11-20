@@ -70,6 +70,7 @@
 ## 차량 위치 (Supabase · 서버 이전 1단계)
 - 기사 폰 **Traccar Client**(안드로이드 무료 앱) → Supabase 함수 `track`(`supabase/functions/track`)이 저장 → 조일 서버 `track.list`·`track.route`·`track.save`가 서비스 키(스크립트 속성 `SB_URL`·`SB_KEY`, 관리자 → API 키에서 입력 `admin.saveTrackKeys`)로 읽어 화면 `renderTrack`에. 자세한 건 `supabase/README.md`.
 - 권한 `track`(관리자가 직원마다 켬, 관리자는 늘), 협력사는 못 봄. 15분(`TRACK_OLD_MIN`) 넘게 안 들어온 차는 회색. 기기 ID 기본 = 차량번호(띄어쓰기·- 빼고 대문자, 받는 함수 `norm`·서버 `trackNorm_` 같게).
+- **용차 위치 링크**(앱 없이): '차량 위치 → 용차 위치 링크'(`trLinks`)에서 서버 `track.linkMake`(없는 차는 '용차'로 등록)·`track.linkEnd`(값 이름 `link` — `token`은 로그인 토큰) → Supabase `track_links`(링크 날짜 하루, `ended_at`) → 기사는 문자 링크 `loc.html?t=…`(설정 `TRACK_URL`)에서 동의 후 시작, 받는 함수 `/track/l/<token>`(GET 상태·POST 위치/종료, text/plain, 날짜 지나면 410). 브라우저라 **그 화면이 켜져 있을 때만** 5분마다 보냄(Wake Lock, 다시 보이면 바로 전송, 못 보낸 점은 localStorage에 모았다 보냄).
 - 앱 주소의 비밀 키는 DB `app_settings.track_key`(저장소·채팅에 적지 않음). 같은 차 위치는 1분에 1개만(DB 트리거). Supabase 표를 바꾸면 `supabase/migrations/`에 새 번호 파일로.
 
 ## 일정 달력 (공용)

@@ -1688,3 +1688,6 @@ body.cal-dragging * { cursor: grabbing !important; }
 .tr-copy > span { width: 100%; }
 .tr-steps { padding-left: 20px; margin: 0; line-height: 1.7; }
 @media (max-width: 980px) { .tr-wrap { grid-template-columns: 1fr; } .tr-list { max-height: 40vh; } }
+.tr-lk { font-size: 11.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: var(--panel-2); color: var(--muted, #888); white-space: nowrap; }
+.tr-lk.on { background: rgba(79, 168, 100, .15); color: #2C7040; }
+.tr-lk.end { opacity: .7; }

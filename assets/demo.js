@@ -991,7 +991,9 @@
       else { o.last_time = null; o.last_lat = null; o.last_lng = null; o.last_speed = null; o.last_battery = null; }
       return o;
     };
-    var list = function () { return { vehicles: store.track.slice().sort(function (a, b) { return a.plate < b.plate ? -1 : 1; }).map(view), appUrl: 'https://demo.supabase.co/functions/v1/track/demo-key', now: new Date().toISOString() }; };
+    store.trackLinks = store.trackLinks || [];
+    var list = function () { return { vehicles: store.track.slice().sort(function (a, b) { return a.plate < b.plate ? -1 : 1; }).map(view), appUrl: 'https://demo.supabase.co/functions/v1/track/demo-key', now: new Date().toISOString(), today: today().slice(0, 10),
+      links: store.trackLinks.filter(function (l) { return l.date >= today().slice(0, 10); }) }; };
     var norm = function (x) { return String(x || '').replace(/[\s-]/g, '').toUpperCase(); };
     if (req.action === 'track.list') return list();
     if (req.action === 'track.route') {
@@ -1001,6 +1003,21 @@
       var from = new Date(req.date + 'T06:00:00+09:00').getTime(), end = Math.min(new Date(req.date + 'T19:00:00+09:00').getTime(), Date.now() - (v.stale || 0) * 60000), pts = [];
       for (var t = from; t <= end; t += 300000) { var q = at(v, t); pts.push({ t: new Date(t).toISOString(), lat: q.lat, lng: q.lng, speed: 40, battery: 80 }); }
       return { points: pts };
+    }
+    if (req.action === 'track.linkMake') {
+      var lp = String(req.plate || '').trim(), ld = String(req.date || today().slice(0, 10));
+      if (!lp) fail('차량번호를 넣어 주세요.');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(ld) || ld < today().slice(0, 10)) fail('오늘이나 이후 날짜를 골라 주세요.');
+      var lv = store.track.filter(function (y) { return y.plate === lp; })[0];
+      if (!lv) { lv = { id: store.track.reduce(function (a, y) { return Math.max(a, y.id); }, 0) + 1, plate: lp, device_id: norm(lp), driver_name: '', driver_phone: '', affiliation: '용차', company: '', ton: '', body_type: '', memo: '' }; store.track.push(lv); }
+      lv.active = true; ['driver_name', 'driver_phone', 'company'].forEach(function (k) { var x = String(req[k] || '').trim(); if (x) lv[k] = x; });
+      var tk = ''; for (var i = 0; i < 40; i++) tk += '0123456789abcdef'[Math.floor(Math.random() * 16)];
+      store.trackLinks.push({ token: tk, vehicle_id: lv.id, date: ld, started_at: null, ended_at: null });
+      save(); var lo = list(); lo.token = tk; return lo;
+    }
+    if (req.action === 'track.linkEnd') {
+      store.trackLinks.forEach(function (l) { if (l.token === req.link && !l.ended_at) l.ended_at = new Date().toISOString(); });
+      save(); return list();
     }
     if (req.action === 'track.save') {
       var x = req.vehicle || {}, plate = String(x.plate || '').trim(), dev = norm(x.device_id || plate), id = Number(x.id) || 0;

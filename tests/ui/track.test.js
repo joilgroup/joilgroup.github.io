@@ -50,6 +50,18 @@ T.run(async function () {
   var dup = await api(p, 'track.save', { vehicle: { plate: '00가0001' } });
   ok('같은 번호 두 번 거절', /이미 등록/.test(dup.error || ''), dup);
 
+  // 용차 위치 링크
+  await p.click('#trLink'); await p.waitForSelector('#tlPlate');
+  await p.fill('#tlPlate', '00마 0005'); await p.fill('#tlName', '가짜용차'); await p.fill('#tlPhone', '010-0000-0000');
+  await p.click('#tlMake'); await p.waitForSelector('#tlSms', { timeout: 8000 });
+  var sms = await T.text(p, '#tlSms');
+  ok('링크 만들기: 문자 내용 = 차량번호·안내·loc.html 링크', /00마 0005/.test(sms) && /위치 공유 시작/.test(sms) && /loc\.html\?t=[a-f0-9]{40}$/.test(sms), sms);
+  ok('링크 만들기: 폰 문자 앱 버튼(번호 넣어서)', /^sms:01000000000\?body=/.test(await p.$eval('#tlOut a', function (a) { return a.getAttribute('href'); })));
+  ok('링크 만들기: 오늘 링크 목록 · 차량 목록에 링크 대기', /00마 0005 가짜용차 · .* · 대기/.test(await T.text(p, '#tlToday')) && /00마 0005.*용차.*링크 대기/.test(await T.text(p, '#trList')), [await T.text(p, '#tlToday'), await T.text(p, '#trList')]);
+  await p.click('[data-tlend]'); await p.waitForTimeout(500);
+  ok('링크 끝내기', /· 종료/.test(await T.text(p, '#tlToday')) && /링크 종료/.test(await T.text(p, '#trList')));
+  await p.click('.modal [data-close]'); await p.waitForTimeout(200);
+
   // 관리자: 직원 권한 칩 · Supabase 연결 칸
   var mk = await api(p, 'admin.createUser', { id: 'trk01', name: '위치직원', role: 'user', perms: ['track'] });
   var mk2 = await api(p, 'admin.createUser', { id: 'qte01', name: '견적직원', role: 'user', perms: ['quote'] });

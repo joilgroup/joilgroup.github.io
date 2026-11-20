@@ -11,6 +11,8 @@
   예전 앱(쿼리 `id·lat·lon·timestamp·speed(노트)…`)과 새 앱(JSON `device_id`·`location.coords`, 속도 m/s) 모두 받음.
   응답: 저장 200 · 키 틀림 401 · 등록 안 된 기기 404(앱이 모아 두었다가 등록되면 다시 보냄).
   배포: 관리 API `POST /v1/projects/<ref>/functions/deploy?slug=track` (metadata `{"entrypoint_path":"index.ts","name":"track","verify_jwt":false}` + 파일) 또는 `supabase functions deploy track --no-verify-jwt`.
+  - `003_track_links.sql`: 용차 위치 링크(`track_links`: token·차량·날짜·시작·종료).
+- 같은 함수의 `/track/l/<token>` = 용차 위치 링크(브라우저 `loc.html`): GET → 차량번호·날짜·상태, POST `{lat,lng,…}`·`{points:[…]}` → 저장, `{end:true}` → 종료. 링크 날짜(한국)가 지나거나 종료면 410. CORS 열림(링크 값이 곧 권한).
 - 조일 서버(`apps-script/Code.js`의 `track.*`)는 스크립트 속성 `SB_URL`·`SB_KEY`(관리자 → API 키에서 입력)로 PostgREST를 읽어요.
 
 용량: 20대 × 5분 간격 × 하루 14시간 ≈ 하루 0.5MB → 무료 500MB로 약 2~3년. 넘으면 오래된 기록을 줄이거나 유료 요금제.
