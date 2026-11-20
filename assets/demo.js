@@ -288,6 +288,9 @@
   }
 
   /* 업체별 자료 (서버 Code.js와 같은 규칙): 업체 칸이 빈 예전 자료 = 쿠팡부자재 */
+  /** 도착지 특이사항 (서버 dispNotes_와 같게) · 센터 이름은 띄어쓰기·FC·층·괄호·'-' 뒤 빼고 비교 */
+  function cnKey(v) { var t = String(v || '').replace(/\([^)]*\)/g, ' ').split(/\s*[-–—~]\s*/)[0]; return t.replace(/(^|\s)(지하\s*)?B?\d+\s*(층|F)(?=\s|$)/gi, ' ').replace(/\s+/g, '').replace(/(FC|센터)/gi, '').toUpperCase(); }
+  function demoNotes(c) { return ((store.dispNotes || {})[c] || []).slice(); }
   function dCust(c) { return String(c || '').trim() || '쿠팡부자재'; }
   function dBlack(v) { return v === true || /^(o|ㅇ|1|y|yes|예|네|블랙|black|true|v|✓|✔|●|금지|출입금지)$/i.test(String(v == null ? '' : v).trim()); }
   function dTon(v) { var t = String(v == null ? '' : v).replace(/\s/g, '').replace(/(t|T|ton|TON)$/, '톤'); return /^\d+(\.\d+)?$/.test(t) ? t + '톤' : t; }
@@ -344,6 +347,7 @@
     var plg = pl && pl.addr && demoGeo(pl.addr); if (pl) pl = Object.assign({}, pl, plg ? { lat: plg.lat, lng: plg.lng } : {});
     var froms = [from], more = []; orders.forEach(function (o) { var f = o.d.from; if (!f || froms.indexOf(f) !== -1) return; froms.push(f); more.push(wk('places').filter(function (p) { return p.name === f; })[0] || { name: f }); });
     var dn = [], dseen = {}; orders.forEach(function (o) { var k = o.d.fc + '|' + o.noteDrv; if (o.noteDrv && !dseen[k]) { dseen[k] = 1; dn.push({ fc: o.d.fc, text: o.noteDrv }); } });
+    var dcn = demoNotes(tr.cust.replace(/\/.*$/, '')).filter(function (x) { return x.drv; }); orders.forEach(function (o) { var k = cnKey(o.d.fc); dcn.forEach(function (x) { if (k && cnKey(x.fc) === k && !dseen['|' + x.note]) { dseen['|' + x.note] = 1; dn.push({ fc: o.d.fc, text: x.note }); } }); });
     var rc = []; grp.forEach(function (g) { wk('rcpt').forEach(function (x) { if (x.cust === g.cust && x.date === g.date && x.no === g.no) rc.push({ fc: x.fc, at: x.at, tk: g.token }); }); });
     return { notes: dn, date: tr.date, no: grp[0].no, cust: tr.cust.replace(/\/.*$/, ''), car: grp[0].car, driver: grp[0].driver, from: from || '', place: pl, more: more, stops: stops, receipts: rc };
   }
@@ -367,12 +371,12 @@
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
       if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
       if ((req.action === 'drivers.list' || req.action === 'drivers.save') && !req._nb) { delete (req.driver || {}).birth; delete (req.driver || {}).black; delete (req.driver || {}).org; var dpr = handle(Object.assign({}, req, { _nb: 1 })); dpr.drivers = dpr.drivers.map(function (v) { var o = Object.assign({}, v); delete o.birth; return o; }); return dpr; } // 생년월일은 협력사에 안 보내요
-      [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && req.action !== 'dispatch.must' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
+      [req.cust].concat(req.keys || []).forEach(function (k) { if (k && req.action !== 'dispatch.tabs' && req.action !== 'dispatch.must' && req.action !== 'dispatch.notes' && me.dispTabs.indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); });
       if (req.action === 'dispatch.tabs') { return { tabs: demoTabs(req.cust).filter(function (t) { return !t.hidden && me.dispTabs.indexOf(req.cust + t.suf) !== -1; }) }; }
     }
     if (['dieselPrice', 'quote', 'quoteBatch', 'history.list', 'history.get', 'quotes.save', 'quotes.list', 'quotes.get', 'quotes.update', 'quotes.delete',
@@ -648,8 +652,11 @@
       case 'dispatch.priceSave': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); store.dispPrice = store.dispPrice || {}; var dpp = store.dispPrice[req.cust] = store.dispPrice[req.cust] || {}, dpv = Math.round(Number(String(req.price == null ? '' : req.price).replace(/[^0-9.]/g, ''))) || 0; if (dpv > 0) dpp[req.ym] = dpv; else delete dpp[req.ym]; save(); return { prices: dpp };
       case 'dispatch.codes': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); return { codes: (store.dispCodes || {})[req.cust] || {} };
       case 'dispatch.codesSave': if (me.perms.indexOf('analysis') === -1) fail('매입 단가는 분석 권한자만 볼 수 있습니다.'); store.dispCodes = store.dispCodes || {}; store.dispCodes[req.cust] = { sale: String((req.codes || {}).sale || ''), buy: (req.codes || {}).buy || {}, jo: String((req.codes || {}).jo || '') }; save(); return { codes: store.dispCodes[req.cust] };
-      case 'dispatch.must': if (me.role === 'partner' && me.dispTabs.every(function (k) { return String(k).replace(/\/.*$/, '') !== dCust(req.cust); })) fail('볼 수 없는 업체예요.'); return { list: (store.dispMust || {})[dCust(req.cust)] || [] };
-      case 'dispatch.mustSave': store.dispMust = store.dispMust || {}; var dms = {}; store.dispMust[dCust(req.cust)] = (req.list || []).map(function (v) { return String(v == null ? '' : v).trim().slice(0, 40); }).filter(function (v) { if (!v || dms[v]) return false; dms[v] = 1; return true; }).slice(0, 300); save(); return { list: store.dispMust[dCust(req.cust)] };
+      case 'dispatch.must': return { list: demoNotes(dCust(req.cust)).filter(function (x) { return x.lock; }).map(function (x) { return x.fc; }) };
+      case 'dispatch.notes': if (me.role === 'partner' && me.dispTabs.every(function (k) { return String(k).replace(/\/.*$/, '') !== dCust(req.cust); })) fail('볼 수 없는 업체예요.'); return { list: demoNotes(dCust(req.cust)).filter(function (x) { return me.role !== 'partner' || x.ptn || x.drv; }) };
+      case 'dispatch.notesSave': store.dispNotes = store.dispNotes || {}; var dns = {}, tt = function (v, n) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim().slice(0, n); };
+        store.dispNotes[dCust(req.cust)] = (req.list || []).slice(0, 300).map(function (x) { return { fc: tt(x.fc, 40), note: tt(x.note, 100), ptn: !!x.ptn, drv: !!x.drv, lock: !!x.lock }; }).filter(function (x) { var k = cnKey(x.fc) + '|' + x.note; if (!x.fc || !x.note || dns[k]) return false; dns[k] = 1; return true; });
+        save(); return { list: store.dispNotes[dCust(req.cust)] };
       case 'dispatch.map': var dm2 = {}; wk('dispMap').forEach(function (x) { dm2[x.fc] = x.dest; }); return { map: dm2 };
       case 'dispatch.ratesSave':
         if (!canCost(me)) fail('매입 단가는 분석 권한자만 볼 수 있습니다.');

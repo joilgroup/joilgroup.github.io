@@ -1646,9 +1646,12 @@ body.cal-dragging * { cursor: grabbing !important; }
 }
 @media (max-width: 640px) { .cal-card .cal-week { grid-template-rows: 24px repeat(4, 8px) 14px; } .cal-bar.mv { pointer-events: none; } }
 
-/* 오늘 꼭 가야 하는 센터 (시간 조정·날짜 변경 불가) */
-.dp-must { display: inline-block; font-size: 11.5px; font-weight: 800; color: #fff; background: #D63A28; border-radius: 4px; padding: 0 6px; margin-left: 4px; line-height: 18px; white-space: nowrap; vertical-align: 1px; }
-.dp-todo li.must { color: #B42A1A; }
+/* 도착지 특이사항 (센터마다 멘트) */
+.nt.cn { display: inline-block; color: #6B4A00; background: #FFF8DD; border: 1px solid #E8C860; border-radius: 5px; padding: 0 6px; margin: 0 4px 2px 0; font-weight: 650; }
+.tt-note.cn { display: inline-block; color: #6B4A00; background: #FFF8DD; border: 1px solid #E8C860; border-radius: 5px; padding: 0 6px; font-weight: 650; }
+.nt.cn.lock, .tt-note.cn.lock { color: #fff; background: #D63A28; border-color: #D63A28; }
+.dp-todo li.cn { color: #6B4A00; } .dp-todo li.must { color: #B42A1A; }
+.cn-tb td { vertical-align: middle; } .cn-tb td:first-child { width: 22%; } .cn-tb .input { width: 100%; }
 
 /* 서버가 늦을 때 안내 (화면 아래) */
 .net-bar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 9000; display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px); padding: 10px 16px; border-radius: 999px;
