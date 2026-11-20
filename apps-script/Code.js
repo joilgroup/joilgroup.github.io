@@ -171,6 +171,8 @@ function handle_(req) {
     case 'track.list': return trackList_();
     case 'track.route': return trackRoute_(req.id, req.date);
     case 'track.save': return trackSave_(req.vehicle || {});
+    case 'track.linkMake': return trackLinkMake_(session, req);
+    case 'track.linkEnd': return trackLinkEnd_(req.link); // token 은 로그인 토큰이라 이름을 link 로
     case 'analysis.index': return analysisIndex_(session);
     case 'analysis.load': return analysisLoad_(req.keys);
     case 'dieselPrice': return dieselPrice_();
@@ -4198,7 +4200,29 @@ function trackAppUrl_() {
 }
 
 function trackList_() {
-  return { vehicles: sb_('get', 'vehicles?select=' + TRACK_COLS + '&order=plate'), appUrl: trackAppUrl_(), now: new Date().toISOString() };
+  var today = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  return { vehicles: sb_('get', 'vehicles?select=' + TRACK_COLS + '&order=plate'), appUrl: trackAppUrl_(), now: new Date().toISOString(), today: today,
+    links: sb_('get', 'track_links?date=gte.' + today + '&select=token,vehicle_id,date,started_at,ended_at&order=created_at') || [] };
+}
+
+/** 용차 위치 링크 만들기 (앱 없이 문자 링크로 그날 하루) — 차량번호로 찾고 없으면 '용차'로 등록. 기사 이름·연락처는 넣었을 때만 바꿈(용차는 날마다 바뀜) */
+function trackLinkMake_(session, req) {
+  var plate = String(req.plate || '').trim().slice(0, 30), date = String(req.date || Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd'));
+  if (!plate) throw new Error('차량번호를 넣어 주세요.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date < Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd')) throw new Error('오늘이나 이후 날짜를 골라 주세요.');
+  var v = (sb_('get', 'vehicles?plate=eq.' + encodeURIComponent(plate) + '&select=id') || [])[0], patch = { active: true, updated_at: new Date().toISOString() };
+  ['driver_name', 'driver_phone', 'company'].forEach(function (k) { var x = String(req[k] == null ? '' : req[k]).trim().slice(0, 60); if (x) patch[k] = x; });
+  if (v) sb_('patch', 'vehicles?id=eq.' + v.id, patch);
+  else v = sb_('post', 'vehicles', Object.assign({ plate: plate, device_id: trackNorm_(plate).slice(0, 60), affiliation: '용차' }, patch), 'return=representation')[0];
+  var token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, '').slice(0, 8);
+  sb_('post', 'track_links', { token: token, vehicle_id: v.id, date: date, created_by: String(session.name || session.id || '') });
+  var out = trackList_(); out.token = token; return out;
+}
+
+function trackLinkEnd_(token) {
+  if (!/^[a-f0-9]{24,64}$/.test(String(token || ''))) throw new Error('링크를 다시 골라 주세요.');
+  sb_('patch', 'track_links?token=eq.' + token + '&ended_at=is.null', { ended_at: new Date().toISOString() });
+  return trackList_();
 }
 
 /** 하루(한국 시간) 경로 */
