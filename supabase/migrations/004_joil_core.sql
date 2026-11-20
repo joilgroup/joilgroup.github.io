@@ -51,7 +51,7 @@ create table if not exists joil.disp_orders (
   cust     text not null,                       -- 업체 키 (업체+탭 접미사, 예: 쿠팡부자재/평택)
   date     text not null,                       -- YYYY-MM-DD
   key      text not null default '',            -- 가져오기 키 (겹침 확인)
-  data     jsonb not null default '{}'::jsonb,  -- 오더 내용 (화면이 정한 JSON 그대로)
+  data     json not null default '{}'::json,    -- 오더 내용 (화면이 정한 JSON 그대로 · json = 칸 순서도 그대로)
   truck    int,                                 -- 호차 (null = 미배정)
   seq      bigint not null default 0,           -- 순서 (합차 하차 순서는 100000~)
   by_name  text not null default '',            -- 등록자
@@ -208,9 +208,9 @@ create table if not exists joil.center_notes (
 create index if not exists center_notes_cust on joil.center_notes (cust);
 
 -- ── 스크립트 속성에 있던 배차 값: 탭(DISP_TABS_업체) · 월별 단가(DISP_PRICE_업체) · 차도리 코드(DISP_CODES_업체) · 바뀐 시각(DST|업체|날짜)
-create table if not exists joil.disp_tabs   (cust text primary key, tabs jsonb not null);
-create table if not exists joil.disp_prices (cust text primary key, prices jsonb not null default '{}'::jsonb);  -- { 'YYYY-MM': 단가 }
-create table if not exists joil.disp_codes  (cust text primary key, codes jsonb not null default '{}'::jsonb);
+create table if not exists joil.disp_tabs   (cust text primary key, tabs json not null);
+create table if not exists joil.disp_prices (cust text primary key, prices json not null default '{}'::json);  -- { 'YYYY-MM': 단가 }
+create table if not exists joil.disp_codes  (cust text primary key, codes json not null default '{}'::json);
 create table if not exists joil.disp_stamps (cust text not null, date text not null, stamp bigint not null, primary key (cust, date));
 
 -- ── 데이터 옮기기 기록 (Code.js '시험 복사'가 어디까지 보냈는지)

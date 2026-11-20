@@ -38,6 +38,7 @@ function onOpen() {
     .addItem('서류함 준비 (드라이브 권한)', 'setupDocs')
     .addItem('공휴일 받기 (캘린더 권한)', 'setupHolidays')
     .addItem('주간 요약 메일 켜기 (메일 권한)', 'installWeeklyTrigger')
+    .addItem('서버 이전: 무료 자동 백업 켜기 (전환 뒤)', 'installSbBackupTrigger')
     .addToUi();
 }
 
@@ -116,6 +117,7 @@ function handle_(req) {
   if (action === 'drv.get') return drvGet_(req.t);
   if (action === 'drv.upload') return drvUpload_(req);
   if (action === 'drv.photo') return drvPhoto_(req);
+  if (/^int\./.test(action)) return sbInternal_(req); // Supabase 서버가 사진·좌표를 맡길 때 (비밀값 확인)
 
   var session = requireSession_(req.token);
   var allowedBeforeChange = ['me', 'logout', 'changePassword', 'publicSettings'];
@@ -301,6 +303,12 @@ function handle_(req) {
     case 'admin.saveCompanies': return saveCompanies_(req.companies);
     case 'admin.saveNews': return saveNewsRules_(req.rules);
     case 'rates.delete': return ratesDelete_(req.cust);
+    case 'admin.sbStatus': return sbStatus_();
+    case 'admin.sbCopy': return sbCopy_(req);
+    case 'admin.sbCompare': return sbCompare_(req);
+    case 'admin.sbBackupNow': return { rows: sbBackupNightly(), status: sbStatus_() };
+    case 'admin.sbBackupOn': installSbBackupTrigger(); return sbStatus_();
+    case 'admin.sbBackupOff': sbBackupOff_(); return sbStatus_();
   }
   throw new Error('알 수 없는 요청입니다: ' + action);
 }
@@ -354,7 +362,7 @@ function requireSession_(token) {
   if (!token) throw new Error('로그인이 필요합니다.');
   var cache = CacheService.getScriptCache();
   var raw = cache.get('S_' + token);
-  if (!raw) { var kp = keepGet_(token); if (!kp) throw new Error('로그인이 만료되었습니다. 다시 로그인하세요.'); raw = JSON.stringify({ id: kp.id }); } // 로그인 유지: 캐시가 비어도 되살려요
+  if (!raw) { var kp = keepGet_(token); if (!kp) { var sbs = sbWho_(token); if (sbs) return sbs; throw new Error('로그인이 만료되었습니다. 다시 로그인하세요.'); } raw = JSON.stringify({ id: kp.id }); } // 로그인 유지: 캐시가 비어도 되살려요 · 서버 이전 뒤엔 Supabase 토큰도(sbWho_)
   var id = JSON.parse(raw).id;
   var u = cachedUser_(id);
   if (!u || !u.active) {
@@ -4258,4 +4266,147 @@ function trackKeysSave_(url, key) {
   try { sb_('get', 'vehicles?select=id&limit=1'); }
   catch (e) { if (old.u) p.setProperty('SB_URL', old.u); else p.deleteProperty('SB_URL'); if (old.k) p.setProperty('SB_KEY', old.k); else p.deleteProperty('SB_KEY'); throw e; }
   return { keys: keyStatus_() };
+}
+
+/* ───────────── 서버 이전 (Supabase) 준비 도구 ─────────────
+   docs/서버이전.md 참고. 전환 전까지는 구글 시트가 원본이에요. 여기 있는 건 모두 관리자가 눌러야만 움직여요.
+   - 시험 복사(admin.sbCopy): 시트를 조각으로 읽어 Supabase joil 표로 (처음 조각에서 그 표를 비워서 여러 번 눌러도 중복 없음)
+   - 비교(admin.sbCompare): 같은 달의 업체·날짜별 오더 수·호차 수, 업체별 번들·금액 합계를 양쪽에서 계산해 다른 곳만
+   - 무료 자동 백업(sbBackupNightly): 전환 뒤 Supabase → 구글 시트(별도 파일)로 매일 밤 복사 · 켜기 전엔 안 돌아요
+   - int.*: Supabase 서버가 사진 파일(드라이브)·주소 좌표(카카오)를 구글 쪽에 맡길 때 (비밀값 SB_GAS_SECRET 확인)
+   - SB_AUTH = '1' 이면 Supabase 로그인 토큰도 받아요(견적·일정처럼 아직 안 옮긴 메뉴용) — 전환할 때 켜요 */
+function sbRpc_(name, args) { return sb_('post', 'rpc/' + name, args || {}); }
+function sbT_(v) { return v instanceof Date ? Utilities.formatDate(v, TZ, 'yyyy-MM-dd HH:mm:ss') : dispTxt_(v); }
+function sbN_(v) { return v === '' || v == null || isNaN(Number(v)) ? null : Number(v); }
+function sbYN_(v) { return v === true || String(v) === 'Y' ? 'Y' : 'N'; }
+function sbGasSecret_() { var p = PropertiesService.getScriptProperties(), s = p.getProperty('SB_GAS_SECRET'); if (!s) { s = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().replace(/-/g, ''); p.setProperty('SB_GAS_SECRET', s); } return s; }
+/** 옮기는 순서: [표 이름, 시트 이름, 헤더, 줄 → 표 칸] */
+function sbPlan_() {
+  return [
+    ['accounts', SHEET_USERS, USER_COLS, function (r) { return { id: String(r[0]), name: sbT_(r[1]), role: sbT_(r[2]), status: sbT_(r[3]), pw_hash: String(r[4]), salt: String(r[5]), must_change: sbYN_(r[6]), created_at: sbT_(r[7]), last_login: sbT_(r[8]), perms: r[9] === '' || r[9] == null ? null : String(r[9]), disp_tabs: sbT_(r[10]) }; }],
+    ['disp_orders', SHEET_DISP_ORD, DISP_ORD_HEADER, function (r, row) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), key: String(r[3]), data: parseJson_(r[4], {}) || {}, truck: r[5] === '' ? null : Number(r[5]), seq: Number(r[6]) || 0, by_name: sbT_(r[7]), at: sbT_(r[8]), note_in: sbT_(r[9]), note_drv: sbT_(r[10]), sheet_row: row }; }],
+    ['disp_trucks', SHEET_DISP_TRK, DISP_TRK_HEADER, function (r, row) { return { cust: String(r[0]), date: textDate_(r[1]), no: Number(r[2]) || 0, car: sbT_(r[3]), driver: sbT_(r[4]), phone: sbT_(r[5]), time: sbT_(r[6]), ton: sbT_(r[7]), memo: sbT_(r[8]), by_name: sbT_(r[9]), at: sbT_(r[10]), token: String(r[11] || ''), status: sbT_(r[12]), ret_cost: Number(r[13]) || 0, wait: Number(r[14]) || 0, support: Number(r[15]) || 0, join_tk: sbT_(r[16]), rev: sbN_(r[17]), cost: sbN_(r[18]), sheet_row: row }; }],
+    ['receipts', SHEET_RECEIPTS, RECEIPT_HEADER, function (r) { return { id: String(r[0]), cust: String(r[1]), date: textDate_(r[2]), no: Number(r[3]) || 0, fc: sbT_(r[4]), file_id: String(r[5]), at: sbT_(r[6]), size: Number(r[7]) || 0 }; }],
+    ['drivers', SHEET_DRIVERS, DRIVER_HEADER, function (r) { return { id: String(r[0]), car: sbT_(r[1]), driver: sbT_(r[2]), phone: sbT_(r[3]), ton: sbT_(r[4]), memo: sbT_(r[5]), pin: sbYN_(r[6]), n: Number(r[7]) || 0, last: textDate_(r[8]), by_name: sbT_(r[9]), at: sbT_(r[10]), birth: sbT_(r[11]), org: sbT_(r[12]), black: sbT_(r[13]) }; }],
+    ['loading_places', SHEET_LOADING, LOADING_HEADER, function (r) { return { id: String(r[0]), name: sbT_(r[1]), addr: sbT_(r[2]), time: sbT_(r[3]), contact: sbT_(r[4]), memo: sbT_(r[5]), by_name: sbT_(r[6]), at: sbT_(r[7]), rate_from: sbT_(r[8]), cust: sbT_(r[9]), manager: sbT_(r[10]) }; }],
+    ['place_photos', SHEET_PLACE_PHOTOS, PLACE_PHOTO_HEADER, function (r) { return { id: String(r[0]), place_id: String(r[1]), file_id: String(r[2]), cap: sbT_(r[3]), by_name: sbT_(r[4]), at: sbT_(r[5]) }; }],
+    ['dest_book', SHEET_DESTBOOK, DESTBOOK_HEADER, function (r) { return { kind: sbT_(r[0]), code: sbT_(r[1]), name: sbT_(r[2]), addr: sbT_(r[3]), by_name: sbT_(r[4]), at: sbT_(r[5]), cust: sbT_(r[6]), manager: sbT_(r[7]), tel: sbT_(r[8]), hours: sbT_(r[9]), rate_to: sbT_(r[10]), memo: sbT_(r[11]) }; }],
+    ['disp_rates', SHEET_DISP_RATES2, DISP_RATE2_HEADER, function (r) { return { cust: sbT_(r[0]), from: sbT_(r[1]), to: sbT_(r[2]), ton: sbT_(r[3]), price: Number(r[4]) || 0, start: textDate_(r[5]), memo: sbT_(r[6]), dist: sbN_(r[7]), by_name: sbT_(r[8]), at: sbT_(r[9]) }; }],
+    ['center_map', SHEET_DISP_MAP, DISP_MAP_HEADER, function (r) { return { fc: String(r[0]), dest: sbT_(r[1]), by_name: sbT_(r[2]), at: sbT_(r[3]) }; }],
+    ['center_notes', SHEET_DISP_CN, DISP_CN_HEADER, function (r) { return { cust: String(r[0]), fc: sbT_(r[1]), note: sbT_(r[2]), ptn: sbYN_(r[3]), drv: sbYN_(r[4]), lock: sbYN_(r[5]), by_name: sbT_(r[6]), at: sbT_(r[7]) }; }]
+  ];
+}
+var SB_CHUNK = 1500;
+/** 시험 복사 한 조각: 화면이 { step, from } 을 받아 done 이 될 때까지 다시 불러요 (Apps Script 한 번 실행 6분 제한 때문에 나눠요) */
+function sbCopy_(req) {
+  var plan = sbPlan_(), step = Math.max(0, Number(req.step) || 0), from = Math.max(0, Number(req.from) || 0), t0 = Date.now();
+  if (step === 0 && from === 0) { // 처음: 새 서버가 사진·좌표를 맡길 주소와 비밀값 · 단가표는 세로형으로 먼저 옮겨 둠
+    try { sbRpc_('joil_prop_set', { p_key: 'GAS_URL', p_value: ScriptApp.getService().getUrl() }); } catch (e) { throw new Error('Supabase 연결 확인: ' + e.message + ' (supabase/migrations 006까지 적용됐는지 확인)'); }
+    sbRpc_('joil_prop_set', { p_key: 'GAS_SECRET', p_value: sbGasSecret_() });
+    dispRatesMigrate_();
+  }
+  if (step >= plan.length) { sbCopyProps_(); return { done: true, counts: sbRpc_('joil_counts') }; }
+  var job = plan[step], sh = SpreadsheetApp.getActive().getSheetByName(job[1]), last = sh ? sh.getLastRow() : 0, rows = [], n = 0;
+  while (true) {
+    var cnt = Math.min(SB_CHUNK, last - 1 - from);
+    var vals = cnt > 0 ? sh.getRange(from + 2, 1, cnt, job[2].length).getValues() : [];
+    rows = []; vals.forEach(function (r, i) { if (r[0] !== '' || (job[0] === 'dest_book' && (r[1] !== '' || r[2] !== ''))) rows.push(job[3](r, from + i + 2)); });
+    sbRpc_('joil_copy', { p_table: job[0], p_rows: rows, p_reset: from === 0 }); n += rows.length;
+    from += Math.max(cnt, 0);
+    if (cnt <= 0 || from >= last - 1) return { step: step + 1, from: 0, table: job[0], copied: n, done: false };
+    if (Date.now() - t0 > 200000) return { step: step, from: from, table: job[0], copied: n, done: false }; // 실행 시간 넉넉히 남기고 다음 조각
+  }
+}
+/** 스크립트 속성에 있던 배차 값 → 표: 탭·월별 단가·차도리 코드·바뀐 시각·예전 꼭 가야 하는 센터 + 화면 공개 설정 */
+function sbCopyProps_() {
+  var all = PropertiesService.getScriptProperties().getProperties(), tabs = [], prices = [], codes = [], stamps = [], props = [{ key: 'PUBLIC_SETTINGS', value: JSON.stringify(publicSettings_()) }];
+  Object.keys(all).forEach(function (k) {
+    var v = all[k], m;
+    if (k.indexOf('DISP_TABS_') === 0) tabs.push({ cust: k.slice(10), tabs: parseJson_(v, []) });
+    else if (k.indexOf('DISP_PRICE_') === 0) prices.push({ cust: k.slice(11), prices: parseJson_(v, {}) });
+    else if (k.indexOf('DISP_CODES_') === 0) codes.push({ cust: k.slice(11), codes: parseJson_(v, {}) });
+    else if ((m = k.match(/^DST\|(.*)\|(\d{4}-\d{2}-\d{2})$/))) stamps.push({ cust: m[1], date: m[2], stamp: Number(v) || 0 });
+    else if (k.indexOf('DISP_MUST_') === 0 || k === 'DISP_RATES_V2') props.push({ key: k, value: v });
+  });
+  [['disp_tabs', tabs], ['disp_prices', prices], ['disp_codes', codes], ['disp_stamps', stamps], ['props', props]].forEach(function (x) { sbRpc_('joil_copy', { p_table: x[0], p_rows: x[1], p_reset: true }); });
+}
+/** 비교: 시트 쪽 요약 (Supabase joil_summary 와 같은 계산) */
+function sbSummary_(ym) {
+  var inM = function (c, d) { return String(d).slice(0, 7) === ym; }, o = { orders: {}, trucks: {}, bundle: {}, money: {} };
+  headerSheet_(SHEET_DISP_ORD, DISP_ORD_HEADER); dispTrkSheet_();
+  rowsWhere_(SHEET_DISP_ORD, DISP_ORD_HEADER, 1, 2, inM).forEach(function (r) {
+    var c = String(r[1]), d = textDate_(r[2]); if (d.slice(0, 7) !== ym) return; o.orders[c + '|' + d] = (o.orders[c + '|' + d] || 0) + 1;
+    var b = String((parseJson_(r[4], {}) || {}).bundle || ''); if (/패키지/.test(b)) return;
+    o.bundle[c] = Math.round(((o.bundle[c] || 0) + (Number(b.replace(/[^0-9.]/g, '')) || 0)) * 100) / 100;
+  });
+  rowsWhere_(SHEET_DISP_TRK, DISP_TRK_HEADER, 0, 1, inM).forEach(function (r) {
+    var c = String(r[0]), d = textDate_(r[1]); if (d.slice(0, 7) !== ym) return; o.trucks[c + '|' + d] = (o.trucks[c + '|' + d] || 0) + 1;
+    var m = o.money[c] || (o.money[c] = { rev: 0, cost: 0, ret: 0, wait: 0, support: 0 });
+    m.rev += Number(r[17]) || 0; m.cost += Number(r[18]) || 0; m.ret += Number(r[13]) || 0; m.wait += Number(r[14]) || 0; m.support += Number(r[15]) || 0;
+  });
+  return o;
+}
+function sbCompare_(req) {
+  var ym = String(req.ym || ''); if (!/^\d{4}-\d{2}$/.test(ym)) throw new Error('월을 확인하세요.');
+  var a = sbSummary_(ym), b = sbRpc_('joil_summary', { p_ym: ym }) || {}, diffs = [];
+  ['orders', 'trucks', 'bundle'].forEach(function (k) {
+    var x = a[k] || {}, y = b[k] || {}, keys = Object.keys(x).concat(Object.keys(y).filter(function (q) { return !(q in x); })).sort();
+    keys.forEach(function (q) { var u = Number(x[q]) || 0, v = Number(y[q]) || 0; if (Math.abs(u - v) > 0.001) diffs.push({ what: { orders: '오더 수', trucks: '호차 수', bundle: '번들 합계' }[k], key: q, sheet: u, sb: v }); });
+  });
+  var mk = Object.keys(a.money).concat(Object.keys(b.money || {}).filter(function (q) { return !(q in a.money); })).sort();
+  mk.forEach(function (c) { ['rev', 'cost', 'ret', 'wait', 'support'].forEach(function (f) { var u = Number((a.money[c] || {})[f]) || 0, v = Number(((b.money || {})[c] || {})[f]) || 0; if (u !== v) diffs.push({ what: { rev: '매출 직접 입력 합계', cost: '실제 매입 합계', ret: '회차비 합계', wait: '대기료 합계', support: '운송료지원 합계' }[f], key: c, sheet: u, sb: v }); }); });
+  var cnt = function (s) { var n = 0; Object.keys(s.orders || {}).forEach(function (k) { n += Number(s.orders[k]) || 0; }); return n; }, cntT = function (s) { var n = 0; Object.keys(s.trucks || {}).forEach(function (k) { n += Number(s.trucks[k]) || 0; }); return n; };
+  return { ym: ym, same: !diffs.length, diffs: diffs.slice(0, 300), total: { sheet: { orders: cnt(a), trucks: cntT(a) }, sb: { orders: cnt(b), trucks: cntT(b) } } };
+}
+/** Supabase 서버가 맡기는 일 (비밀값으로만) */
+function sbInternal_(req) {
+  var s = PropertiesService.getScriptProperties().getProperty('SB_GAS_SECRET');
+  if (!s || String(req.secret || '') !== s) throw new Error('권한이 없어요.');
+  switch (String(req.action)) {
+    case 'int.fileGet': return { data: Utilities.base64Encode(DriveApp.getFileById(String(req.fileId)).getBlob().getBytes()) };
+    case 'int.filePut': var bytes = Utilities.base64Decode(String(req.data || '')); if (!bytes.length) throw new Error('사진이 비어 있어요.'); if (bytes.length > 6 * 1024 * 1024) throw new Error('사진이 너무 커요.');
+      var f = (req.folder === 'place' ? placePhotoFolder_() : receiptFolder_()).createFile(Utilities.newBlob(bytes, 'image/jpeg', String(req.name || 'photo.jpg').slice(0, 200))); return { fileId: f.getId(), size: bytes.length };
+    case 'int.fileTrash': try { DriveApp.getFileById(String(req.fileId)).setTrashed(true); } catch (e) { /* 이미 없음 */ } return {};
+    case 'int.geo': return { coords: dispGeo_(req.addrs) };
+  }
+  throw new Error('알 수 없는 요청입니다: ' + req.action);
+}
+/** SB_AUTH 가 켜져 있으면 Supabase 로그인 토큰으로 계정 확인 (5분 캐시) */
+function sbWho_(token) {
+  var p = PropertiesService.getScriptProperties(); if (p.getProperty('SB_AUTH') !== '1' || !/^[0-9a-f-]{60,80}$/.test(String(token))) return null;
+  var cache = CacheService.getScriptCache(), ck = 'SBW_' + toHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(token), Utilities.Charset.UTF_8)).slice(0, 40), hit = cache.get(ck);
+  var u = hit ? JSON.parse(hit) : sbRpc_('joil_whoami', { p_token: String(token) });
+  if (!u || !u.id) return null;
+  if (!hit) cache.put(ck, JSON.stringify(u), 300);
+  if (!u.active) throw new Error('사용이 중지된 계정입니다.');
+  return { id: String(u.id), name: String(u.name), role: String(u.role), mustChange: !!u.mustChange, perms: permsOf_(u.role, u.perms == null ? '' : u.perms), dispTabs: tabsOf_(u.tabs) };
+}
+/* 무료 자동 백업: Supabase joil 표 → 별도 구글 시트 파일 '조일 Supabase 백업' (표마다 시트 하나, 매일 밤 통째로 다시 씀) */
+var SB_BACKUP_TABLES = ['accounts', 'disp_orders', 'disp_trucks', 'receipts', 'drivers', 'loading_places', 'place_photos', 'dest_book', 'disp_rates', 'center_map', 'center_notes', 'disp_tabs', 'disp_prices', 'disp_codes', 'disp_stamps', 'props'];
+function sbBackupFile_() {
+  var p = PropertiesService.getScriptProperties(), id = p.getProperty('SB_BACKUP_FILE');
+  if (id) { try { return SpreadsheetApp.openById(id); } catch (e) { /* 새로 */ } }
+  var ss = SpreadsheetApp.create('조일 Supabase 백업'); p.setProperty('SB_BACKUP_FILE', ss.getId()); return ss;
+}
+function sbBackupNightly() {
+  var ss = sbBackupFile_(), out = {}, t0 = Date.now();
+  SB_BACKUP_TABLES.forEach(function (t) {
+    var rows = [], off = 0; while (true) { var part = sbRpc_('joil_dump', { p_table: t, p_offset: off, p_limit: 5000 }) || []; rows = rows.concat(part); off += part.length; if (part.length < 5000) break; }
+    var cols = rows.length ? Object.keys(rows[0]) : ['(빈 표)'], sh = ss.getSheetByName(t) || ss.insertSheet(t);
+    var vals = [cols].concat(rows.map(function (r) { return cols.map(function (c) { var v = r[c]; return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : typeof v === 'string' ? "'" + v : v; }); }));
+    sh.clearContents(); sh.getRange(1, 1, vals.length, cols.length).setValues(vals); out[t] = rows.length;
+  });
+  PropertiesService.getScriptProperties().setProperty('SB_BACKUP_LAST', JSON.stringify({ at: now_(), rows: out, ms: Date.now() - t0 }));
+  return out;
+}
+function installSbBackupTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'sbBackupNightly') ScriptApp.deleteTrigger(t); });
+  ScriptApp.newTrigger('sbBackupNightly').timeBased().everyDays(1).atHour(2).create();
+  return { on: true };
+}
+function sbBackupOff_() { ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'sbBackupNightly') ScriptApp.deleteTrigger(t); }); return { on: false }; }
+function sbStatus_() {
+  var p = PropertiesService.getScriptProperties(), on = false; try { on = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'sbBackupNightly'; }); } catch (e) { /* 권한 전 */ }
+  var counts = null, err = ''; try { counts = sbRpc_('joil_counts'); } catch (e) { err = e.message; }
+  return { connected: !!(p.getProperty('SB_URL') && p.getProperty('SB_KEY')), counts: counts, error: err, sbAuth: p.getProperty('SB_AUTH') === '1', backupOn: on, backupLast: parseJson_(p.getProperty('SB_BACKUP_LAST'), null) };
 }

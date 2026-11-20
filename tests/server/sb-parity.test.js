@@ -119,5 +119,7 @@ function diff(a, b) { for (var i = 0; i < Math.max(a.length, b.length); i++) if 
     await both('ptn', 'dispatch.stamp', { keys: ['쿠팡부자재'], date: D }, '협력사 남의 탭');
     await both('ptn', 'quotes.list', {}, '협력사 견적 막힘');
     await both('stf', 'admin.listUsers', {}, '관리자만');
+    var jt = await S.sql`select distinct json_typeof(data) t from disp_orders`; ok('오더 내용이 JSON 객체로 저장(글자로 두 번 싸지 않음)', jt.length === 1 && jt[0].t === 'object', jt);
+    var tt = await S.sql`select json_typeof(tabs) t from disp_tabs`; ok('탭도 JSON 배열로 저장', tt.length && tt.every(function (x) { return x.t === 'array'; }), tt);
   } finally { await S.stop(); }
 })().catch(function (e) { ok('실행 오류', false, e.stack || String(e)); });

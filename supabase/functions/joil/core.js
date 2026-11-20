@@ -257,7 +257,7 @@ export function makeServer(sql, opts) {
     });
     if (!list.some(function (t) { return !t.hidden; })) throw err('보이는 탭이 하나는 있어야 해요.');
     old.forEach(function (o) { if (!list.some(function (t) { return t.suf === o.suf; })) list.push(Object.assign({}, o, { hidden: true })); });
-    await Q(sql, 'insert into disp_tabs (cust, tabs) values ($1, $2::jsonb) on conflict (cust) do update set tabs = excluded.tabs', [cust, JSON.stringify(list)]);
+    await Q(sql, 'insert into disp_tabs (cust, tabs) values ($1, $2::text::json) on conflict (cust) do update set tabs = excluded.tabs', [cust, JSON.stringify(list)]);
     return { tabs: list };
   }
   async function dispPrices(cust) { var r = (await Q(sql, 'select prices from disp_prices where cust = $1', [dispCust(cust)]))[0]; return (r && parseJson(r.prices, {})) || {}; }
@@ -266,7 +266,7 @@ export function makeServer(sql, opts) {
     return locked('price|' + cust, async function (tx) {
       var r = (await Q(tx, 'select prices from disp_prices where cust = $1', [cust]))[0], p = (r && parseJson(r.prices, {})) || {}, v = Math.round(Number(String(req.price == null ? '' : req.price).replace(/[^0-9.]/g, ''))) || 0;
       if (v > 0) p[ym] = Math.min(v, 10000000); else delete p[ym];
-      await Q(tx, 'insert into disp_prices (cust, prices) values ($1, $2::jsonb) on conflict (cust) do update set prices = excluded.prices', [cust, JSON.stringify(p)]); return p;
+      await Q(tx, 'insert into disp_prices (cust, prices) values ($1, $2::text::json) on conflict (cust) do update set prices = excluded.prices', [cust, JSON.stringify(p)]); return p;
     });
   }
   async function dispCodes(cust) { var r = (await Q(sql, 'select codes from disp_codes where cust = $1', [dispCust(cust)]))[0]; return (r && parseJson(r.codes, {})) || {}; }
@@ -274,7 +274,7 @@ export function makeServer(sql, opts) {
     var c = req.codes || {}, t = function (v) { return String(v == null ? '' : v).trim().slice(0, 30); }, buy = {};
     Object.keys(c.buy || {}).slice(0, 40).forEach(function (k) { buy[String(k).slice(0, 60)] = t(c.buy[k]); });
     var o = { sale: t(c.sale), buy: buy, jo: t(c.jo) };
-    await Q(sql, 'insert into disp_codes (cust, codes) values ($1, $2::jsonb) on conflict (cust) do update set codes = excluded.codes', [dispCust(req.cust), JSON.stringify(o)]); return o;
+    await Q(sql, 'insert into disp_codes (cust, codes) values ($1, $2::text::json) on conflict (cust) do update set codes = excluded.codes', [dispCust(req.cust), JSON.stringify(o)]); return o;
   }
   /* 도착지 특이사항 */
   function dispCnKey(v) {
@@ -319,7 +319,7 @@ export function makeServer(sql, opts) {
   /* ───────────── 배차: 저장 ───────────── */
   function dispKeyNorm(k) { var p = String(k || '').split('|'); if (p.length === 8) p.splice(1, 1); return p.join('|'); }
   var ORD_COLS = '(id, cust, date, key, data, truck, seq, by_name, at, note_in, note_drv)';
-  async function insOrders(db, rows) { for (var r of rows) await Q(db, 'insert into disp_orders ' + ORD_COLS + ' values ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$11)', r); }
+  async function insOrders(db, rows) { for (var r of rows) await Q(db, 'insert into disp_orders ' + ORD_COLS + ' values ($1,$2,$3,$4,$5::text::json,$6,$7,$8,$9,$10,$11)', r); }
   async function dispImport(session, req) {
     var cust = dispCust(req.cust), rows = (req.rows || []).slice(0, 2000);
     return locked('imp|' + cust, async function (tx) {
@@ -479,7 +479,7 @@ export function makeServer(sql, opts) {
       for (var k = 0; k < hit.length; k++) {
         var r = v[hit[k]], d = parseJson(r.data, {}) || {}, key = String(r.key), sq = Number(r.seq) || 0, tk = r.truck == null ? '' : String(r.truck); d.date = to; d.movedFrom = date; d.movedBy = session.name;
         if (key.indexOf(date + '|') === 0) key = to + key.slice(date.length);
-        await Q(tx, 'update disp_orders set date = $2, key = $3, data = $4::jsonb, truck = $5, seq = $6 where id = $1', [r.id, to, key, JSON.stringify(d), map[tk] || null, map[tk] && sq > 100000 ? sq : maxSeq + k + 1]);
+        await Q(tx, 'update disp_orders set date = $2, key = $3, data = $4::text::json, truck = $5, seq = $6 where id = $1', [r.id, to, key, JSON.stringify(d), map[tk] || null, map[tk] && sq > 100000 ? sq : maxSeq + k + 1]);
       }
       for (var t of tv) if (t.date === date && map[t.no]) await Q(tx, 'update disp_trucks set date = $2, no = $3 where uid = $1', [t.uid, to, map[t.no]]);
       return { moved: hit.length, toDate: to, kept: Object.keys(map).length, trucks: map };
@@ -491,7 +491,7 @@ export function makeServer(sql, opts) {
     DISP_EDIT_KEYS.forEach(function (k) { if (Object.prototype.hasOwnProperty.call(patch, k)) d[k] = String(patch[k] == null ? '' : patch[k]).trim().slice(0, 300); });
     if (!d.fc) throw err('센터명은 비울 수 없어요.');
     d.editedBy = session.name; d.editedAt = nowTxt();
-    await Q(sql, 'update disp_orders set data = $2::jsonb where id = $1', [r.id, JSON.stringify(d)]);
+    await Q(sql, 'update disp_orders set data = $2::text::json where id = $1', [r.id, JSON.stringify(d)]);
     await dispTouch(cust, date);
     return { ok: true };
   }
