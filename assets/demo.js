@@ -351,6 +351,16 @@
     var rc = []; grp.forEach(function (g) { wk('rcpt').forEach(function (x) { if (x.cust === g.cust && x.date === g.date && x.no === g.no) rc.push({ fc: x.fc, at: x.at, tk: g.token }); }); });
     return { notes: dn, date: tr.date, no: grp[0].no, cust: tr.cust.replace(/\/.*$/, ''), car: grp[0].car, driver: grp[0].driver, from: from || '', place: pl, more: more, stops: stops, receipts: rc };
   }
+  /* 변경 이력 (데모): 저장 전후 호차를 링크코드로 맞대어 바뀐 칸만 (서버는 DB 트리거 · supabase/migrations/008) */
+  var DEMO_AUD_K = { car: 'car', driver: 'driver', phone: 'phone', time: 'time', ton: 'ton', memo: 'memo', status: 'status', no: 'no', retCost: 'ret_cost', wait: 'wait', support: 'support', rev: 'rev', cost: 'cost' };
+  function demoTrkSnap(cust, date) { return wk('dispTrk').filter(function (t) { return t.cust === cust && t.date === date; }).map(function (t) { return JSON.parse(JSON.stringify(t)); }); }
+  function demoAudit(cust, date, before, me) {
+    var after = demoTrkSnap(cust, date), at = today() + ' ' + new Date().toTimeString().slice(0, 8), nv = function (v) { return v == null || v === 0 ? '' : v; }, push = function (op, t, chg) { if (Object.keys(chg).length) wk('audit').unshift({ id: Date.now() + Math.random(), at: at, who: me.name, tbl: 'truck', op: op, cust: cust, date: date, ref: t.token || '', no: t.no, chg: chg }); };
+    after.forEach(function (t) { var o = before.filter(function (x) { return x.token && x.token === t.token; })[0], c = {};
+      Object.keys(DEMO_AUD_K).forEach(function (k) { if (o ? String(nv(o[k])) !== String(nv(t[k])) : nv(t[k]) !== '' && k !== 'no') c[DEMO_AUD_K[k]] = [o ? nv(o[k]) : null, nv(t[k])]; });
+      push(o ? 'edit' : 'add', t, c); });
+    before.forEach(function (o) { if (o.token && !after.some(function (t) { return t.token === o.token; })) push('del', o, { car: [o.car || '', null] }); });
+  }
   function handle(req) {
     if (/^dispatch\./.test(req.action || '')) { var fr = load(); if (fr) store = fr; } // 다른 창(다른 계정)에서 바꾼 것도 보이게
     if (/^dispatch\.(save|import|deleteOrders|copyOrders|moveOrders|editOrder|note)$/.test(req.action) && req.cust) { // 바뀐 시각 (15초 확인용)
@@ -582,7 +592,7 @@
       case 'dispatch.stamp':
         var dst = store.dstamp || {}, dso = {}; (req.keys || []).forEach(function (k) { dso[k] = dst[k + '|' + req.date] || 0; }); return { stamps: dso };
       case 'dispatch.save':
-        var dpset = req.patch ? req.trucks : null;
+        var dpset = req.patch ? req.trucks : null, dhb = demoTrkSnap(req.cust, req.date); // 변경 이력: 저장 전 호차 (서버는 DB 트리거)
         if (req.patch) { // 화면이 바뀐 칸만 보냄 → 지금 저장된 호차와 합쳐서 전체 목록으로 (서버 dispMerge_와 같은 규칙)
           var pl = wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date === req.date; }).map(function (t) { return Object.assign({}, t); }), pu = [];
           var pTok = function (k) { return k ? pl.filter(function (t) { return t.token === k; })[0] : null; }, pNo = function (n) { return pl.filter(function (t) { return t.no === n && pu.indexOf(t) === -1; })[0]; };
@@ -607,7 +617,7 @@
         // 합차: 바뀐 차량정보·상태를 묶인 다른 탭 호차에도 (서버 dispJoinSync_와 같음)
         (dpset || []).forEach(function (p) { var me0 = p.token && wk('dispTrk').filter(function (t) { return t.cust === req.cust && t.date === req.date && t.token === p.token; })[0]; if (!me0) return;
           demoJoinGroup(me0).forEach(function (x) { if (x.cust === req.cust) return; var ch = 0; ['car', 'driver', 'phone', 'time', 'ton', 'status'].forEach(function (k) { if (p.set && p.set[k] !== undefined && x[k] !== me0[k]) { x[k] = me0[k]; ch = 1; } }); if (ch) (store.dstamp || (store.dstamp = {}))[x.cust + '|' + x.date] = Date.now() + 1; }); });
-        save(); var dsv = handle(Object.assign({}, req, { action: 'dispatch.day' })); dsv.stamp = (store.dstamp || {})[req.cust + '|' + req.date] || 0; dsv.drivers = handle({ action: 'drivers.list', token: req.token }).drivers; return dsv;
+        demoAudit(req.cust, req.date, dhb, me); save(); var dsv = handle(Object.assign({}, req, { action: 'dispatch.day' })); dsv.stamp = (store.dstamp || {})[req.cust + '|' + req.date] || 0; dsv.drivers = handle({ action: 'drivers.list', token: req.token }).drivers; return dsv;
       case 'drivers.list': return { drivers: wk('drivers').slice().sort(function (a, b) { return (b.pin - a.pin) || (b.n - a.n) || (a.last < b.last ? 1 : a.last > b.last ? -1 : 0); }) };
       case 'drivers.save':
         var dv = req.driver || {}; if (!String(dv.car || '').trim() && !String(dv.driver || '').trim()) fail('차량정보나 운전원을 넣으세요.');
@@ -623,7 +633,11 @@
       case 'drivers.delete': store.drivers = wk('drivers').filter(function (v) { return v.id !== req.id; }); save(); return handle({ action: 'drivers.list', token: req.token });
       case 'dispatch.editOrder':
         var eo = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
-        ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'].forEach(function (k) { if ((req.patch || {}).hasOwnProperty(k)) eo.d[k] = String(req.patch[k]).trim(); }); if (!eo.d.fc) fail('센터명은 비울 수 없어요.'); save(); return { ok: true };
+        ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'].forEach(function (k) { if ((req.patch || {}).hasOwnProperty(k)) eo.d[k] = String(req.patch[k]).trim(); }); if (!eo.d.fc) fail('센터명은 비울 수 없어요.');
+        var eoc = {}; Object.keys(req.patch || {}).forEach(function (k) { eoc['d.' + k] = ['', String(req.patch[k])]; }); wk('audit').unshift({ id: Date.now(), at: today() + ' ' + new Date().toTimeString().slice(0, 8), who: me.name, tbl: 'order', op: 'edit', cust: req.cust, date: req.date, ref: eo.id, no: eo.truck === '' ? null : eo.truck, chg: eoc }); save(); return { ok: true };
+      case 'dispatch.history':
+        var hrefs = (req.ids || []).concat(req.tk ? [req.tk] : []), hcost = me.perms.indexOf('analysis') !== -1;
+        return { list: wk('audit').filter(function (x) { return x.cust === req.cust && x.date === req.date && (x.tbl === 'truck' || x.tbl === 'order') && (!hrefs.length || hrefs.indexOf(x.ref) !== -1); }).map(function (x) { var c = Object.assign({}, x.chg); if (!hcost) ['rev', 'cost', 'ret_cost', 'wait', 'support'].forEach(function (k) { delete c[k]; }); return Object.assign({}, x, { chg: c }); }).filter(function (x) { return Object.keys(x.chg).length; }) };
       case 'dispatch.copyOrders':
         var cids = {}; (req.ids || []).forEach(function (x) { cids[x] = 1; });
         var csrc = wk('dispOrd').filter(function (o) { return cids[o.id] && o.cust === req.cust && o.date === req.date; }); if (!csrc.length) fail('복사할 오더를 찾을 수 없어요.');
@@ -911,6 +925,7 @@
         store.tariff = { tons: s.tons.map(function (t) { return t.name; }), rows: req.tariff.rows.map(function (r) { return r.map(Number); }) };
         save(); return {};
       case 'admin.listUsers': return { users: userList() };
+      case 'admin.audit': return { list: wk('audit').filter(function (x) { return x.tbl !== 'truck' && x.tbl !== 'order' && (!req.tbl || x.tbl === req.tbl); }) };
       case 'analysis.upload':
         if (['조일물류', '명일로지스', '조일로지스'].indexOf(req.biz) === -1) fail('사업자를 선택하세요.');
         var key = req.biz + '|' + req.month;

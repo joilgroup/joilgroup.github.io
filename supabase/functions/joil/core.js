@@ -4,6 +4,7 @@
 // Deno(Supabase 함수)와 node(테스트) 둘 다에서 돌도록 바깥 의존 없이 씀: sql = postgres.js 연결 (sql.unsafe·sql.begin).
 // 코드 규칙은 Code.js 와 맞춰요: 함수 이름은 Code.js 이름에서 끝의 _ 만 뺌 → 고칠 때 양쪽을 나란히 보기 쉽게.
 
+import { AsyncLocalStorage } from 'node:async_hooks';
 var TZ_MS = 9 * 3600000; // 한국 시간 (서머타임 없음)
 var SESSION_SECONDS = 6 * 60 * 60, KEEP_DAYS = 30, LOGIN_MAX_FAIL = 5, HASH_ROUNDS = 300;
 var PERMS = ['quote', 'analysis', 'search', 'track'];
@@ -21,7 +22,7 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
-  'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
+  'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit'];
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
 var PUBLIC_DEFAULT = { tons: ['1톤', '1.4톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '25톤'], fuelMode: 'manual', manualPrice: 1500, baseTon: '5톤', roundTrip: false, maxRows: 1000, retentionDays: 90, quoteFooter: '※ 부가세 별도 / 대기·수작업 발생 시 별도 협의', maxKm: 600, priceRounding: { unit: 1000, mode: 'round' }, specials: [] };
 
@@ -51,7 +52,16 @@ function err(m) { return new Error(m); }
 export function makeServer(sql, opts) {
   opts = opts || {};
   var gasFetch = opts.fetch || (typeof fetch !== 'undefined' ? fetch : null);
-  var Q = function (db, text, params) { return db.unsafe(text, params || []); };
+  // 변경 이력(DB 트리거)이 '누가'를 알게: 요청마다 이름을 들고 있다가(ctx) 쓰기 문장 앞에 set_config('joil.who') — 트랜잭션 안에서만 유효해서 다른 요청과 안 섞여요
+  var ctxStore = new AsyncLocalStorage();
+  function ctxWho() { var c = ctxStore.getStore(); return (c && c.who) || ''; }
+  var Q = function (db, text, params) {
+    var who = ctxWho();
+    if (who && db === sql && /^\s*(insert|update|delete)\b/i.test(text) && !/^\s*\S+\s+(into\s+|from\s+)?(sessions|login_fails|disp_stamps)\b/i.test(text)) {
+      return sql.begin(async function (tx) { await tx.unsafe("select set_config('joil.who', $1, true)", [who]); return tx.unsafe(text, params || []); });
+    }
+    return db.unsafe(text, params || []);
+  };
 
   /* ── 구글 쪽(Code.js int.* 액션)에 맡기는 일: 사진 파일(드라이브)·주소 좌표(카카오+주소캐시) ── */
   async function gas(action, payload) {
@@ -71,6 +81,7 @@ export function makeServer(sql, opts) {
         await Q(tx, "set local lock_timeout = '30s'");
         await Q(tx, 'select pg_advisory_xact_lock(hashtext($1))', [name]);
         await Q(tx, "set local lock_timeout = '0'");
+        if (ctxWho()) await Q(tx, "select set_config('joil.who', $1, true)", [ctxWho()]);
         return fn(tx);
       });
     } catch (e) {
@@ -108,7 +119,7 @@ export function makeServer(sql, opts) {
     await Q(sql, 'update accounts set last_login = $2 where id = $1', [id, nowTxt()]);
     var token = uuid() + uuid().replace(/-/g, '');
     await Q(sql, 'insert into sessions (token_hash, user_id, keep, expires_at) values ($1, $2, $3, now() + $4::int * interval \'1 second\')', [await sha256hex(token), id, !!keep, keep ? KEEP_DAYS * 86400 : SESSION_SECONDS]);
-    if (Math.random() < 0.05) await Q(sql, 'delete from sessions where expires_at < now()'); // 가끔 지난 세션 정리
+    if (Math.random() < 0.05) { await Q(sql, 'delete from sessions where expires_at < now()'); await Q(sql, "delete from audit where at < now() - interval '400 days'").catch(function () {}); } // 가끔 지난 세션·1년 넘은 변경 이력 정리
     return { token: token, user: sessOf(u), settings: await publicSettings(), keep: !!keep };
   }
   /** 매 요청마다 계정을 다시 확인 → 사용중지하면 바로 차단 · 쓰는 동안 만료 연장 (6시간 / 로그인 유지 30일) */
@@ -736,10 +747,11 @@ export function makeServer(sql, opts) {
   async function handle(req) {
     var action = String(req.action || '');
     if (action === 'login') return login(req.id, req.password, req.keep);
+    if (/^drv\./.test(action)) { var cd = ctxStore.getStore(); if (cd) cd.who = '기사 링크'; }
     if (action === 'drv.get') return drvGet(req.t);
     if (action === 'drv.upload') return drvUpload(req);
     if (action === 'drv.photo') return drvPhoto(req);
-    var session = await requireSession(req.token);
+    var session = await requireSession(req.token), cx = ctxStore.getStore(); if (cx) cx.who = session.name || session.id;
     if (session.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(action) === -1) throw err('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (session.role === 'partner') return partnerHandle(session, action, req);
     switch (action) {
@@ -778,6 +790,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.map': return { map: await dispMap() };
       case 'dispatch.geo': return { coords: await dispGeo(req.addrs) };
       case 'dispatch.receipt': return dispReceipt(req.id);
+      case 'dispatch.history': return dispHistory(session, req);
       case 'loading.list': return { places: await loadingList() };
       case 'drivers.list': return { drivers: await driverList() };
       case 'drivers.save': return driverSave(session, req);
@@ -799,6 +812,7 @@ export function makeServer(sql, opts) {
       case 'admin.createUser': return createUser(req.id, req.name, req.role, req.perms, req.dispTabs);
       case 'admin.updateUser': return updateUser(session, req.id, req.patch || {});
       case 'admin.resetPassword': return resetPassword(req.id);
+      case 'admin.audit': return auditList(session, req);
     }
     throw err('알 수 없는 요청입니다: ' + action);
   }
@@ -865,10 +879,35 @@ export function makeServer(sql, opts) {
   }
   async function driverDelete(id) { var r = await Q(sql, 'delete from drivers where id = $1 returning id', [String(id || '')]); if (!r.length) throw err('기사를 찾을 수 없어요.'); return { drivers: await driverList() }; }
 
+  /* ───────────── 변경 이력 (DB 트리거가 남긴 joil.audit · 금액이 든 것은 분석 권한자만) ───────────── */
+  var AUD_MONEY = ['rev', 'cost', 'ret_cost', 'wait', 'support'];
+  var AUD_SEL = "select id, to_char(at at time zone 'Asia/Seoul', 'YYYY-MM-DD HH24:MI:SS') at, who, tbl, op, cust, date, ref, no, chg, money from audit";
+  function audRow(r, cost) {
+    var c = parseJson(r.chg, {}) || {};
+    if (!cost && r.money) {
+      if (['rate', 'price', 'code'].indexOf(r.tbl) !== -1) return null;
+      c = Object.assign({}, c); AUD_MONEY.forEach(function (k) { delete c[k]; }); if (!Object.keys(c).length) return null;
+    }
+    return { id: Number(r.id), at: r.at, who: r.who, tbl: r.tbl, op: r.op, cust: r.cust, date: r.date, ref: r.ref, no: r.no == null ? null : Number(r.no), chg: c };
+  }
+  /** 호차·오더 이력: { cust, date, tk?(호차 링크코드 · token 은 로그인 토큰이라 다른 이름), ids? } → 그 날짜(탭)의 호차·오더 변경 (최근 것부터 300개) */
+  async function dispHistory(session, req) {
+    var cust = dispCust(req.cust), date = dispDate(req.date), refs = (req.ids || []).map(String).slice(0, 200);
+    if (req.tk) refs.push(String(req.tk));
+    var rows = await Q(sql, AUD_SEL + " where cust = $1 and date = $2 and tbl in ('truck', 'order')" + (refs.length ? ' and ref = any($3)' : '') + ' order by id desc limit 300', refs.length ? [cust, date, refs] : [cust, date]);
+    var cost = canCost(session); return { list: rows.map(function (r) { return audRow(r, cost); }).filter(Boolean) };
+  }
+  /** 관리자: 계정·권한·단가표·특이사항·월별 단가·코드·탭·센터도착 이력 { tbl?, days?, q? } */
+  async function auditList(session, req) {
+    var tbls = (req.tbl ? [String(req.tbl)] : ['account', 'rate', 'note', 'price', 'code', 'tab', 'map']), days = Math.max(1, Math.min(400, Number(req.days) || 30)), q = String(req.q || '').trim().slice(0, 50);
+    var rows = await Q(sql, AUD_SEL + " where tbl = any($1) and at > now() - $2::int * interval '1 day'" + (q ? " and (who ilike $3 or ref ilike $3 or cust ilike $3 or chg::text ilike $3)" : '') + ' order by id desc limit 500', q ? [tbls, days, '%' + q.replace(/[\\%_]/g, '\\$&') + '%'] : [tbls, days]);
+    var cost = canCost(session); return { list: rows.map(function (r) { return audRow(r, cost); }).filter(Boolean) };
+  }
+
   /** 응답 봉투: Code.js doPost 와 같게 { ok, ..., ms } */
   async function call(req) {
     var t0 = Date.now(), out;
-    try { out = await handle(req || {}); out = out && typeof out === 'object' ? out : {}; out.ok = true; }
+    try { out = await ctxStore.run({}, function () { return handle(req || {}); }); out = out && typeof out === 'object' ? out : {}; out.ok = true; }
     catch (e) { out = { ok: false, error: (e && e.message) || String(e) }; if (e && !e.message) console.error(e); else if (e && e.code) console.error('DB 오류', req && req.action, e.code, e.message); }
     out.ms = Date.now() - t0; if (out.ms > 3000) console.log('느린 요청 ' + (req && req.action) + ' ' + out.ms + 'ms');
     return out;

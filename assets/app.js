@@ -10,7 +10,7 @@
      한 기기에서만 먼저 시험: 주소창 끝에 #sb-on / #sb-off (그 기기에만 기억 · 다시 로그인해야 해요) */
   var CFG = window.JOIL_CONFIG || {};
   var SB_ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
-    'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
+    'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.history', 'admin.audit', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
     'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
     'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   var SB_ROUTE = (function () {
@@ -89,7 +89,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
+  var READ_ACTIONS = ['me', 'dispatch.history', 'admin.audit', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
   var TIMEOUT_MS = 30000, SAVE_TIMEOUT_MS = 45000; // 저장은 서버에서 끝까지 돌아서, 화면이 먼저 포기하면 '실패'로 보이지만 실제로는 저장돼요 → 더 기다려요
   var inflight = {};
 
@@ -3668,6 +3668,7 @@
     ['anmap', '매출처 설정', 'var(--yellow)'],
     ['anrule', '분석 규칙', 'var(--red)'],
     ['diesel', '유가 기록', 'var(--cyan)'],
+    ['audit', '변경 이력', 'var(--ink-2)'],
     ['company', '회사 정보', 'var(--green)'],
     ['keys', 'API 키', 'var(--ink-2)']
   ];
@@ -3762,7 +3763,7 @@
   function showAdminTab() {
     syncRoute();
     var a = state.admin, tab = a.tab;
-    var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials, staff: adminStaff };
+    var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, audit: adminAudit, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials, staff: adminStaff };
     var ready = a.loaded && (tab !== 'tariff' || a.tariff);
     if (ready) {
       views[tab]();
@@ -8211,6 +8212,65 @@
         };
       } });
   }
+  /* ───────── 변경 이력 (서버 DB 트리거가 자동으로 남긴 것 · 금액 칸은 분석 권한자에게만 와요) ───────── */
+  var HIST_LBL = { car: '차량정보', driver: '운전원', phone: '연락처', time: '입차시간', ton: '톤수', memo: '메모', status: '상태', no: '호차', truck: '호차', ret_cost: '회차비용', wait: '대기료', support: '운송료지원', join_tk: '합차', rev: '매출', cost: '매입',
+    note_in: '내부 공지', note_drv: '기사 공지', date: '날짜', cust: '탭', 'd.fc': '센터', 'd.bundle': '번들', 'd.kg': '중량', 'd.item': '품목', 'd.addr': '주소', 'd.hours': '하차시간', 'd.dock': '도크', 'd.rsv': '예약시간', 'd.rsvCode': '예약코드',
+    name: '이름', role: '권한', status_: '사용', perms: '메뉴 권한', disp_tabs: '배차 탭', must_change: '비밀번호 변경 필요', pw_hash: '비밀번호', price: '단가', start: '적용시작일', from: '출발', to: '도착', fc: '센터', note: '멘트', ptn: '협력사에도', drv: '기사에게도', lock: '시간고정', dest: '도착', tabs: '탭 목록', id: '아이디', created_at: '만든 날' };
+  var HIST_TBL = { truck: '호차', order: '오더', rate: '단가표', note: '도착지 특이사항', price: '월별 단가', code: '차도리 코드', tab: '탭', map: '센터도착', account: '계정' };
+  function histVal(k, v) {
+    if (v == null || v === '') return '(빈 칸)';
+    if (k === 'join_tk') return v ? '묶음' : '풀림';
+    if (/^(ret_cost|wait|support|rev|cost|price)$/.test(k) || /^\d{4}-\d{2}$/.test(k)) return won(v) + '원';
+    if (k === 'tabs' && v.map) return v.filter(function (t) { return !t.hidden; }).map(function (t) { return t.name; }).join(', ');
+    return typeof v === 'object' ? JSON.stringify(v) : String(v);
+  }
+  function histChg(x) {
+    var c0 = x.chg || {}, ch = {}; Object.keys(c0).forEach(function (k) { ch[x.tbl === 'account' && k === 'status' ? 'status_' : k] = c0[k]; });
+    return Object.keys(ch).map(function (k) { var c = ch[k] || [], lb = HIST_LBL[k] || k.replace(/^d\./, '');
+      if (x.op === 'add') return '<span class="nowrap"><b>' + esc(lb) + '</b> ' + esc(histVal(k, c[1])) + '</span>';
+      if (x.op === 'del') return '<span class="nowrap"><b>' + esc(lb) + '</b> ' + esc(histVal(k, c[0])) + '</span>';
+      return '<span class="nowrap"><b>' + esc(lb) + '</b> ' + esc(histVal(k, c[0])) + ' → ' + esc(histVal(k, c[1])) + '</span>'; }).join(' · ');
+  }
+  function histTable(list, what) {
+    if (!list.length) return '<p class="muted" style="margin:0">남은 변경 이력이 없어요. (변경 이력은 2026-11-21부터 남아요)</p>';
+    var op = { add: '추가', edit: '변경', del: '삭제' };
+    return '<div class="table-wrap"><table class="data hist-table"><thead><tr><th class="left">언제</th><th class="left">누가</th><th class="left">무엇</th><th class="left">바뀐 내용</th></tr></thead><tbody>' +
+      list.map(function (x) { return '<tr><td class="left nowrap">' + esc(String(x.at || '').slice(5, 16)) + '</td><td class="left nowrap">' + esc(x.who || '–') + '</td><td class="left nowrap">' + esc(what(x)) + ' ' + op[x.op] + '</td><td class="left">' + histChg(x) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+  }
+  /** 호차 하나 + 그 호차에 실린 오더들의 이력 */
+  function openTruckHist(D, no) {
+    var t = truckInfo(D, no), os = truckOrders(D, no), fcOf = {}; os.forEach(function (o) { fcOf[o.id] = (o.d && o.d.fc) || o.fc || ''; });
+    modal({ eyebrow: D.tab + ' · ' + D.date, title: no + '호차 변경 이력', wide: true, body: '<div id="thBody" class="muted"><span class="spinner dark"></span> 불러오는 중…</div>',
+      foot: '<button class="btn" data-close>닫기</button>',
+      onMount: function (m) {
+        var box = $('#thBody', m);
+        if (!t.token && !os.length) { box.innerHTML = '<p class="muted" style="margin:0">아직 저장 전이라 이력이 없어요.</p>'; return; }
+        api('dispatch.history', { cust: D.key, date: D.date, tk: t.token || '', ids: os.map(function (o) { return o.id; }) }).then(function (r) {
+          box.classList.remove('muted');
+          box.innerHTML = '<p class="hint" style="margin:0 0 10px">누가 언제 무엇을 바꿨는지 서버가 자동으로 남겨요. 지금 이 호차에 실린 오더의 이력도 같이 보여요.</p>' +
+            histTable(r.list || [], function (x) { return x.tbl === 'truck' ? (x.no ? x.no + '호차' : '호차') : '오더' + (fcOf[x.ref] ? '(' + fcOf[x.ref] + ')' : ''); });
+        }).catch(function (err) { box.innerHTML = '<p class="err-text" style="margin:0">' + esc(/알 수 없는 요청/.test(err.message) ? '서버가 아직 변경 이력을 몰라요. 잠시 뒤 다시 해 주세요.' : err.message) + '</p>'; });
+      } });
+  }
+  /** 관리자 → 변경 이력: 계정·권한·단가표·특이사항·월별 단가·코드·탭·센터도착 */
+  function adminAudit() {
+    var a = state.admin, f = a.audF = a.audF || { tbl: '', days: 30, q: '' }, body = $('#adminBody');
+    body.innerHTML = '<div class="card"><div class="eyebrow">Audit · 변경 이력</div><h2>변경 이력</h2>' +
+      '<p class="muted small" style="margin:6px 0 12px">계정·권한, 매입 단가표, 도착지 특이사항, 월별 단가, 차도리 코드, 탭, 센터도착을 누가 언제 바꿨는지 서버가 자동으로 남겨요(1년 보관). 호차·오더 이력은 배차시트에서 호차 ⋯ → <b>변경 이력</b>.</p>' +
+      '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px"><select class="input input-sm" id="audT" style="width:160px"><option value="">전체</option>' +
+      ['account', 'rate', 'note', 'price', 'code', 'tab', 'map'].map(function (k) { return '<option value="' + k + '"' + (f.tbl === k ? ' selected' : '') + '>' + HIST_TBL[k] + '</option>'; }).join('') + '</select>' +
+      '<select class="input input-sm" id="audD" style="width:110px">' + [[7, '7일'], [30, '30일'], [90, '90일'], [400, '1년']].map(function (d) { return '<option value="' + d[0] + '"' + (f.days === d[0] ? ' selected' : '') + '>' + d[1] + '</option>'; }).join('') + '</select>' +
+      '<input class="input input-sm" id="audQ" placeholder="누가·아이디·센터 등" value="' + esc(f.q) + '" style="width:200px"><button class="btn btn-sm" id="audGo">찾기</button></div><div id="audOut" class="muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+    var go = function () {
+      f.tbl = $('#audT').value; f.days = Number($('#audD').value); f.q = $('#audQ').value.trim(); var out = $('#audOut');
+      api('admin.audit', { tbl: f.tbl, days: f.days, q: f.q }).then(function (r) {
+        if (state.admin.tab !== 'audit') return;
+        out.classList.remove('muted'); out.innerHTML = histTable(r.list || [], function (x) { return HIST_TBL[x.tbl] + (x.tbl === 'account' ? ' ' + x.ref : x.cust ? ' · ' + x.cust : ''); });
+      }).catch(function (err) { out.innerHTML = '<p class="err-text" style="margin:0">' + esc(err.message) + '</p>'; });
+    };
+    $('#audGo').onclick = go; $('#audQ').onkeydown = function (e) { if (e.key === 'Enter') go(); }; $('#audT').onchange = go; $('#audD').onchange = go;
+    go();
+  }
   function openOrderEdit(D, o) {
     modal({ eyebrow: D.tab + ' · ' + D.date + (o.truck !== '' && o.truck != null ? ' · ' + o.truck + '호차' : ''), title: '오더 고치기',
       body: '<p class="muted small" style="margin:0 0 10px">바꾼 칸만 저장돼요. 호차와 하차 순서는 그대로예요. (BL·발주번호는 그대로 둬요)</p>' +
@@ -8460,7 +8520,7 @@
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '>' + (blk ? '<div class="tt-blkw">⛔ 블랙 기사</div>' : '') + '<button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
             '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
-            '<span class="tt-hide"><button data-xlrow="' + esc(key) + '">엑셀로 복사</button>' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-tdate="' + esc(key) + '">날짜 변경</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') && !(ji && !ji.base) ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') +
+            '<span class="tt-hide"><button data-xlrow="' + esc(key) + '">엑셀로 복사</button>' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-tdate="' + esc(key) + '">날짜 변경</button><button data-thist="' + esc(key) + '">변경 이력</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') && !(ji && !ji.base) ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') +
               (isPartner() ? '' : (!ji || (ji.base && ji.g) ? '<button data-join="' + esc(key) + '">다른 탭 호차와 합차</button>' : '') + (ji ? '<button data-unjoin="' + esc(key) + '">합차 풀기</button>' : '')) + '</span>' +
             (t.status === '회차' && !isPartner() ? '<button data-recopy="' + esc(key) + '" title="이 호차의 오더를 다시 배차하도록 복사">오더 복사</button>' : '') +
             (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>' +
@@ -8660,6 +8720,7 @@
       inp.addEventListener('blur', function () { setTimeout(closeDriverSuggest, 150); });
     });
     $$('[data-tedit]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tedit); openTruckOrderEdit(x.D, x.no); }; });
+    $$('[data-thist]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.thist); openTruckHist(x.D, x.no); }; });
     $$('[data-tmove]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.tmove); openTruckMove(x.D, x.no, function () { redraw(x.tab); }); }; });
     $$('[data-ask]', box).forEach(function (b) { b.onclick = function () { var x = tn(b.dataset.ask); openTruckAsk(x.D, x.no, function (txt) { copyText(txt, '문의 내용을 복사했어요. 카톡방에 붙여넣으세요.'); }); }; });
     $$('[data-xlall]', box).forEach(function (b) { b.onclick = function () { var X = st.tabs[b.dataset.xlall]; if (!X) return; var ns = dispTrucks(X), nj = ns.filter(function (n) { var j = joinInfo(X, n); return j && !j.base; }).length, rows = (C.sheetRows || dispSheetRows)(X, ns), jt = nj ? ' (합차로 묶인 ' + nj + '대는 기준 호차 쪽 복사에 들어가서 뺐어요)' : '';

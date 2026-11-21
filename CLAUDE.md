@@ -81,6 +81,10 @@
 - **4단계(나머지 메뉴 전체)**: Code.js 를 Supabase 에서 그대로 실행(`gas.js`, 시트 = `joil.sheet_rows`). Code.js 를 고치면 `supabase/deploy.sh` 로 배포 + `node tests/run.js sb-gas`. 드라이브·메일만 구글(`int.drive`).
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
+## 변경 이력 (Supabase DB 트리거 · 008)
+- 배차 표·계정을 바꾸면 트리거가 `joil.audit`에 바뀐 칸만 남겨요. 누가 = core.js `ctxStore`(요청마다 이름) → 쓰기 앞에 `set_config('joil.who')`. 새 쓰기 코드는 `Q(sql, …)`·`locked()`를 쓰면 저절로 돼요.
+- 화면 `openTruckHist`(호차 ⋯)·`adminAudit`, 서버 `dispatch.history`(값 이름 `tk` — `token`은 로그인 토큰)·`admin.audit`. 금액 칸은 분석 권한자만.
+
 ## 일정 달력 (공용)
 - 달력 탭(`calMonth`)은 왼쪽 칩 모음(`CAL_CHIPS`)을 날짜로 끌어다 놓아 휴가·근무·당직·일정을 넣어요(`calDrag` = 마우스·손가락 공통 pointer 끌기, `calPlace`). 기록 막대는 본인 것(관리자는 모두)만 끌어 옮기고(`calMove`) 누르면 수정 창. 이어진 날을 합친 막대·순번 규칙 당직은 못 끌어요.
 - 저장은 `calOpt`: 화면 먼저 바꾸고 뒤에서 저장, 실패하면 서버 상태로 되돌림. 서버 액션은 예전 그대로(`cal.leaveSave`·`cal.eventSave`).
