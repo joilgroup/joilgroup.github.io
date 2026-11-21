@@ -12,7 +12,7 @@ window.JOIL_CONFIG = {
   // 서버 이전(Supabase · docs/서버이전.md): 새 서버 주소와 공개 키(공개용이라 여기 있어도 됨). SB_ROUTE 가 없으면 지금처럼 전부 Apps Script
   SB_FN: 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/joil',
   SB_REST: 'https://etvpifkfyrxvvpqqrsza.supabase.co',
-  SB_ROUTE: 'dispatch', // 2026-11-21 전환: 로그인·계정·배차는 Supabase (되돌리기: 이 줄 지우기 · docs/서버이전.md)
+  SB_ROUTE: 'all', // 2026-11-21 전체 전환: 모든 메뉴가 Supabase (배차만 되돌리기: 'dispatch' · 전부 되돌리기: 이 줄 지우기 · docs/서버이전.md)
   SB_ANON: 'sb_publishable_kNRcMBnVAyV0xdng-QzrhQ_gGYKz8Bz',
   // 카카오 지도 JavaScript 키 (화면에 들어가는 공개용 키 · 카카오 개발자 사이트에 등록한 주소에서만 작동)
   KAKAO_JS_KEY: 'f70cb8ae1c6ad8cba10d83b8a9c6cf33'
