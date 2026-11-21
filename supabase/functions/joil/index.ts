@@ -12,7 +12,7 @@ const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods
 
 Deno.serve(async (r: Request) => {
   if (r.method === 'OPTIONS') return new Response('ok', { headers: CORS });
-  if (r.method === 'GET') return new Response('조일 서버(Supabase)가 정상 작동 중입니다.', { headers: { ...CORS, 'content-type': 'text/plain; charset=utf-8' } });
+  if (r.method === 'GET') return new Response('서버가 정상 작동 중입니다.', { headers: { ...CORS, 'content-type': 'text/plain; charset=utf-8' } });
   let req: Record<string, unknown> = {};
   try { req = JSON.parse(await r.text() || '{}'); } catch (_e) { /* 아래에서 알 수 없는 요청 */ }
   const out = await server.call(req), body = JSON.stringify(out);

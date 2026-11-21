@@ -55,7 +55,7 @@
   <script>
   (function () {
     'use strict';
-    var API_URL = 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/joil'; // 2026-11-21 서버 이전(Supabase) · 예전: Apps Script 주소
+    var API_URL = 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/info';
     var T = String(location.hash || '').replace(/^#\/?/, '');
     var app = document.getElementById('app'), data = null, busy = {};
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }

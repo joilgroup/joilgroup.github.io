@@ -77,6 +77,7 @@
 - 계획·결정·돌아오면 할 일·되돌리기: **`docs/서버이전.md`**. 전환 전까지 원본은 구글 시트.
 - 새 서버 `supabase/functions/joil/core.js` = Code.js 로그인·계정·배차 액션을 **같은 이름(끝 `_` 뺌)·같은 응답**으로 옮긴 것 → **배차·계정 서버 코드를 고치면 core.js 도 같이** 고치고 `node tests/run.js sb`(같은 요청 → 같은 응답 비교) 통과 확인.
 - 화면 갈림길: `app.js` `SB_ACTIONS`·`apiUrl()` — `config.js` `SB_ROUTE: 'dispatch'`(또는 기기별 `#sb-on`)일 때만 Supabase. 15초 확인은 RPC `joil_stamps`(함수 호출 수 아낌). 서버에 배차 액션을 추가하면 `SB_ACTIONS`·core.js `ACTIONS` 에도.
+- **2026-11-21 전환 완료**(로그인·계정·배차 원본 = Supabase). 함수는 `joil`(사이트)·`info`(기사 사이트, 회사명 안 보이게 · 같은 코드) — core.js 를 고치면 **둘 다** 배포(관리 API `functions/deploy?slug=…`, verify_jwt false).
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
 ## 일정 달력 (공용)
