@@ -4,7 +4,7 @@
 import postgres from 'npm:postgres@3.4.5';
 import { zipSync } from 'npm:fflate@0.8.2';
 import { createHash } from 'node:crypto';
-import { makeServer, ACTIONS } from './core.js';
+import { makeServer, ACTIONS, MOVED } from './core.js';
 import { makeGas } from './gas.js';
 import { SRC } from './gas_src.js';
 
@@ -25,9 +25,16 @@ const GAS_ONLY = /^admin\.sb|^admin\.saveTrackKeys$/;
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, GET, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' };
 
 async function secretOk(s: unknown) { const r = await sql.unsafe("select value from props where key = 'GAS_SECRET'"); return !!(r[0] && s && String(s) === r[0].value); }
+// 진짜 표로 옮긴 영역(012~): 옮김 표시(props MOVED_시트)가 있을 때만 core.js, 없으면 예전처럼 gas.js (30초마다 다시 확인)
+let movedAt = 0, moved: Record<string, boolean> = {};
+async function movedFlags() {
+  if (Date.now() - movedAt > 30000) { const m: Record<string, boolean> = {}; (await sql.unsafe("select key from props where key like 'MOVED\\_%'")).forEach((r: any) => { m[String(r.key).slice(6)] = true; }); moved = m; movedAt = Date.now(); }
+  return moved;
+}
 async function route(req: any) {
   const action = String(req.action || '');
-  if (ACTIONS.indexOf(action) !== -1) return server.call(req);
+  const pre = Object.keys(MOVED).find((p) => action.indexOf(p) === 0);
+  if (pre ? (await movedFlags())[(MOVED as any)[pre]] : ACTIONS.indexOf(action) !== -1) return server.call(req);
   const t0 = Date.now();
   try {
     let out: any;

@@ -22,7 +22,10 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
-  'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search'];
+  'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search',
+  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete'];
+/** 진짜 표로 옮긴 영역 (012): 액션 앞부분 → 시트 이름. props 'MOVED_시트'가 있을 때만 이 서버가 맡아요(없으면 gas.js 가 시트 그대로) */
+export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당' };
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
 var PUBLIC_DEFAULT = { tons: ['1톤', '1.4톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '25톤'], fuelMode: 'manual', manualPrice: 1500, baseTon: '5톤', roundTrip: false, maxRows: 1000, retentionDays: 90, quoteFooter: '※ 부가세 별도 / 대기·수작업 발생 시 별도 협의', maxKm: 600, priceRounding: { unit: 1000, mode: 'round' }, specials: [] };
 
@@ -760,7 +763,12 @@ export function makeServer(sql, opts) {
       case 'changePassword': return changePassword(session, req.current, req.next);
       case 'publicSettings': return { settings: await publicSettings() };
     }
-    if (/^dispatch\.|^loading\.|^drivers\.|^dest\./.test(action)) requirePerm(session, 'quote'); // Code.js QUOTE_ACTIONS 안의 배차 액션들
+    switch (action) { // 팀 공지는 모든 직원 (Code.js 처럼 견적 권한 확인 전)
+      case 'notice.list': return { notices: await noticesList() };
+      case 'notice.save': return noticeSave(session, req);
+      case 'notice.delete': return noticeDelete(session, req.id);
+    }
+    if (/^dispatch\.|^loading\.|^drivers\.|^dest\.|^inq\.|^owners\./.test(action)) requirePerm(session, 'quote'); // Code.js QUOTE_ACTIONS 안의 배차 액션들 · 문의·업무담당
     switch (action) {
       case 'dispatch.day': return dispScrub(await dispDay(req.cust, req.date), session);
       case 'dispatch.month': return dispScrub(await dispMonth(req.cust, req.ym), session);
@@ -791,6 +799,12 @@ export function makeServer(sql, opts) {
       case 'dispatch.geo': return { coords: await dispGeo(req.addrs) };
       case 'dispatch.receipt': return dispReceipt(req.id);
       case 'dispatch.history': return dispHistory(session, req);
+      case 'inq.list': return inqList();
+      case 'inq.save': return inqSave(session, req);
+      case 'inq.delete': return inqDelete(session, req.id);
+      case 'owners.list': return ownersList();
+      case 'owners.save': return ownerSave(session, req);
+      case 'owners.delete': return ownerDelete(session, req.id);
       case 'dispatch.search': return dispSearch(session, req);
       case 'loading.list': return { places: await loadingList() };
       case 'drivers.list': return { drivers: await driverList() };
@@ -880,6 +894,69 @@ export function makeServer(sql, opts) {
     return { drivers: await driverList(), added: added, updated: updated };
   }
   async function driverDelete(id) { var r = await Q(sql, 'delete from drivers where id = $1 returning id', [String(id || '')]); if (!r.length) throw err('기사를 찾을 수 없어요.'); return { drivers: await driverList() }; }
+
+  /* ───────────── 팀 공지 · 문의 기록 · 업무 담당표 (012 · Code.js noticesList_ … ownerDelete_ 와 같은 규칙·문구) ───────────── */
+  async function noticesList() {
+    return (await Q(sql, 'select * from notices order by ord')).map(function (r) { return { id: r.id, title: r.title, body: r.body || '', pinned: !!r.pinned, ownerId: r.owner_id, owner: r.owner, at: fmt(r.created_at), updated: fmt(r.updated_at) }; })
+      .sort(function (a, b) { return (b.pinned - a.pinned) || (a.at < b.at ? 1 : -1); });
+  }
+  async function noticeSave(session, req) {
+    var n = req.notice || {}, title = String(n.title || '').trim().slice(0, 100);
+    if (!title) throw err('공지 제목을 넣으세요.');
+    var body = String(n.body || '').slice(0, 5000), adm = session.role === 'admin';
+    if (req.id) {
+      var f = (await Q(sql, 'select * from notices where id = $1', [String(req.id)]))[0]; if (!f) throw err('공지를 찾을 수 없습니다.');
+      if (f.owner_id !== session.id && !adm) throw err('쓴 사람이나 관리자만 고칠 수 있습니다.');
+      await Q(sql, 'update notices set title = $2, body = $3, pinned = $4, updated_at = $5 where id = $1', [f.id, title, body, adm ? !!n.pinned : f.pinned, nowTxt()]);
+    } else await Q(sql, 'insert into notices (id, title, body, pinned, owner_id, owner, created_at, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8)', [newId('G'), title, body, adm && !!n.pinned, session.id, session.name, nowTxt(), '']);
+    return { notices: await noticesList() };
+  }
+  async function noticeDelete(session, id) {
+    var f = (await Q(sql, 'select * from notices where id = $1', [String(id || '')]))[0]; if (!f) throw err('공지를 찾을 수 없습니다.');
+    if (f.owner_id !== session.id && session.role !== 'admin') throw err('쓴 사람이나 관리자만 지울 수 있습니다.');
+    await Q(sql, 'delete from notices where id = $1', [f.id]); return { notices: await noticesList() };
+  }
+  function inqRow(r) { return { id: r.id, at: r.at, cust: r.cust || '', who: r.who || '', body: r.body || '', answer: r.answer || '', status: r.status || '처리 중', byId: r.by_id || '', by: r.by_name || '', faq: !!r.faq, upd: fmt(r.updated_at) }; }
+  async function inqList() { return { inqs: (await Q(sql, 'select * from inquiries order by ord')).map(inqRow).sort(function (a, b) { return a.at < b.at ? 1 : -1; }) }; }
+  async function inqSave(session, req) {
+    var q = req.inq || {}, body = String(q.body || '').trim(); if (!body) throw err('문의 내용을 넣으세요.');
+    var at = String(q.at || '').trim(); if (at && !/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?/.test(at)) throw err('일시를 확인하세요.');
+    var status = q.status === '완료' ? '완료' : '처리 중';
+    var vals = [String(q.cust || '').trim().slice(0, 100), String(q.who || '').trim().slice(0, 60), body.slice(0, 5000), String(q.answer || '').slice(0, 5000), status];
+    if (req.id) {
+      var f = (await Q(sql, 'select * from inquiries where id = $1', [String(req.id)]))[0]; if (!f) throw err('문의 기록을 찾을 수 없습니다.');
+      await Q(sql, 'update inquiries set at = $2, cust = $3, who = $4, body = $5, answer = $6, status = $7, faq = $8, updated_at = $9 where id = $1', [f.id, at || f.at].concat(vals).concat([!!q.faq, nowTxt()]));
+    } else await Q(sql, 'insert into inquiries (id, at, cust, who, body, answer, status, by_id, by_name, faq, updated_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [newId('Q'), at || nowTxt().slice(0, 16)].concat(vals).concat([session.id, session.name, !!q.faq, nowTxt()]));
+    return inqList();
+  }
+  async function inqDelete(session, id) {
+    var f = (await Q(sql, 'select * from inquiries where id = $1', [String(id || '')]))[0]; if (!f) throw err('문의 기록을 찾을 수 없습니다.');
+    if (f.by_id !== session.id && session.role !== 'admin') throw err('응대한 사람이나 관리자만 지울 수 있습니다.');
+    await Q(sql, 'delete from inquiries where id = $1', [f.id]); return inqList();
+  }
+  async function ownersList() {
+    var list = (await Q(sql, 'select * from owners order by ord')).map(function (r) { return { id: r.id, task: r.task, cust: r.cust || '', main: r.main || '', sub: r.sub || '', memo: r.memo || '', by: r.by_name || '', at: fmt(r.at) }; });
+    var log = (await Q(sql, 'select * from (select * from owner_log order by id desc limit 80) x order by id desc')).map(function (r) { return { at: fmt(r.at), task: r.task, text: r.text, by: r.by_name }; });
+    return { owners: list, log: log };
+  }
+  async function ownerLog(task, text, by) { await Q(sql, 'insert into owner_log (at, task, text, by_name) values ($1,$2,$3,$4)', [nowTxt(), task, text, by]); }
+  async function ownerSave(session, req) {
+    var o = req.owner || {}, task = String(o.task || '').trim().slice(0, 100); if (!task) throw err('업무 이름을 넣으세요.');
+    var row = [task, String(o.cust || '').trim().slice(0, 100), String(o.main || '').trim().slice(0, 30), String(o.sub || '').trim().slice(0, 30), String(o.memo || '').slice(0, 500), session.name, nowTxt()];
+    if (req.id) {
+      var f = (await Q(sql, 'select * from owners where id = $1', [String(req.id)]))[0]; if (!f) throw err('업무를 찾을 수 없습니다.');
+      var ch = [];
+      if (f.main !== row[2]) ch.push('주담당 ' + (f.main || '없음') + ' → ' + (row[2] || '없음'));
+      if (f.sub !== row[3]) ch.push('부담당 ' + (f.sub || '없음') + ' → ' + (row[3] || '없음'));
+      if (ch.length) await ownerLog(task, ch.join(' · '), session.name);
+      await Q(sql, 'update owners set task = $2, cust = $3, main = $4, sub = $5, memo = $6, by_name = $7, at = $8 where id = $1', [f.id].concat(row));
+    } else { await Q(sql, 'insert into owners (id, task, cust, main, sub, memo, by_name, at) values ($1,$2,$3,$4,$5,$6,$7,$8)', [newId('W')].concat(row)); await ownerLog(task, '추가 (주담당 ' + (row[2] || '없음') + ', 부담당 ' + (row[3] || '없음') + ')', session.name); }
+    return ownersList();
+  }
+  async function ownerDelete(session, id) {
+    var f = (await Q(sql, 'select * from owners where id = $1', [String(id || '')]))[0]; if (!f) throw err('업무를 찾을 수 없습니다.');
+    await ownerLog(f.task, '삭제', session.name); await Q(sql, 'delete from owners where id = $1', [f.id]); return ownersList();
+  }
 
   /* ───────────── 배차 이력 찾기 (차량번호·기사·연락처·센터·오더 키·주소 …) · 금액은 안 보냄 · 협력사는 배정된 탭만 ───────────── */
   /** { q, co(업체), from, to } → { list: [운행 한 건 = 날짜·탭·호차·차량·센터들], drivers: 기사별, centers: 센터별, more } */

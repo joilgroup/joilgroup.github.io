@@ -11,6 +11,13 @@ var TZ_MS = 9 * 3600000;
 /** 배차·계정 시트는 새 표(joil.disp_* · accounts)가 원본 — 여기서는 '계정'만 읽기 전용으로 보여 줘요 */
 var VIRTUAL = { '계정': 1 };
 export var DISPATCH_SHEETS = ['배차오더', '배차호차', '상차지', '상차지사진', '하차지주소록', '기사풀', '배차단가표', '배차단가', '센터도착', '도착지특이사항', '인수증', '계정'];
+/** 진짜 표로 옮긴 시트(012~, props MOVED_시트): Code.js 가 읽을 때(주간 요약 등) 새 표에서 시트 모양으로 만들어 줘요 · 읽기 전용 */
+var MOVED_VIEWS = {
+  '공지': { head: ['ID', '제목', '내용', '고정', '작성자ID', '작성자', '작성일시', '수정일시'], q: 'select * from notices order by ord', row: function (r) { return [r.id, r.title, r.body, r.pinned ? 'Y' : '', r.owner_id, r.owner, r.created_at, r.updated_at]; } },
+  '문의기록': { head: ['ID', '일시', '거래처', '문의자', '내용', '처리', '상태', '응대자ID', '응대자', '자주묻는질문', '수정일시'], q: 'select * from inquiries order by ord', row: function (r) { return [r.id, "'" + r.at, r.cust, r.who, r.body, r.answer, r.status, r.by_id, r.by_name, r.faq ? 'Y' : '', r.updated_at]; } },
+  '업무담당': { head: ['ID', '업무', '거래처', '주담당', '부담당', '메모', '수정자', '수정일시'], q: 'select * from owners order by ord', row: function (r) { return [r.id, r.task, r.cust, r.main, r.sub, r.memo, r.by_name, r.at]; } },
+  '담당변경기록': { flag: '업무담당', head: ['일시', '업무', '내용', '수정자'], q: 'select * from owner_log order by id', row: function (r) { return [r.at, r.task, r.text, r.by_name]; } }
+};
 var USER_COLS = ['아이디', '이름', '권한', '사용여부', '비밀번호해시', '솔트', '비밀번호변경필요', '생성일', '마지막로그인', '메뉴권한', '배차탭'];
 
 function Need(kind, key, arg) { this.kind = kind; this.key = key; this.arg = arg; }
@@ -60,6 +67,13 @@ export function makeGas(opts) {
 
   async function loadSheets(db, names, st) {
     names = names.filter(function (n) { return !(n in st.sheets); }); if (!names.length) return;
+    var mv = names.filter(function (n) { return MOVED_VIEWS[n]; });
+    if (mv.length) {
+      var on = {}; (await Q(db, 'select key from props where key = any($1)', [mv.map(function (n) { return 'MOVED_' + (MOVED_VIEWS[n].flag || n); })])).forEach(function (r) { on[r.key] = 1; });
+      for (var n0 of mv) { var V = MOVED_VIEWS[n0]; if (!on['MOVED_' + (V.flag || n0)]) continue;
+        st.sheets[n0] = { ver: -1, virtual: true, rows: [V.head.slice()].concat((await Q(db, V.q)).map(function (r) { return V.row(r).map(function (x) { return sheetValue(x == null ? '' : x); }); })) }; }
+      names = names.filter(function (n) { return !(n in st.sheets); }); if (!names.length) return;
+    }
     var meta = {}; (await Q(db, 'select name, ver from sheet_meta where name = any($1)', [names])).forEach(function (r) { meta[r.name] = Number(r.ver); });
     var rows = await Q(db, 'select sheet, r, v from sheet_rows where sheet = any($1) order by sheet, r', [names.filter(function (n) { return n in meta; })]);
     names.forEach(function (n) { st.sheets[n] = n in meta ? { ver: meta[n], rows: [] } : null; });

@@ -80,6 +80,7 @@
 - 화면 갈림길: `app.js` `SB_ACTIONS`·`apiUrl()` — `config.js` `SB_ROUTE: 'dispatch'`(또는 기기별 `#sb-on`)일 때만 Supabase. 15초 확인은 RPC `joil_stamps`(함수 호출 수 아낌). 서버에 배차 액션을 추가하면 `SB_ACTIONS`·core.js `ACTIONS` 에도.
 - **2026-11-21 전환 완료**(로그인·계정·배차 원본 = Supabase). 함수는 `joil`(사이트)·`info`(기사 사이트, 회사명 안 보이게 · 같은 코드) — core.js 를 고치면 **둘 다** 배포(관리 API `functions/deploy?slug=…`, verify_jwt false).
 - **4단계(나머지 메뉴 전체)**: Code.js 를 Supabase 에서 그대로 실행(`gas.js`, 시트 = `joil.sheet_rows`). Code.js 를 고치면 `supabase/deploy.sh` 로 배포 + `node tests/run.js sb-gas`. 드라이브·메일만 구글(`int.drive`).
+- **진짜 표로 정리(012~)**: 옮긴 영역은 core.js `MOVED`(액션 앞부분 → 시트) + props `MOVED_시트`가 있을 때만 core.js 가 맡고, gas.js `MOVED_VIEWS`가 그 시트를 새 표에서 읽어 줘요. 지금 옮긴 것: 공지·문의 기록·업무 담당표. 이 영역은 **Code.js 가 아니라 core.js 를 고쳐요**.
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
 ## 자동 알림 🔔 (011)
