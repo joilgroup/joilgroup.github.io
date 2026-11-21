@@ -82,6 +82,9 @@
 - **4단계(나머지 메뉴 전체)**: Code.js 를 Supabase 에서 그대로 실행(`gas.js`, 시트 = `joil.sheet_rows`). Code.js 를 고치면 `supabase/deploy.sh` 로 배포 + `node tests/run.js sb-gas`. 드라이브·메일만 구글(`int.drive`).
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
+## 배차 이력 찾기 (010)
+- 배차시트 `openDispFind` → 서버 `dispatch.search`(금액 없음 · 협력사는 배정 탭만 · 색인 식은 core.js `TRK_FIND`와 010이 같아야 함). 기존 '배차검색'(분석 데이터·금액)과 다른 기능.
+
 ## 변경 이력 (Supabase DB 트리거 · 008)
 - 배차 표·계정을 바꾸면 트리거가 `joil.audit`에 바뀐 칸만 남겨요. 누가 = core.js `ctxStore`(요청마다 이름) → 쓰기 앞에 `set_config('joil.who')`. 새 쓰기 코드는 `Q(sql, …)`·`locked()`를 쓰면 저절로 돼요.
 - 화면 `openTruckHist`(호차 ⋯)·`adminAudit`, 서버 `dispatch.history`(값 이름 `tk` — `token`은 로그인 토큰)·`admin.audit`. 금액 칸은 분석 권한자만.

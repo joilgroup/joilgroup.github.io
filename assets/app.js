@@ -10,7 +10,7 @@
      한 기기에서만 먼저 시험: 주소창 끝에 #sb-on / #sb-off (그 기기에만 기억 · 다시 로그인해야 해요) */
   var CFG = window.JOIL_CONFIG || {};
   var SB_ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
-    'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.history', 'admin.audit', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
+    'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.history', 'admin.audit', 'dispatch.search', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
     'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
     'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   var SB_ROUTE = (function () {
@@ -89,7 +89,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'dispatch.history', 'admin.audit', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
+  var READ_ACTIONS = ['me', 'dispatch.search', 'dispatch.history', 'admin.audit', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
   var TIMEOUT_MS = 30000, SAVE_TIMEOUT_MS = 45000; // 저장은 서버에서 끝까지 돌아서, 화면이 먼저 포기하면 '실패'로 보이지만 실제로는 저장돼요 → 더 기다려요
   var inflight = {};
 
@@ -8252,6 +8252,42 @@
         };
       } });
   }
+  /* ───────── 배차 이력 찾기 (서버 dispatch.search · 금액 없음 · 협력사는 자기 탭만) ───────── */
+  function openDispFind(goTo) {
+    var st = dispState(), f = st.findF = st.findF || { q: '', span: 90, view: 'list' };
+    var tabOf = function (key) { var t = DISP_TABS.filter(function (x) { return dispKey(st, x[0]) === key; })[0]; return t ? t[0] : key; };
+    modal({ eyebrow: '배차시트 · ' + st.cust, title: '배차 이력 찾기', wide: true,
+      body: '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px"><input class="input" id="dfQ" placeholder="차량번호·기사·연락처·센터·주소·오더 키 (일부만 넣어도 돼요)" value="' + esc(f.q) + '" style="flex:1;min-width:220px">' +
+        '<select class="input input-sm" id="dfSpan" style="width:auto">' + [[30, '1개월'], [90, '3개월'], [365, '1년'], [0, '전체']].map(function (x) { return '<option value="' + x[0] + '"' + (f.span === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select><button class="btn btn-primary btn-sm" id="dfGo">찾기</button></div>' +
+        '<div class="chips" id="dfView" style="margin-bottom:10px">' + [['list', '운행 목록'], ['drivers', '기사별'], ['centers', '센터별']].map(function (v) { return '<button type="button" class="chip' + (f.view === v[0] ? ' on' : '') + '" data-v="' + v[0] + '">' + v[1] + '</button>'; }).join('') + '</div>' +
+        '<div id="dfOut" class="muted small">차량번호 일부(예: 3456), 기사 이름, 전화번호 일부, 센터 이름 등을 넣고 찾기를 누르세요.</div>',
+      foot: '<button class="btn" data-close>닫기</button>',
+      onMount: function (m, close) {
+        var res = null, out = $('#dfOut', m);
+        var draw = function () {
+          if (!res) return; out.classList.remove('muted');
+          var head = function (cols) { return '<div class="table-wrap"><table class="data sr-tbl"><thead><tr>' + cols.map(function (c) { return '<th class="left">' + c + '</th>'; }).join('') + '</tr></thead><tbody>'; };
+          var note = res.more ? '<p class="hint" style="margin:0 0 8px">찾은 게 많아서 최근 400건만 보여요. 기간을 줄이거나 더 자세히 넣어 보세요.</p>' : '';
+          if (!res.list.length) { out.innerHTML = '<p class="muted" style="margin:0">찾은 배차가 없어요.</p>'; return; }
+          if (f.view === 'drivers') out.innerHTML = note + head(['차량정보', '운전원', '연락처', '횟수', '처음', '마지막']) + res.drivers.map(function (d) { return '<tr><td class="left nowrap">' + esc(d.car) + '</td><td class="left">' + esc(d.driver) + '</td><td class="left nowrap">' + esc(d.phone) + '</td><td class="num">' + d.n + '</td><td class="left nowrap">' + esc(d.first) + '</td><td class="left nowrap"><button class="btn btn-sm btn-ghost" data-dq="' + esc(d.car || d.driver) + '">' + esc(d.last) + ' ›</button></td></tr>'; }).join('') + '</tbody></table></div>';
+          else if (f.view === 'centers') out.innerHTML = note + head(['센터', '방문 횟수', '처음', '마지막']) + res.centers.map(function (c) { return '<tr><td class="left"><b>' + esc(c.fc) + '</b></td><td class="num">' + c.n + '</td><td class="left nowrap">' + esc(c.first) + '</td><td class="left nowrap"><button class="btn btn-sm btn-ghost" data-dq="' + esc(c.fc) + '">' + esc(c.last) + ' ›</button></td></tr>'; }).join('') + '</tbody></table></div>';
+          else out.innerHTML = note + '<p class="hint" style="margin:0 0 8px">' + res.list.length + '건 · 줄을 누르면 그 날짜·탭으로 가요.</p>' + head(['날짜', '탭', '호차', '차량정보', '운전원', '연락처', '톤수', '센터', '번들', '상태']) + res.list.map(function (x, i) {
+            return '<tr class="click" data-go="' + i + '"><td class="left nowrap">' + esc(x.date) + '</td><td class="left nowrap">' + esc(tabOf(x.cust)) + '</td><td class="nowrap">' + (x.no == null ? '<span class="muted">미배정</span>' : x.no + '호차') + '</td><td class="left nowrap">' + esc(x.car) + '</td><td class="left">' + esc(x.driver) + '</td><td class="left nowrap">' + esc(x.phone) + '</td><td>' + esc(x.ton) + '</td><td class="left">' + esc(x.fcs.join(', ')) + '</td><td class="num">' + won(x.bundle) + '</td><td>' + esc(x.no == null ? '' : x.status || '배차전') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+          $$('[data-go]', out).forEach(function (r) { r.onclick = function () { var x = res.list[Number(r.dataset.go)]; close(); goTo(x.date, DISP_TABS.some(function (t) { return t[0] === tabOf(x.cust); }) ? tabOf(x.cust) : ''); }; });
+          $$('[data-dq]', out).forEach(function (b) { b.onclick = function () { $('#dfQ', m).value = b.dataset.dq; f.view = 'list'; $$('#dfView .chip', m).forEach(function (c) { c.classList.toggle('on', c.dataset.v === 'list'); }); run(); }; });
+        };
+        var run = function () {
+          f.q = $('#dfQ', m).value.trim(); f.span = Number($('#dfSpan', m).value);
+          if (f.q.replace(/\s/g, '').length < 2) { out.innerHTML = '<p class="err-text" style="margin:0">두 글자 이상 넣어 주세요.</p>'; return; }
+          out.classList.add('muted'); out.innerHTML = '<span class="spinner dark"></span> 찾는 중…';
+          api('dispatch.search', { q: f.q, co: st.cust, from: f.span ? dAdd(todayYmd(), -f.span) : '', to: '' }).then(function (r) { res = r; draw(); })
+            .catch(function (err) { out.classList.remove('muted'); out.innerHTML = '<p class="err-text" style="margin:0">' + esc(/알 수 없는 요청|배차시트만/.test(err.message) ? '서버가 아직 이력 찾기를 몰라요. 잠시 뒤 다시 해 주세요.' : err.message) + '</p>'; });
+        };
+        $('#dfGo', m).onclick = run; $('#dfQ', m).onkeydown = function (e) { if (e.key === 'Enter') run(); };
+        $$('#dfView .chip', m).forEach(function (c) { c.onclick = function () { f.view = c.dataset.v; $$('#dfView .chip', m).forEach(function (x) { x.classList.toggle('on', x === c); }); draw(); }; });
+        setTimeout(function () { $('#dfQ', m).focus(); if (f.q) run(); }, 50);
+      } });
+  }
   /* ───────── 변경 이력 (서버 DB 트리거가 자동으로 남긴 것 · 금액 칸은 분석 권한자에게만 와요) ───────── */
   var HIST_LBL = { car: '차량정보', driver: '운전원', phone: '연락처', time: '입차시간', ton: '톤수', memo: '메모', status: '상태', no: '호차', truck: '호차', ret_cost: '회차비용', wait: '대기료', support: '운송료지원', join_tk: '합차', rev: '매출', cost: '매입',
     note_in: '내부 공지', note_drv: '기사 공지', date: '날짜', cust: '탭', 'd.fc': '센터', 'd.bundle': '번들', 'd.kg': '중량', 'd.item': '품목', 'd.addr': '주소', 'd.hours': '하차시간', 'd.dock': '도크', 'd.rsv': '예약시간', 'd.rsvCode': '예약코드',
@@ -8629,7 +8665,7 @@
     box.innerHTML =
       '<div class="card"><div class="row-between" style="flex-wrap:wrap;gap:10px"><div class="cal-nav"><button class="btn btn-sm" id="dpPrev">◀</button><input class="input input-sm" type="date" id="dpDate" value="' + esc(st.date) + '" style="width:auto"><button class="btn btn-sm" id="dpNext">▶</button>' +
         (near.length ? '<span class="chips" style="margin-left:6px">' + near.map(function (d) { return '<button type="button" class="chip' + (d === st.date ? ' on' : '') + '" data-day="' + d + '" title="오더 ' + days[d] + '줄">' + (+d.slice(5, 7)) + '/' + (+d.slice(8)) + '</button>'; }).join('') + '</span>' : '') + '</div>' +
-        '<div class="small" id="dpSaveSt"></div></div>' +
+        '<div class="row" style="gap:8px;align-items:center"><button type="button" class="btn btn-sm btn-ghost" id="dpFind" title="차량번호·기사·연락처·센터·오더 키로 지난 배차 찾기">🔍 이력 찾기</button><div class="small" id="dpSaveSt"></div></div></div>' +
         dispSummaryHtml(st) +
         (isPartner() ? '' : '<div class="dp-tabs" id="dpTabs">' + DISP_TABS.filter(function (t) { return t[0] === st.tab || st.tabs[t[0]].orders.length; }).map(function (t) { var x = st.tabs[t[0]], n = x.orders.length, nt = dispTrucks(x).length; return '<button type="button" data-tab="' + esc(t[0]) + '" class="' + (t[0] === st.tab ? 'on' : '') + '"><b>' + esc(t[0]) + '</b></button>'; }).join('') +
           (function () { var rest = DISP_TABS.filter(function (t) { return t[0] !== st.tab && !st.tabs[t[0]].orders.length; }); return '<span class="dp-tabx">' + (rest.length ? '<select class="input input-sm" id="dpTabMore"><option value="">＋ 다른 탭 열기 (' + rest.length + ')</option>' + rest.map(function (t) { return '<option>' + esc(t[0]) + '</option>'; }).join('') + '</select>' : '') + (isPartner() ? '' : '<button type="button" class="btn btn-sm btn-ghost" id="dpTabMgr">탭 관리</button><button type="button" class="btn btn-sm btn-ghost" id="dpMustMgr" title="센터마다 특이사항 멘트">📌 도착지 특이사항' + ((st.cnList || []).length ? ' ' + (st.cnList || []).length : '') + '</button>') + '</span>'; })() + '</div>') +
@@ -8654,6 +8690,7 @@
           return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대' + (lk.length ? ' · 합차 ' + lk.length + '대' : '') + '</span></h3><button class="btn btn-sm" data-xlall="' + esc(t[0]) + '" title="구글 시트·엑셀에 붙여넣기용 (착지마다 한 줄)">엑셀로 복사</button></div>' + jl + (ns.length ? truckTableHtml(X, ns) : '') + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
     var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; st.useCache = true; renderDispatch(); };
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
+    $('#dpFind').onclick = function () { openDispFind(function (d, tab) { dispSaveNow(); st.date = d; if (tab) st.tab = tab; st.tabs = null; renderDispatch(); }); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };
     $('#dpDate').onchange = function () { if (this.value) go(this.value); };
     $$('[data-day]', box).forEach(function (b) { b.onclick = function () { go(b.dataset.day); }; });

@@ -16,13 +16,13 @@ var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'supp
 var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'];
 var DISP_RATE_TONS = ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤'];
 var PLACE_PHOTO_MAX = 2;
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'dispatch.notes', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'dispatch.notes', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
 /** 이 서버가 맡는 액션 (화면 갈림길 SB_ACTIONS 와 같은 목록 · 나머지는 아직 Apps Script) */
 export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'drv.get', 'drv.upload', 'drv.photo',
   'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
-  'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit'];
+  'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search'];
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
 var PUBLIC_DEFAULT = { tons: ['1톤', '1.4톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '25톤'], fuelMode: 'manual', manualPrice: 1500, baseTon: '5톤', roundTrip: false, maxRows: 1000, retentionDays: 90, quoteFooter: '※ 부가세 별도 / 대기·수작업 발생 시 별도 협의', maxKm: 600, priceRounding: { unit: 1000, mode: 'round' }, specials: [] };
 
@@ -791,6 +791,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.geo': return { coords: await dispGeo(req.addrs) };
       case 'dispatch.receipt': return dispReceipt(req.id);
       case 'dispatch.history': return dispHistory(session, req);
+      case 'dispatch.search': return dispSearch(session, req);
       case 'loading.list': return { places: await loadingList() };
       case 'drivers.list': return { drivers: await driverList() };
       case 'drivers.save': return driverSave(session, req);
@@ -833,6 +834,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.must': if (partnerCusts(session).indexOf(dispCust(req.cust)) === -1) throw err('볼 수 없는 업체예요.'); return { list: await dispMust(req.cust) };
       case 'dispatch.notes': if (partnerCusts(session).indexOf(dispCust(req.cust)) === -1) throw err('볼 수 없는 업체예요.'); return { list: (await dispNotes(req.cust)).filter(function (x) { return x.ptn || x.drv; }) };
       case 'dispatch.rates': return partnerRates(session);
+      case 'dispatch.search': return dispSearch(session, req);
       case 'dispatch.receipt': var rf = await receiptRow(req.id); if (!rf) throw err('사진을 찾을 수 없습니다.'); ok(rf.cust); return dispReceipt(req.id);
       case 'loading.list': var pcs = partnerCusts(session); return { places: (await loadingList()).filter(function (x) { return pcs.indexOf(x.cust) !== -1; }) };
       case 'loading.photo': return placePhoto(req.id);
@@ -878,6 +880,42 @@ export function makeServer(sql, opts) {
     return { drivers: await driverList(), added: added, updated: updated };
   }
   async function driverDelete(id) { var r = await Q(sql, 'delete from drivers where id = $1 returning id', [String(id || '')]); if (!r.length) throw err('기사를 찾을 수 없어요.'); return { drivers: await driverList() }; }
+
+  /* ───────────── 배차 이력 찾기 (차량번호·기사·연락처·센터·오더 키·주소 …) · 금액은 안 보냄 · 협력사는 배정된 탭만 ───────────── */
+  /** { q, co(업체), from, to } → { list: [운행 한 건 = 날짜·탭·호차·차량·센터들], drivers: 기사별, centers: 센터별, more } */
+  var TRK_FIND = "(car || ' ' || replace(car, ' ', '') || ' ' || driver || ' ' || regexp_replace(phone, '[^0-9]', '', 'g'))"; // 010 색인과 같은 식이어야 색인을 써요
+  async function dispSearch(session, req) {
+    var q = String(req.q || '').trim().slice(0, 50); if (q.replace(/\s/g, '').length < 2) throw err('두 글자 이상 넣어 주세요.');
+    var co = dispCust(req.co), to = req.to ? dispDate(req.to) : '9999-12-31', from = req.from ? dispDate(req.from) : '0000-00-00';
+    var tabs = session.role === 'partner' ? session.dispTabs.filter(function (k) { return dispCo(k) === co; }) : null;
+    if (tabs && !tabs.length) throw err('볼 수 없는 업체예요.');
+    var like = '%' + q.replace(/[\\%_]/g, '\\$&') + '%', tight = '%' + q.replace(/\s/g, '').replace(/[\\%_]/g, '\\$&') + '%', dg = q.replace(/[^0-9]/g, ''), digits = dg.length >= 3 ? '%' + dg + '%' : '';
+    var scope = '(cust = $1 or cust like $2) and date between $3 and $4' + (tabs ? ' and cust = any($8)' : '');
+    var P = [co, co.replace(/[\\%_]/g, '\\$&') + '/%', from, to, like, tight, digits].concat(tabs ? [tabs] : []);
+    var hits = await Q(sql, 'select cust, date, no from disp_trucks where ' + scope + " and (" + TRK_FIND + " ilike $5 or " + TRK_FIND + " ilike $6 or ($7 <> '' and " + TRK_FIND + " like $7))" +
+      ' union select cust, date, truck from disp_orders where ' + scope + ' and (key ilike $5 or (data::text ilike $5 and exists (select 1 from json_each_text(data) e where e.value ilike $5)) or note_in ilike $5 or note_drv ilike $5) order by 2 desc, 1, 3 limit 401', P);
+    var more = hits.length > 400; hits = hits.slice(0, 400);
+    var pairs = {}; hits.forEach(function (h) { pairs[h.cust + '|' + h.date] = 1; });
+    var pk = Object.keys(pairs), tr = {}, od = {};
+    if (pk.length) {
+      (await Q(sql, "select * from disp_trucks where cust || '|' || date = any($1)", [pk])).forEach(function (r) { tr[r.cust + '|' + r.date + '|' + r.no] = r; });
+      (await Q(sql, "select cust, date, truck, data from disp_orders where cust || '|' || date = any($1) order by seq, ord", [pk])).forEach(function (r) { var k = r.cust + '|' + r.date + '|' + (r.truck == null ? '' : r.truck); (od[k] = od[k] || []).push(parseJson(r.data, {}) || {}); });
+    }
+    var num = function (v) { var n = Number(String(v == null ? '' : v).replace(/[^0-9.]/g, '')); return isFinite(n) ? n : 0; };
+    var list = hits.map(function (h) {
+      var k = h.cust + '|' + h.date + '|' + (h.no == null ? '' : h.no), t = tr[k] || {}, os = od[k] || [], fcs = [];
+      os.forEach(function (d) { if (d.fc && fcs.indexOf(d.fc) === -1) fcs.push(String(d.fc)); });
+      return { date: h.date, cust: h.cust, no: h.no == null ? null : Number(h.no), car: t.car || '', driver: t.driver || '', phone: t.phone || '', ton: t.ton || '', status: dispStatus(t.status || ''), fcs: fcs, from: (os[0] && os[0].from) || '',
+        bundle: os.reduce(function (a, d) { return a + num(d.bundle); }, 0), kg: os.reduce(function (a, d) { return a + num(d.kg); }, 0), n: os.length };
+    });
+    var dmap = {}, cmap = {};
+    list.forEach(function (x) {
+      if (x.car || x.driver) { var dk = (x.car || '').replace(/\s/g, '') + '|' + x.driver, d = dmap[dk] = dmap[dk] || { car: x.car, driver: x.driver, phone: x.phone, n: 0, last: '', first: x.date }; d.n++; if (x.date > d.last) { d.last = x.date; d.phone = x.phone || d.phone; } if (x.date < d.first) d.first = x.date; }
+      x.fcs.forEach(function (fc) { var c = cmap[fc] = cmap[fc] || { fc: fc, n: 0, last: '', first: x.date }; c.n++; if (x.date > c.last) c.last = x.date; if (x.date < c.first) c.first = x.date; });
+    });
+    var byN = function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); };
+    return { list: list, drivers: Object.keys(dmap).map(function (k) { return dmap[k]; }).sort(byN), centers: Object.keys(cmap).map(function (k) { return cmap[k]; }).sort(byN), more: more };
+  }
 
   /* ───────────── 변경 이력 (DB 트리거가 남긴 joil.audit · 금액이 든 것은 분석 권한자만) ───────────── */
   var AUD_MONEY = ['rev', 'cost', 'ret_cost', 'wait', 'support'];

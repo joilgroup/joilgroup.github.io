@@ -381,7 +381,7 @@
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
       if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
@@ -635,6 +635,21 @@
         var eo = wk('dispOrd').filter(function (o) { return o.id === req.id && o.cust === req.cust && o.date === req.date; })[0] || fail('오더를 찾을 수 없어요.');
         ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'].forEach(function (k) { if ((req.patch || {}).hasOwnProperty(k)) eo.d[k] = String(req.patch[k]).trim(); }); if (!eo.d.fc) fail('센터명은 비울 수 없어요.');
         var eoc = {}; Object.keys(req.patch || {}).forEach(function (k) { eoc['d.' + k] = ['', String(req.patch[k])]; }); wk('audit').unshift({ id: Date.now(), at: today() + ' ' + new Date().toTimeString().slice(0, 8), who: me.name, tbl: 'order', op: 'edit', cust: req.cust, date: req.date, ref: eo.id, no: eo.truck === '' ? null : eo.truck, chg: eoc }); save(); return { ok: true };
+      case 'dispatch.search': // 서버 dispSearch 와 같은 결과 모양 (금액 없음 · 협력사는 자기 탭만)
+        var sq = String(req.q || '').trim(), sl = sq.toLowerCase(), st2 = sq.replace(/\s/g, '').toLowerCase(), sdg = sq.replace(/[^0-9]/g, ''); if (st2.length < 2) fail('두 글자 이상 넣어 주세요.');
+        var sin = function (k, d) { return (k === req.co || k.indexOf(req.co + '/') === 0) && (!req.from || d >= req.from) && (!req.to || d <= req.to) && (me.role !== 'partner' || (me.dispTabs || []).indexOf(k) !== -1); };
+        var shit = {}, sadd = function (c, d, n) { shit[c + '|' + d + '|' + (n === '' || n == null ? '' : n)] = { cust: c, date: d, no: n === '' || n == null ? null : Number(n) }; };
+        wk('dispTrk').forEach(function (t) { if (!sin(t.cust, t.date)) return; var tx = [t.car, String(t.car || '').replace(/\s/g, ''), t.driver].join(' ').toLowerCase(); if (tx.indexOf(sl) !== -1 || tx.indexOf(st2) !== -1 || (sdg.length >= 3 && String(t.phone || '').replace(/[^0-9]/g, '').indexOf(sdg) !== -1)) sadd(t.cust, t.date, t.no); });
+        wk('dispOrd').forEach(function (o) { if (!sin(o.cust, o.date)) return; var vals = [o.key, o.noteIn, o.noteDrv].concat(Object.keys(o.d || {}).map(function (k) { return o.d[k]; })); if (vals.some(function (v) { return String(v == null ? '' : v).toLowerCase().indexOf(sl) !== -1; })) sadd(o.cust, o.date, o.truck); });
+        var slist = Object.keys(shit).map(function (k) { return shit[k]; }).sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; }).slice(0, 400).map(function (h) {
+          var t = wk('dispTrk').filter(function (x) { return x.cust === h.cust && x.date === h.date && x.no === h.no; })[0] || {}, os = wk('dispOrd').filter(function (o) { return o.cust === h.cust && o.date === h.date && (o.truck === '' || o.truck == null ? null : Number(o.truck)) === h.no; }), fcs = [];
+          os.forEach(function (o) { if (o.d.fc && fcs.indexOf(o.d.fc) === -1) fcs.push(o.d.fc); });
+          return { date: h.date, cust: h.cust, no: h.no, car: t.car || '', driver: t.driver || '', phone: t.phone || '', ton: t.ton || '', status: t.status || '', fcs: fcs, from: (os[0] && os[0].d.from) || '', bundle: os.reduce(function (a, o) { return a + (Number(String(o.d.bundle || '').replace(/[^0-9.]/g, '')) || 0); }, 0), kg: 0, n: os.length };
+        });
+        var sdm = {}, scm = {}; slist.forEach(function (x) { if (x.car || x.driver) { var dk = String(x.car).replace(/\s/g, '') + '|' + x.driver, d = sdm[dk] = sdm[dk] || { car: x.car, driver: x.driver, phone: x.phone, n: 0, last: '', first: x.date }; d.n++; if (x.date > d.last) d.last = x.date; if (x.date < d.first) d.first = x.date; }
+          x.fcs.forEach(function (fc) { var c = scm[fc] = scm[fc] || { fc: fc, n: 0, last: '', first: x.date }; c.n++; if (x.date > c.last) c.last = x.date; if (x.date < c.first) c.first = x.date; }); });
+        var sbn = function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); };
+        return { list: slist, drivers: Object.keys(sdm).map(function (k) { return sdm[k]; }).sort(sbn), centers: Object.keys(scm).map(function (k) { return scm[k]; }).sort(sbn), more: false };
       case 'dispatch.history':
         var hrefs = (req.ids || []).concat(req.tk ? [req.tk] : []), hcost = me.perms.indexOf('analysis') !== -1;
         return { list: wk('audit').filter(function (x) { return x.cust === req.cust && x.date === req.date && (x.tbl === 'truck' || x.tbl === 'order') && (!hrefs.length || hrefs.indexOf(x.ref) !== -1); }).map(function (x) { var c = Object.assign({}, x.chg); if (!hcost) ['rev', 'cost', 'ret_cost', 'wait', 'support'].forEach(function (k) { delete c[k]; }); return Object.assign({}, x, { chg: c }); }).filter(function (x) { return Object.keys(x.chg).length; }) };
