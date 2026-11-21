@@ -7241,7 +7241,7 @@
   function loadDispTabs(force) {
     var st = dispState(); if (st.tabList && st.tabList._cust === st.cust && !force) return Promise.resolve(st.tabList);
     var cust = st.cust;
-    var cnDone = function (l, old) { if (dispState().cust !== cust) return; st.cnList = l; st.cnOld = old; if (state.view === 'dispatch' && st.view !== 'month' && (l.length || st.cnShown) && st.tabs) drawDispDay(); };
+    var cnDone = function (l, old) { if (dispState().cust !== cust) return; st.cnList = l; st.cnOld = old; if (state.view === 'dispatch' && st.view === 'day' && (l.length || st.cnShown) && st.tabs) drawDispDay(); };
     api('dispatch.notes', { cust: cust }).then(function (r) { cnDone(r.list || [], false); }, function () {
       // 서버(Code.js)가 예전이면 '꼭 가야 하는 센터' 목록을 특이사항처럼 보여 줘요
       api('dispatch.must', { cust: cust }).then(function (r) { cnDone((r.list || []).map(function (fc) { return { fc: fc, note: '오늘 꼭 가야함', ptn: true, drv: false, lock: true }; }), true); }, function () { cnDone([], true); });
@@ -8156,7 +8156,7 @@
     syncRoute();
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Dispatch · 배차시트</div><h2>배차시트</h2><p class="muted small" style="margin:4px 0 0' + (isPartner() ? ';display:none' : '') + '">출발지 탭마다 오더를 붙여넣고 → 호차로 묶고 → 문자(기사용 링크 포함) 복사 → 호차 표에 차량정보 붙여넣기 → 엑셀 복사</p></div>' +
       '<div class="actions"><select class="input input-sm" id="dpCust" style="width:auto">' + DISP_CUSTS.map(function (c) { return '<option' + (c === st.cust ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
-      (isPartner() ? '' : '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button></div>') +
+      (isPartner() ? '' : '<div class="segmented" id="dpView"><button type="button" data-v="day" class="' + (st.view === 'day' ? 'on' : '') + '">날짜별 배차</button><button type="button" data-v="month" class="' + (st.view === 'month' ? 'on' : '') + '">월별 기록</button>' + (can('analysis') ? '<button type="button" data-v="profit" class="' + (st.view === 'profit' ? 'on' : '') + '">손익</button>' : '') + '</div>') +
       (isPartner() ? '' : '<button class="btn btn-sm" id="dpPlaces">상차지 설정</button><button class="btn btn-sm" id="dpDests">하차지 주소록</button><button class="btn btn-sm" id="dpPool">기사 풀</button>') + (can('analysis') ? '<button class="btn btn-sm" id="dpRates">매입 단가표</button>' : '') + '</div></div><div id="dpBody" style="margin-top:16px"><div class="card muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
     $('#dpBody').addEventListener('focusout', function () {
       setTimeout(function () { var s2 = dispState(), ae = document.activeElement; if (!s2.drawLater || dispTyping() || (ae && ae.tagName === 'SELECT' && ae.closest('#dpBody'))) return; s2.drawLater = false; if (state.view === 'dispatch' && s2.view === 'day') { drawDispDay(); dispFlash(); } }, 250);
@@ -8166,6 +8166,7 @@
     if (!isPartner()) { $('#dpPlaces').onclick = openPlaces; $('#dpPool').onclick = openDriverPool; $('#dpDests').onclick = openDestBook; }
     var rb = $('#dpRates'); if (rb) rb.onclick = openDispRates;
     if (st.view === 'month') return drawDispMonth();
+    if (st.view === 'profit') { if (can('analysis')) return drawDispProfit(); st.view = 'day'; }
     Promise.all([loadDispDay(), loadPlaces().catch(function () { return []; }), loadDispRates(), loadDrivers().catch(function () { return []; }), loadDests(), custDef(st).load ? custDef(st).load() : null]).then(function () { if (state.view === 'dispatch') { drawDispDay(); needGeo(); } })
       .catch(function (err) { $('#dpBody').innerHTML = '<div class="card"><p class="err-text">' + esc(err.message) + '</p></div>'; });
   }
@@ -8991,6 +8992,98 @@
   }
   /** 그 달 번들 단가: 저장한 달 중 가장 가까운 지난 달 것 (11월에 올려도 지난 달은 그대로) */
   function dispPriceOf(prices, ym) { var ks = Object.keys(prices || {}).filter(function (k) { return k <= ym && Number(prices[k]) > 0; }).sort(); return ks.length ? { v: Number(prices[ks[ks.length - 1]]), ym: ks[ks.length - 1] } : null; }
+  /* ───────── 손익 대시보드 (분석 권한자만): 기간을 자유롭게 · 탭·상차지·톤수·기사·센터별 매출·매입·이익
+     숫자는 월별 기록과 같은 계산(dispMonthCalc)을 달마다 그 달 단가로 돌린 뒤 기간 안의 호차만 더해요. ───────── */
+  var PF_DIMS = [['tab', '탭'], ['from', '상차지'], ['ton', '톤수'], ['drv', '기사'], ['fc', '센터']];
+  function dispProfitMonth(st, ym, MT, PR) {
+    var keys = MT.map(function (t) { return st.cust + t[1]; }), ck = st.cust + '|' + ym, c = st.pCache && st.pCache[ck];
+    if (c && Date.now() - c.at < 120000) return Promise.resolve(c.res);
+    return api('dispatch.monthAll', { keys: keys, ym: ym }).then(function (r) {
+      var res = MT.map(function (t, i) { var x = r.byKey[keys[i]] || { orders: [], trucks: [] }; x.tab = t[0]; return x; });
+      st.pCache = st.pCache || {}; st.pCache[ck] = { at: Date.now(), res: res }; return res;
+    });
+  }
+  /** 호차 한 줄을 묶음 열쇠로: 센터는 한 호차의 여러 센터에 번들 비율로 나눠요 */
+  function dispProfitKeys(r, dim) {
+    if (dim === 'tab') return [[r.tab, 1]];
+    if (dim === 'from') return [[(r.os[0] && r.os[0].d.from) || '(상차지 없음)', 1]];
+    if (dim === 'ton') return [[r.ton || '(톤수 없음)', 1]];
+    if (dim === 'drv') return [[[r.t.car, r.t.driver].filter(Boolean).join(' · ') || '(차량정보 없음)', 1]];
+    var by = {}, tb = 0; r.os.forEach(function (o) { var b = dispBundles([o]); by[o.d.fc] = (by[o.d.fc] || 0) + b; tb += b; });
+    var fcs = Object.keys(by); return fcs.map(function (fc) { return [fc || '(센터 없음)', tb ? by[fc] / tb : 1 / fcs.length]; });
+  }
+  function drawDispProfit() {
+    var st = dispState(), box = $('#dpBody'), today = todayYmd(), f = st.pf = st.pf || { from: today.slice(0, 8) + '01', to: today, dim: 'tab' };
+    box.innerHTML = '<div class="card"><div class="actions" style="flex-wrap:wrap"><span class="small muted">기간</span><input class="input input-sm" type="date" id="pfFrom" value="' + esc(f.from) + '" style="width:auto"><span>~</span><input class="input input-sm" type="date" id="pfTo" value="' + esc(f.to) + '" style="width:auto">' +
+      '<span class="chips">' + [['m0', '이번 달'], ['m1', '지난달'], ['q', '최근 3개월'], ['y', '올해']].map(function (q) { return '<button type="button" class="chip" data-pq="' + q[0] + '">' + q[1] + '</button>'; }).join('') + '</span>' +
+      '<span class="spacer"></span><span class="small muted">묶어 보기</span><span class="chips" id="pfDim">' + PF_DIMS.map(function (d) { return '<button type="button" class="chip' + (f.dim === d[0] ? ' on' : '') + '" data-pd="' + d[0] + '">' + d[1] + '</button>'; }).join('') + '</span></div>' +
+      '<p class="hint" style="margin:8px 0 0">' + esc(st.cust) + ' · 월별 기록과 같은 계산이에요(실제 매입·직접 고친 매출·그 달 번들 단가·합차·회차 포함). 센터별은 한 호차의 금액을 센터마다 번들 비율로 나눠요. 최대 12개월.</p><div id="pfBody" style="margin-top:12px"><p class="muted"><span class="spinner dark"></span></p></div></div>';
+    var set = function (a, b) { f.from = a; f.to = b; drawDispProfit(); };
+    $$('[data-pq]', box).forEach(function (b) { b.onclick = function () { var q = b.dataset.pq, ym = today.slice(0, 7), last = function (m) { return dAdd(ymAdd(m, 1) + '-01', -1); };
+      if (q === 'm0') set(ym + '-01', today); else if (q === 'm1') set(ymAdd(ym, -1) + '-01', last(ymAdd(ym, -1))); else if (q === 'q') set(ymAdd(ym, -2) + '-01', today); else set(ym.slice(0, 4) + '-01-01', today); }; });
+    $$('[data-pd]', box).forEach(function (b) { b.onclick = function () { f.dim = b.dataset.pd; drawDispProfit(); }; });
+    $('#pfFrom').onchange = function () { if (this.value) set(this.value, f.to < this.value ? this.value : f.to); };
+    $('#pfTo').onchange = function () { if (this.value) set(f.from > this.value ? this.value : f.from, this.value); };
+    var out = $('#pfBody'), yms = [], m = f.from.slice(0, 7); while (m <= f.to.slice(0, 7) && yms.length < 13) { yms.push(m); m = ymAdd(m, 1); }
+    if (yms.length > 12) { out.innerHTML = '<p class="err-text" style="margin:0">기간은 12개월까지 볼 수 있어요.</p>'; return; }
+    var MT, PR, want = JSON.stringify(f);
+    Promise.all([loadDispTabs(), loadDispRates(), loadPlaces(), api('dispatch.price', { cust: st.cust }).then(function (r) { return r.prices || {}; })]).then(function (z) {
+      PR = z[3]; MT = z[0].map(function (t) { return [t.name, t.suf]; });
+      return Promise.all(yms.map(function (ym) { return dispProfitMonth(st, ym, MT, PR); }));
+    }).then(function (all) {
+      if (state.view !== 'dispatch' || st.view !== 'profit' || JSON.stringify(f) !== want) return;
+      var rows = [], miss = 0;
+      all.forEach(function (res, i) { var price = dispPriceOf(PR, yms[i]); if (!price) miss++; dispMonthCalc(res, MT, function () { return true; }, price, true, true).rows.forEach(function (r) { if (r.date >= f.from && r.date <= f.to) rows.push(r); }); });
+      var tot = { t: 0, amt: 0, rev: 0, b: 0, none: 0 }, g = {};
+      rows.forEach(function (r) {
+        tot.rev += r.revenue || 0; tot.b += r.b; if (!r.jm) { tot.t++; if (r.amt == null) tot.none++; else tot.amt += r.amt; }
+        dispProfitKeys(r, f.dim).forEach(function (kw) { var x = g[kw[0]] = g[kw[0]] || { k: kw[0], t: 0, rev: 0, amt: 0, b: 0, none: 0 }, w = kw[1];
+          x.rev += (r.revenue || 0) * w; x.b += r.b * w; if (!r.jm) { x.t += w; if (r.amt == null) x.none++; else x.amt += r.amt * w; } });
+      });
+      var pf = tot.rev - tot.amt, red = function (v) { return v < 0 ? ' style="color:#C0392B"' : ''; }, pct = function (a, b) { return b ? (a / b * 100).toFixed(1) + '%' : '–'; };
+      var list = Object.keys(g).map(function (k) { return g[k]; }).sort(function (a, b) { return (b.rev - b.amt) - (a.rev - a.amt) || b.rev - a.rev; });
+      var dimName = PF_DIMS.filter(function (d) { return d[0] === f.dim; })[0][1];
+      out.innerHTML = !rows.length ? '<p class="muted" style="margin:0">' + esc(f.from) + ' ~ ' + esc(f.to) + ' 배차 기록이 없어요.</p>' :
+        (miss ? '<p class="small err-text" style="margin:0 0 8px">번들 단가가 없는 달이 있어서 그 달 매출은 직접 고친 매출만 들어가요. 월별 기록에서 단가를 넣어 주세요.</p>' : '') +
+        '<div class="tr-kpis" style="margin-bottom:14px"><div><small>매출</small><b>' + won(Math.round(tot.rev)) + '원</b><span class="small muted">' + won(Math.round(tot.b)) + '번들</span></div>' +
+        '<div><small>매입</small><b>' + won(Math.round(tot.amt)) + '원</b><span class="small muted">' + won(tot.t) + '대' + (tot.none ? ' · <span style="color:#C0392B">단가 없음 ' + tot.none + '대 빠짐</span>' : '') + '</span></div>' +
+        '<div><small>이익</small><b' + red(pf) + '>' + won(Math.round(pf)) + '원</b><span class="small muted">매출 − 매입</span></div><div><small>이익률</small><b' + red(pf) + '>' + pct(pf, tot.rev) + '</b><span class="small muted">이익 ÷ 매출</span></div></div>' +
+        '<div class="table-wrap"><table class="data pf-table"><thead><tr><th class="left">' + esc(dimName) + '</th><th>대수</th><th>번들</th><th>매출</th><th>매입</th><th>이익</th><th>이익률</th></tr></thead><tbody>' +
+        list.map(function (x) { var p2 = x.rev - x.amt; return '<tr><td class="left"><b>' + esc(x.k) + '</b>' + (x.none ? ' <span class="small" style="color:#C0392B">단가 없음 ' + x.none + '대</span>' : '') + '</td><td class="num">' + won(Math.round(x.t * 10) / 10) + '</td><td class="num">' + won(Math.round(x.b)) + '</td><td class="num">' + won(Math.round(x.rev)) + '</td><td class="num">' + won(Math.round(x.amt)) + '</td><td class="num"' + red(p2) + '>' + won(Math.round(p2)) + '</td><td class="num"' + red(p2) + '>' + pct(p2, x.rev) + '</td></tr>'; }).join('') +
+        '<tr class="dp-msum"><td class="left"><b>합계</b></td><td class="num">' + won(tot.t) + '</td><td class="num">' + won(Math.round(tot.b)) + '</td><td class="num"><b>' + won(Math.round(tot.rev)) + '</b></td><td class="num"><b>' + won(Math.round(tot.amt)) + '</b></td><td class="num"' + red(pf) + '><b>' + won(Math.round(pf)) + '</b></td><td class="num">' + pct(pf, tot.rev) + '</td></tr></tbody></table></div>';
+    }).catch(function (err) { var el = $('#pfBody'); if (el) el.innerHTML = '<p class="err-text" style="margin:0">' + esc(err.message) + '</p>'; });
+  }
+  /** 월별 기록의 호차별 한 줄·합계 계산 (월별 기록·손익 대시보드가 같은 숫자를 쓰게 한 곳에) */
+  function dispMonthCalc(res, MT, on, price, money, rev) {
+    var orders = [], tk = {}, cars = {};
+    res.filter(function (r) { return on(r.tab); }).forEach(function (r) { r.orders.forEach(function (o) { o.tab = r.tab; dispCleanD(o.d); orders.push(o); }); r.trucks.forEach(function (t) { t.status = dispStatusFix(t.status); tk[r.tab + '|' + t.date + '|' + t.no] = t; }); });
+    orders.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.tab < b.tab ? -1 : a.tab > b.tab ? 1 : a.seq - b.seq; });
+    // 호차별 한 줄 (마감과 같은 모양) · 금액 = 단가 + 대기료 + 운송료지원 (회차는 단가 대신 회차비)
+    var groups = {}, unassigned = 0;
+    orders.forEach(function (o) { if (o.truck === '' || o.truck == null) { unassigned++; return; } var k = o.tab + '|' + o.date + '|' + o.truck; (groups[k] || (groups[k] = [])).push(o); });
+    // 합차: 연결된 호차는 기준 호차에 차 1대로 (대수·운송비 이중 계산 안 함) · 고르지 않은 탭이어도 묶인 오더는 다 봐요
+    var byTok = {}, mates = {}, allOs = {};
+    res.forEach(function (r) { r.trucks.forEach(function (t) { if (t.token) byTok[t.date + '|' + t.token] = { tab: r.tab, no: t.no, t: t }; }); r.orders.forEach(function (o) { if (o.truck !== '' && o.truck != null) { var k = r.tab + '|' + o.date + '|' + o.truck; (allOs[k] || (allOs[k] = [])).push(o); } }); });
+    res.forEach(function (r) { r.trucks.forEach(function (t) { if (t.join && byTok[t.date + '|' + t.join]) (mates[t.date + '|' + t.join] = mates[t.date + '|' + t.join] || []).push({ tab: r.tab, no: t.no }); }); });
+    var rows = Object.keys(groups).map(function (k) {
+      var p = k.split('|'), tab = p[0], date = p[1], no = Number(p[2]), os = groups[k], t = tk[k] || { no: no, status: '' }, ret = t.status === '회차';
+      var jb = t.join && byTok[date + '|' + t.join], jm = !t.join && t.token && mates[date + '|' + t.token], jn = t.jn || [];
+      if (!jb && !jm && jn.some(function (x) { return x.base; })) jb = jn.filter(function (x) { return x.base; })[0]; // 협력사: 서버가 준 표시로
+      var jos = os; if (jm) jm.forEach(function (x) { jos = jos.concat(allOs[x.tab + '|' + date + '|' + x.no] || []); });
+      var D = { tab: tab, date: date, orders: jos.map(function (o, i) { return Object.assign({}, o, { truck: no, seq: i + 1 }); }), trucks: [t] }, cost = money && !ret && !jb ? truckCost(D, no) : null, stops = truckStops({ tab: tab, date: date, orders: os, trucks: [t] }, no);
+      var base = jb ? 0 : ret ? (Number(t.retCost) || 0) : cost ? cost.total : null, ex = jb ? 0 : (Number(t.wait) || 0) + (Number(t.support) || 0);
+      var r = { tab: tab, date: date, no: no, t: t, os: os, ret: ret, code: dispCode({ tab: tab }, date, os[0].d.from, no), fcs: stops.map(function (s) { return s.fc; }), b: ret ? 0 : dispBundles(os), kg: ret ? 0 : os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0), ton: ret ? '회차' : jb ? '합차' : cost ? cost.ton : (t.ton || ''), base: base, ex: ex, miss: cost ? cost.miss : [] };
+      r.jm = !!jb; r.note = jb ? '합차 · ' + joinName(jb) + '에 포함' : jm ? '합차(기준) · ' + jm.map(joinName).join(', ') + ' 착지 포함' : '';
+      if (!jb && !jm && jn.length) { base = r.base = null; r.note = '합차 · 금액은 담당자 확인'; } // 묶인 탭을 못 보는 화면(협력사)
+      r.real = rev && !jb && t.cost != null && t.cost !== ''; if (r.real) { base = r.base = Number(t.cost); ex = r.ex = 0; r.miss = []; r.ton = r.ton || t.ton || ''; } // 실제 마감 매입(직접 입력)이면 그 금액만
+      r.amt = base == null ? null : base + ex; r.rv = t.rev != null && t.rev !== '' ? Number(t.rev) : null; r.revenue = r.rv != null ? r.rv : price ? r.b * price.v : null; r.warn = r.jm ? '' : ret && !base ? '회차비 입력 필요' : base == null ? (r.note ? '' : '단가 없음') : r.miss.length ? '일부 착지 단가 없음: ' + r.miss.join(', ') : '';
+      var ck = (t.car || '') + (t.driver ? ' · ' + t.driver : ''); if (ck.trim() && !r.jm) cars[ck] = (cars[ck] || 0) + 1;
+      return r;
+    }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : MT.map(function (t) { return t[0]; }).indexOf(a.tab) - MT.map(function (t) { return t[0]; }).indexOf(b.tab) || a.no - b.no; });
+    var sum = {}, tot = { t: 0, amt: 0, none: 0, rev: 0, fix: 0, b: 0, fb: 0 };
+    rows.forEach(function (r) { var x = sum[r.tab] || (sum[r.tab] = { t: 0, ret: 0, b: 0, kg: 0, amt: 0, none: 0, jm: 0, rev: 0 }); x.b += r.b; x.kg += r.kg; x.rev += r.revenue || 0; tot.rev += r.revenue || 0; tot.b += r.b; if (r.rv != null) { tot.fix += r.rv; tot.fb += r.b; } if (r.jm) { x.jm++; return; } x.t++; if (r.ret) x.ret++; if (r.amt == null) { x.none++; tot.none++; } else { x.amt += r.amt; tot.amt += r.amt; } tot.t++; }); // 합차로 다른 탭 차에 탄 호차는 대수·금액에서 빼요
+    return { orders: orders, tk: tk, cars: cars, unassigned: unassigned, rows: rows, sum: sum, tot: tot };
+  }
   function drawDispMonth(quiet, useCache) {
     var st = dispState(), box = $('#dpBody'), money = can('analysis') || isPartner(), rev = can('analysis'), curYm = todayYmd().slice(0, 7);
     clearTimeout(st.mTimer);
@@ -9006,33 +9099,7 @@
       var on = function (tab) { return st.mTabs.indexOf(tab) !== -1; }, price = rev && PR ? dispPriceOf(PR, st.ym) : null;
       $('#dpMTabs').innerHTML = MT.map(function (t) { return '<button type="button" class="chip' + (on(t[0]) ? ' on' : '') + '" data-mt="' + esc(t[0]) + '">' + esc(t[0]) + '</button>'; }).join('');
       $$('[data-mt]').forEach(function (b) { b.onclick = function () { var n = b.dataset.mt, i = st.mTabs.indexOf(n); if (i === -1) st.mTabs.push(n); else if (st.mTabs.length > 1) st.mTabs.splice(i, 1); else { toast('탭을 하나 이상 골라야 해요.', 'err'); return; } drawDispMonth(); }; });
-      var orders = [], tk = {}, cars = {};
-      res.filter(function (r) { return on(r.tab); }).forEach(function (r) { r.orders.forEach(function (o) { o.tab = r.tab; dispCleanD(o.d); orders.push(o); }); r.trucks.forEach(function (t) { t.status = dispStatusFix(t.status); tk[r.tab + '|' + t.date + '|' + t.no] = t; }); });
-      orders.sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : a.tab < b.tab ? -1 : a.tab > b.tab ? 1 : a.seq - b.seq; });
-      // 호차별 한 줄 (마감과 같은 모양) · 금액 = 단가 + 대기료 + 운송료지원 (회차는 단가 대신 회차비)
-      var groups = {}, unassigned = 0;
-      orders.forEach(function (o) { if (o.truck === '' || o.truck == null) { unassigned++; return; } var k = o.tab + '|' + o.date + '|' + o.truck; (groups[k] || (groups[k] = [])).push(o); });
-      // 합차: 연결된 호차는 기준 호차에 차 1대로 (대수·운송비 이중 계산 안 함) · 고르지 않은 탭이어도 묶인 오더는 다 봐요
-      var byTok = {}, mates = {}, allOs = {};
-      res.forEach(function (r) { r.trucks.forEach(function (t) { if (t.token) byTok[t.date + '|' + t.token] = { tab: r.tab, no: t.no, t: t }; }); r.orders.forEach(function (o) { if (o.truck !== '' && o.truck != null) { var k = r.tab + '|' + o.date + '|' + o.truck; (allOs[k] || (allOs[k] = [])).push(o); } }); });
-      res.forEach(function (r) { r.trucks.forEach(function (t) { if (t.join && byTok[t.date + '|' + t.join]) (mates[t.date + '|' + t.join] = mates[t.date + '|' + t.join] || []).push({ tab: r.tab, no: t.no }); }); });
-      var rows = Object.keys(groups).map(function (k) {
-        var p = k.split('|'), tab = p[0], date = p[1], no = Number(p[2]), os = groups[k], t = tk[k] || { no: no, status: '' }, ret = t.status === '회차';
-        var jb = t.join && byTok[date + '|' + t.join], jm = !t.join && t.token && mates[date + '|' + t.token], jn = t.jn || [];
-        if (!jb && !jm && jn.some(function (x) { return x.base; })) jb = jn.filter(function (x) { return x.base; })[0]; // 협력사: 서버가 준 표시로
-        var jos = os; if (jm) jm.forEach(function (x) { jos = jos.concat(allOs[x.tab + '|' + date + '|' + x.no] || []); });
-        var D = { tab: tab, date: date, orders: jos.map(function (o, i) { return Object.assign({}, o, { truck: no, seq: i + 1 }); }), trucks: [t] }, cost = money && !ret && !jb ? truckCost(D, no) : null, stops = truckStops({ tab: tab, date: date, orders: os, trucks: [t] }, no);
-        var base = jb ? 0 : ret ? (Number(t.retCost) || 0) : cost ? cost.total : null, ex = jb ? 0 : (Number(t.wait) || 0) + (Number(t.support) || 0);
-        var r = { tab: tab, date: date, no: no, t: t, os: os, ret: ret, code: dispCode({ tab: tab }, date, os[0].d.from, no), fcs: stops.map(function (s) { return s.fc; }), b: ret ? 0 : dispBundles(os), kg: ret ? 0 : os.reduce(function (a, o) { return a + dispNum(o.d.kg); }, 0), ton: ret ? '회차' : jb ? '합차' : cost ? cost.ton : (t.ton || ''), base: base, ex: ex, miss: cost ? cost.miss : [] };
-        r.jm = !!jb; r.note = jb ? '합차 · ' + joinName(jb) + '에 포함' : jm ? '합차(기준) · ' + jm.map(joinName).join(', ') + ' 착지 포함' : '';
-        if (!jb && !jm && jn.length) { base = r.base = null; r.note = '합차 · 금액은 담당자 확인'; } // 묶인 탭을 못 보는 화면(협력사)
-        r.real = rev && !jb && t.cost != null && t.cost !== ''; if (r.real) { base = r.base = Number(t.cost); ex = r.ex = 0; r.miss = []; r.ton = r.ton || t.ton || ''; } // 실제 마감 매입(직접 입력)이면 그 금액만
-        r.amt = base == null ? null : base + ex; r.rv = t.rev != null && t.rev !== '' ? Number(t.rev) : null; r.revenue = r.rv != null ? r.rv : price ? r.b * price.v : null; r.warn = r.jm ? '' : ret && !base ? '회차비 입력 필요' : base == null ? (r.note ? '' : '단가 없음') : r.miss.length ? '일부 착지 단가 없음: ' + r.miss.join(', ') : '';
-        var ck = (t.car || '') + (t.driver ? ' · ' + t.driver : ''); if (ck.trim() && !r.jm) cars[ck] = (cars[ck] || 0) + 1;
-        return r;
-      }).sort(function (a, b) { return a.date < b.date ? -1 : a.date > b.date ? 1 : MT.map(function (t) { return t[0]; }).indexOf(a.tab) - MT.map(function (t) { return t[0]; }).indexOf(b.tab) || a.no - b.no; });
-      var sum = {}, tot = { t: 0, amt: 0, none: 0, rev: 0, fix: 0, b: 0, fb: 0 };
-      rows.forEach(function (r) { var x = sum[r.tab] || (sum[r.tab] = { t: 0, ret: 0, b: 0, kg: 0, amt: 0, none: 0, jm: 0, rev: 0 }); x.b += r.b; x.kg += r.kg; x.rev += r.revenue || 0; tot.rev += r.revenue || 0; tot.b += r.b; if (r.rv != null) { tot.fix += r.rv; tot.fb += r.b; } if (r.jm) { x.jm++; return; } x.t++; if (r.ret) x.ret++; if (r.amt == null) { x.none++; tot.none++; } else { x.amt += r.amt; tot.amt += r.amt; } tot.t++; }); // 합차로 다른 탭 차에 탄 호차는 대수·금액에서 빼요
+      var mcR = dispMonthCalc(res, MT, on, price, money, rev), orders = mcR.orders, tk = mcR.tk, cars = mcR.cars, unassigned = mcR.unassigned, rows = mcR.rows, sum = mcR.sum, tot = mcR.tot;
       var kpis = MT.filter(function (t) { return sum[t[0]]; }).map(function (t) { var x = sum[t[0]]; return '<div><small>' + esc(t[0]) + '</small><b>' + (money ? won(x.amt) + '원' : won(x.t) + '대') + '</b><span class="small muted">' + won(x.t) + '대' + (x.ret ? ' (회차 ' + x.ret + ')' : '') + (x.jm ? ' (합차 ' + x.jm + '대 별도)' : '') + ' · ' + won(x.b) + '번들 · ' + won(x.kg) + 'kg' + (money && x.none ? ' · <span style="color:#C0392B">단가 없음 ' + x.none + '대 제외</span>' : '') + '</span></div>'; });
       if (money && kpis.length) kpis.push('<div class="dp-mtot"><small>총 합계</small><b>' + won(tot.amt) + '원</b><span class="small muted">' + won(tot.t) + '대' + (tot.none ? ' · <span style="color:#C0392B">단가 없음 ' + tot.none + '대 제외</span>' : '') + '</span></div>');
       var dash = '';

@@ -1,0 +1,35 @@
+// 손익 대시보드: 월별 기록과 같은 숫자(실제 매입·직접 고친 매출·회차·단가) · 기간 · 탭/센터/기사별 · 분석 권한자만 (데모 모드)
+var T = require('../lib/browser.js'), ok = T.ok, api = T.api, K = '쿠팡부자재/평택';
+var D1 = '2026-09-03', D2 = '2026-09-17', YM = '2026-09';
+T.run(async function () {
+  var o = await T.open(), p = o.page;
+  await api(p, 'dispatch.ratesSave', { cust: '쿠팡부자재', mode: 'add', rows: ['1톤', '2.5톤', '3.5톤', '5톤'].map(function (t) { return { from: '손익출발', to: '가상시', ton: t, price: 100000 }; }) });
+  for (var c of ['손익1', '손익2', '손익3']) await api(p, 'dispatch.mapSave', { fc: c, dest: '가상시' });
+  await api(p, 'loading.save', { cust: '쿠팡부자재', place: { name: '손익출발', addr: '가상도 가상시 출발로 1' } });
+  await api(p, 'dispatch.priceSave', { cust: '쿠팡부자재', ym: YM, price: 10000 });
+  var od = function (k, d, fc, b) { return { date: d, key: k, d: { fc: fc, bundle: String(b), kg: String(b * 100), date: d, from: '손익출발', addr: '가상도 가상시 ' + k } }; };
+  await api(p, 'dispatch.import', { cust: K, rows: [od('p1', D1, '손익1', 5), od('p2', D1, '손익2', 4), od('p3', D2, '손익3', 6)] });
+  var a = await api(p, 'dispatch.day', { cust: K, date: D1 });
+  await api(p, 'dispatch.save', { cust: K, date: D1, orders: a.orders.map(function (x, i) { return { id: x.id, truck: i + 1, seq: 1 }; }), trucks: [{ no: 1, car: '11가1111', driver: '손기사', rev: 70000 }, { no: 2, car: '22나2222', driver: '익기사', cost: 250000 }] });
+  var b = await api(p, 'dispatch.day', { cust: K, date: D2 });
+  await api(p, 'dispatch.save', { cust: K, date: D2, orders: [{ id: b.orders[0].id, truck: 1, seq: 1 }], trucks: [{ no: 1, car: '11가1111', driver: '손기사', status: '회차', retCost: 30000 }] });
+  await p.reload(); await p.waitForTimeout(800); await T.dispatch(p, D1, '쿠팡부자재');
+  await p.click('#dpView [data-v="month"]'); await p.waitForSelector('#dpYm'); await p.selectOption('#dpYm', YM); await p.waitForSelector('.dp-dash', { timeout: 10000 });
+  var md = (await T.text(p, '.dp-dash')).replace(/\s+/g, ' '), num = function (t, w) { var m = t.match(new RegExp(w + ' (-?[0-9,]+)원')); return m ? m[1] : null; };
+  var mRev = num(md, '매출'), mAmt = num(md, '매입');
+  await p.click('#dpView [data-v="profit"]'); await p.waitForSelector('#pfFrom');
+  await p.fill('#pfFrom', YM + '-01'); await p.dispatchEvent('#pfFrom', 'change'); await p.waitForSelector('#pfTo');
+  await p.fill('#pfTo', YM + '-30'); await p.dispatchEvent('#pfTo', 'change'); await p.waitForSelector('.pf-table', { timeout: 10000 });
+  var pd = (await T.text(p, '#pfBody')).replace(/\s+/g, ' ');
+  ok('한 달 전체 = 월별 기록과 같은 매출·매입', mRev && mAmt && num(pd, '매출') === mRev && num(pd, '매입') === mAmt, [mRev, mAmt, pd.slice(0, 200)]);
+  ok('계산 규칙: 직접 고친 매출 7만 + 4번들×1만 + 회차(매출 0) = 11만 · 매입 = 단가 10만 + 실제 25만 + 회차비 3만', mRev === '110,000' && mAmt === '380,000', [mRev, mAmt]);
+  await p.fill('#pfTo', D1); await p.dispatchEvent('#pfTo', 'change'); await p.waitForTimeout(800); await p.waitForSelector('.pf-table');
+  var p1 = (await T.text(p, '#pfBody')).replace(/\s+/g, ' ');
+  ok('기간을 줄이면 그 기간 호차만', num(p1, '매출') === '110,000' && num(p1, '매입') === '350,000', p1.slice(0, 200));
+  await p.click('[data-pd="drv"]'); await p.waitForSelector('.pf-table');
+  var dv = await T.text(p, '.pf-table'); ok('기사별', /11가1111 · 손기사/.test(dv) && /22나2222 · 익기사/.test(dv), dv);
+  await p.click('[data-pd="fc"]'); await p.waitForSelector('.pf-table');
+  ok('센터별', /손익1/.test(await T.text(p, '.pf-table')) && /손익2/.test(await T.text(p, '.pf-table')));
+  ok('화면 오류 없음', !p.errs.length, p.errs);
+  await T.done(o);
+});
