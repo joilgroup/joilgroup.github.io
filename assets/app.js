@@ -4225,7 +4225,7 @@
         '<p class="hint" style="margin:-6px 0 12px">시험 복사는 시트를 Supabase로 <b>복사만</b> 해요(시트는 그대로 · 여러 번 눌러도 중복 없음). 비교는 같은 달의 오더·호차 수와 금액 합계를 양쪽에서 계산해 다른 곳만 보여 줘요. 자세한 순서는 저장소 docs/서버이전.md.</p>' +
         '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-sm" id="sbStat">상태 보기</button><button class="btn btn-sm" id="sbCopy">시험 복사</button>' +
         '<input class="input" id="sbYm" type="month" style="width:150px" value="' + new Date().toISOString().slice(0, 7) + '"><button class="btn btn-sm" id="sbCmp">비교</button>' +
-        '<button class="btn btn-sm" id="sbBak">백업 지금</button><button class="btn btn-sm" id="sbBakOn">자동 백업 켜기</button><button class="btn btn-sm" id="sbBakOff">자동 백업 끄기</button></div>' +
+        '<button class="btn btn-sm" id="sbBak">백업 지금</button><button class="btn btn-sm" id="sbBakOn">자동 백업 켜기</button><button class="btn btn-sm" id="sbBakOff">자동 백업 끄기</button><button class="btn btn-sm" id="sbSpeed">속도 비교</button></div>' +
         '<div class="small" id="sbOut" style="margin-top:10px;white-space:pre-wrap"></div></div>' : '') +
       '<div class="group"><div class="group-head"><h3>주소 · 경로 저장소 (캐시)</h3><span class="small muted" id="cacheInfo">확인 중…</span></div>' +
       '<p class="hint" style="margin:-6px 0 12px">한 번 조회한 주소와 경로를 서버 시트에 저장해 두고 다시 씁니다. 도로·통행료가 바뀌었다고 생각되면 비우세요. (다음 조회 때 카카오에서 새로 받아옵니다)</p>' +
@@ -4281,6 +4281,15 @@
     $('#sbBak').onclick = function () { run(this, '백업 중…', function () { return api('admin.sbBackupNow').then(function (r) { out('백업 끝 (구글 드라이브 "조일 Supabase 백업")\n' + stat(r.status)); }); }); };
     $('#sbBakOn').onclick = function () { run(this, '켜는 중…', function () { return api('admin.sbBackupOn').then(function (r) { out(stat(r)); }); }); };
     $('#sbBakOff').onclick = function () { run(this, '끄는 중…', function () { return api('admin.sbBackupOff').then(function (r) { out(stat(r)); }); }); };
+    // 속도 비교: 같은 '배차 날짜 읽기'를 지금 서버(구글)·새 서버(Supabase)에 번갈아 보내 걸린 시간을 재요 (읽기만 · #sb-on 기기에서 같은 토큰을 양쪽이 받아요)
+    $('#sbSpeed').onclick = function () {
+      if (!SB_ROUTE) { out('이 기기는 아직 지금 서버만 써요. 주소 끝에 #sb-on 을 붙여 다시 로그인한 뒤 눌러 주세요. (구글 쪽 sbAuthOn 도 실행돼 있어야 해요)'); return; }
+      var req = { action: 'dispatch.day', token: state.token, cust: '쿠팡부자재', date: new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10) };
+      var one = function (url) { var t = Date.now(); return fetch(url + (url.indexOf('?') === -1 ? '?' : '&') + '_t=' + t + Math.random().toString(36).slice(2, 6), { method: 'POST', body: JSON.stringify(req), cache: 'no-store', credentials: 'omit', redirect: 'follow' }).then(function (r) { return r.json(); }).then(function (j) { if (!j.ok) throw new Error(j.error || '오류'); return Date.now() - t; }); };
+      var g = [], s = [], avg = function (l) { return l.reduce(function (a, b) { return a + b; }, 0) / l.length / 1000; };
+      var round = function (i) { if (i >= 4) return; return one(API_URL).then(function (a) { if (i) g.push(a); return one(CFG.SB_FN); }).then(function (b) { if (i) s.push(b); out('재는 중… ' + (i + 1) + '/4'); return round(i + 1); }); };
+      run(this, '재는 중…', function () { return round(0).then(function () { out('배차 날짜 읽기 (첫 번째는 빼고 3번 평균)\n· 지금 서버(구글 시트): ' + avg(g).toFixed(1) + '초\n· 새 서버(Supabase): ' + avg(s).toFixed(1) + '초' + (avg(s) > 0 ? '\n→ 약 ' + (avg(g) / avg(s)).toFixed(1) + '배' : '')); }); });
+    };
   }
 
   /* ───────── 주소 자동완성 (B2) ───────── */
