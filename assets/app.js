@@ -15,10 +15,15 @@
     'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   var SB_ROUTE = (function () {
     if (DEMO || !CFG.SB_FN) return '';
-    try { var h = location.hash; if (h === '#sb-on' || h === '#sb-off') { localStorage.setItem('joil-sb-route', h === '#sb-on' ? 'dispatch' : 'off'); history.replaceState(null, '', location.pathname + location.search); } var v = localStorage.getItem('joil-sb-route'); if (v) return v === 'off' ? '' : v; } catch (e) { /* 저장소 막힘 */ }
+    try { var h = location.hash; if (h === '#sb-on' || h === '#sb-off' || h === '#sb-all') { localStorage.setItem('joil-sb-route', h === '#sb-all' ? 'all' : h === '#sb-on' ? 'dispatch' : 'off'); history.replaceState(null, '', location.pathname + location.search); } var v = localStorage.getItem('joil-sb-route'); if (v) return v === 'off' ? '' : v; } catch (e) { /* 저장소 막힘 */ }
     return CFG.SB_ROUTE || '';
   })();
-  function apiUrl(action) { return SB_ROUTE === 'dispatch' && SB_ACTIONS.indexOf(action) !== -1 ? CFG.SB_FN : API_URL; }
+  /* SB_ROUTE 'all' = 모든 메뉴를 Supabase 로 (구글에만 있는 서버 이전 도구·Supabase 키 저장만 Apps Script) */
+  var GAS_ONLY = /^admin\.sb|^admin\.saveTrackKeys$/;
+  function apiUrl(action) {
+    if (SB_ROUTE === 'all') return GAS_ONLY.test(action) ? API_URL : CFG.SB_FN;
+    return SB_ROUTE === 'dispatch' && SB_ACTIONS.indexOf(action) !== -1 ? CFG.SB_FN : API_URL;
+  }
   /** 15초마다 부르는 '바뀐 시각'은 Supabase 함수 대신 DB 직접 조회(RPC joil_stamps · 공개 키) — 함수 무료 호출 수(월 50만)를 아끼려고 */
   function sbStamp(req) {
     return fetch(CFG.SB_REST.replace(/\/+$/, '') + '/rest/v1/rpc/joil_stamps', { method: 'POST', cache: 'no-store', credentials: 'omit', headers: { 'Content-Type': 'application/json', apikey: CFG.SB_ANON }, body: JSON.stringify({ p_token: req.token, p_keys: req.keys || [], p_date: req.date }) })
@@ -4226,6 +4231,7 @@
         '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center"><button class="btn btn-sm" id="sbStat">상태 보기</button><button class="btn btn-sm" id="sbCopy">시험 복사</button>' +
         '<input class="input" id="sbYm" type="month" style="width:150px" value="' + new Date().toISOString().slice(0, 7) + '"><button class="btn btn-sm" id="sbCmp">비교</button>' +
         '<button class="btn btn-sm" id="sbBak">백업 지금</button><button class="btn btn-sm" id="sbBakOn">자동 백업 켜기</button><button class="btn btn-sm" id="sbBakOff">자동 백업 끄기</button><button class="btn btn-sm" id="sbSpeed">속도 비교</button></div>' +
+        '<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px"><span class="small muted">나머지 메뉴 전체(견적·일정·분석·공지 등):</span><button class="btn btn-sm" id="sbCopyAll">전체 시험 복사</button><button class="btn btn-sm" id="sbCmpAll">전체 비교</button></div>' +
         '<div class="small" id="sbOut" style="margin-top:10px;white-space:pre-wrap"></div></div>' : '') +
       '<div class="group"><div class="group-head"><h3>주소 · 경로 저장소 (캐시)</h3><span class="small muted" id="cacheInfo">확인 중…</span></div>' +
       '<p class="hint" style="margin:-6px 0 12px">한 번 조회한 주소와 경로를 서버 시트에 저장해 두고 다시 씁니다. 도로·통행료가 바뀌었다고 생각되면 비우세요. (다음 조회 때 카카오에서 새로 받아옵니다)</p>' +
@@ -4281,6 +4287,12 @@
     $('#sbBak').onclick = function () { run(this, '백업 중…', function () { return api('admin.sbBackupNow').then(function (r) { out('백업 끝 (구글 드라이브 "조일 Supabase 백업")\n' + stat(r.status)); }); }); };
     $('#sbBakOn').onclick = function () { run(this, '켜는 중…', function () { return api('admin.sbBackupOn').then(function (r) { out(stat(r)); }); }); };
     $('#sbBakOff').onclick = function () { run(this, '끄는 중…', function () { return api('admin.sbBackupOff').then(function (r) { out(stat(r)); }); }); };
+    $('#sbCopyAll').onclick = function () {
+      if (!confirm('견적·일정·분석·공지 등 나머지 모든 시트를 Supabase로 복사할까요? (시트는 바뀌지 않아요 · 몇 분 걸릴 수 있어요)')) return;
+      var log = [], step = function (st) { return api('admin.sbCopyAll', st).then(function (r) { if (r.sheet) { log.push(r.sheet + ' ' + won(r.copied)); out('복사 중… ' + log.join(' · ')); } if (r.done) { out('전체 복사 끝 (시트 ' + r.sheets + '개)\n' + log.join(' · ')); return; } return step({ i: r.i, from: r.from }); }); };
+      run(this, '복사 중…', function () { return step({ i: 0, from: 1 }); });
+    };
+    $('#sbCmpAll').onclick = function () { run(this, '비교 중…', function () { return api('admin.sbCompareAll').then(function (r) { out('시트 ' + r.sheets + '개 비교 · ' + (r.same ? '✅ 모두 같아요.' : '⚠ 다른 시트 ' + r.diffs.length + '개:\n' + r.diffs.map(function (d) { return '- ' + d.sheet + ': 시트 ' + won(d.sheetRows) + '줄 / Supabase ' + won(d.sbRows) + '줄'; }).join('\n'))); }); }); };
     // 속도 비교: 같은 '배차 날짜 읽기'를 지금 서버(구글)·새 서버(Supabase)에 번갈아 보내 걸린 시간을 재요 (읽기만 · #sb-on 기기에서 같은 토큰을 양쪽이 받아요)
     $('#sbSpeed').onclick = function () {
       if (!SB_ROUTE) { out('이 기기는 아직 지금 서버만 써요. 주소 끝에 #sb-on 을 붙여 다시 로그인한 뒤 눌러 주세요. (구글 쪽 sbAuthOn 도 실행돼 있어야 해요)'); return; }

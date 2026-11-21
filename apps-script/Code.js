@@ -309,6 +309,8 @@ function handle_(req) {
     case 'admin.sbBackupNow': return { rows: sbBackupNightly(), status: sbStatus_() };
     case 'admin.sbBackupOn': installSbBackupTrigger(); return sbStatus_();
     case 'admin.sbBackupOff': sbBackupOff_(); return sbStatus_();
+    case 'admin.sbCopyAll': return sbCopyAll_(req);
+    case 'admin.sbCompareAll': return sbCompareAll_();
   }
   throw new Error('알 수 없는 요청입니다: ' + action);
 }
@@ -3079,7 +3081,7 @@ function weeklySend_(week, onlyMe) {
   return { sent: to.length, to: to };
 }
 /** 시간 트리거: 매주 월요일 아침 */
-function sendWeeklySummary() { try { weeklySend_(null, null); } catch (e) { console.error(e); } }
+function sendWeeklySummary() { if (sbAllOn_()) return sbRunRemote_('sendWeeklySummary'); try { weeklySend_(null, null); } catch (e) { console.error(e); } }
 /** 메뉴에서 실행: 메일 권한 승인 + 매주 월요일 8시 자동 발송 켜기 */
 function installWeeklyTrigger() {
   MailApp.getRemainingDailyQuota();
@@ -4059,6 +4061,7 @@ function upsertDiesel_(entries) {
 
 /** 오피넷 최근 7일 전국 평균 경유가 → 기록 (트리거가 매일 호출) */
 function recordDieselDaily() {
+  if (sbAllOn_()) return sbRunRemote_('recordDieselDaily'); // 전체 전환 뒤: 자료가 Supabase 에 있어서 거기서 돌려요
   var key = PropertiesService.getScriptProperties().getProperty('OPINET_KEY');
   if (!key) throw new Error('오피넷 키가 없습니다. 관리자 > API 키에서 입력하세요.');
   var res = UrlFetchApp.fetch('https://www.opinet.co.kr/api/avgRecentPrice.do?out=json&prodcd=D047&code=' + encodeURIComponent(key), { muteHttpExceptions: true });
@@ -4368,6 +4371,7 @@ function sbInternal_(req) {
       var f = (req.folder === 'place' ? placePhotoFolder_() : receiptFolder_()).createFile(Utilities.newBlob(bytes, 'image/jpeg', String(req.name || 'photo.jpg').slice(0, 200))); return { fileId: f.getId(), size: bytes.length };
     case 'int.fileTrash': try { DriveApp.getFileById(String(req.fileId)).setTrashed(true); } catch (e) { /* 이미 없음 */ } return {};
     case 'int.geo': return { coords: dispGeo_(req.addrs) };
+    case 'int.drive': return { result: sbDrive_(req.op, req.arg || {}) };
   }
   throw new Error('알 수 없는 요청입니다: ' + req.action);
 }
@@ -4396,6 +4400,14 @@ function sbBackupNightly() {
     var vals = [cols].concat(rows.map(function (r) { return cols.map(function (c) { var v = r[c]; return v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : typeof v === 'string' ? "'" + v : v; }); }));
     sh.clearContents(); sh.getRange(1, 1, vals.length, cols.length).setValues(vals); out[t] = rows.length;
   });
+  // 전체 전환 뒤: 나머지 메뉴 시트도 (시트 이름 앞에 '시트_')
+  (sbRpc_('joil_sheet_list') || []).forEach(function (m) {
+    if (Date.now() - t0 > 300000) return; // 6분 실행 한도 전에 멈춤 (다음 날 다시)
+    var rows = [], from = 1; while (true) { var part = sbRpc_('joil_sheet_dump', { p_sheet: m.name, p_from: from, p_limit: 5000 }) || []; rows = rows.concat(part); if (part.length < 5000) break; from += 5000; }
+    var w = rows.reduce(function (a, r) { return Math.max(a, (r || []).length); }, 1), nm = ('시트_' + m.name).slice(0, 90), sh = ss.getSheetByName(nm) || ss.insertSheet(nm);
+    var vals = rows.map(function (r) { var t = (r || []).map(function (v) { return v && typeof v === 'object' && v.$d ? new Date(v.$d) : typeof v === 'string' ? "'" + v : v == null ? '' : v; }); while (t.length < w) t.push(''); return t; });
+    sh.clearContents(); if (vals.length) sh.getRange(1, 1, vals.length, w).setValues(vals); out['시트_' + m.name] = rows.length;
+  });
   PropertiesService.getScriptProperties().setProperty('SB_BACKUP_LAST', JSON.stringify({ at: now_(), rows: out, ms: Date.now() - t0 }));
   return out;
 }
@@ -4413,3 +4425,65 @@ function sbStatus_() {
 /** 편집기에서 실행: 구글 쪽이 Supabase 로그인 토큰도 받게 (속성이 50개가 넘으면 설정 화면에서 못 고쳐서) */
 function sbAuthOn() { PropertiesService.getScriptProperties().setProperty('SB_AUTH', '1'); }
 function sbAuthOff() { PropertiesService.getScriptProperties().deleteProperty('SB_AUTH'); }
+/** 편집기에서 실행: 전체 전환 뒤 예약 작업(유가 기록·주간 메일)을 Supabase 에서 돌리게 */
+function sbAllOn() { PropertiesService.getScriptProperties().setProperty('SB_ALL', '1'); PropertiesService.getScriptProperties().setProperty('SB_AUTH', '1'); }
+function sbAllOff() { PropertiesService.getScriptProperties().deleteProperty('SB_ALL'); }
+
+/* ───────────── 서버 이전 4단계: 나머지 메뉴 전체 (Code.js 를 Supabase 에서 그대로 실행 · supabase/functions/joil/gas.js) ─────────────
+   - 전체 시험 복사(admin.sbCopyAll): 배차·계정 밖의 모든 시트를 '시트 그대로'(줄 값 배열, 날짜 = {$d}) + 스크립트 속성
+   - 전체 비교(admin.sbCompareAll): 시트마다 줄 수·내용 지문(MD5)을 양쪽에서 계산
+   - 전체 전환 뒤(SB_ALL = '1'): 예약 작업(유가 기록·주간 메일)은 Supabase 에서 돌리고, 드라이브·메일만 여기서 대행(int.drive) */
+var SB_DISP_SHEETS = ['배차오더', '배차호차', '상차지', '상차지사진', '하차지주소록', '기사풀', '배차단가표', '배차단가', '센터도착', '도착지특이사항', '인수증', '계정'];
+function sbAllOn_() { return PropertiesService.getScriptProperties().getProperty('SB_ALL') === '1'; }
+function sbFnUrl_() { var u = PropertiesService.getScriptProperties().getProperty('SB_URL'); if (!u) throw new Error('Supabase 주소(SB_URL)가 없어요.'); return u.replace(/\/+$/, '') + '/functions/v1/joil'; }
+function sbRunRemote_(fn) {
+  var res = UrlFetchApp.fetch(sbFnUrl_(), { method: 'post', contentType: 'text/plain', payload: JSON.stringify({ action: 'sys.run', secret: sbGasSecret_(), fn: fn }), muteHttpExceptions: true });
+  var j = parseJson_(res.getContentText(), {}); if (!j.ok) throw new Error('Supabase 예약 작업 실패: ' + (j.error || res.getResponseCode()));
+  return j.result;
+}
+function sbEnc_(v) { return v instanceof Date ? { $d: v.toISOString() } : v; }
+function sbSheetNames_() { return SpreadsheetApp.getActive().getSheets().map(function (s) { return s.getName(); }).filter(function (n) { return SB_DISP_SHEETS.indexOf(n) === -1; }); }
+/** 전체 시험 복사 한 조각: 화면이 { i, from } 을 받아 done 이 될 때까지 다시 불러요 */
+function sbCopyAll_(req) {
+  var names = sbSheetNames_(), i = Math.max(0, Number(req.i) || 0), from = Math.max(1, Number(req.from) || 1), t0 = Date.now(), n = 0;
+  if (i === 0 && from === 1) {
+    var all = PropertiesService.getScriptProperties().getProperties(), props = [];
+    Object.keys(all).forEach(function (k) { if (!/^(RT_|DST\|)/.test(k)) props.push({ key: k, value: all[k] }); });
+    props.push({ key: 'GAS_URL_SELF', value: ScriptApp.getService().getUrl() });
+    sbRpc_('joil_gas_props_copy', { p_rows: props, p_reset: true });
+    sbRpc_('joil_prop_set', { p_key: 'GAS_URL', p_value: ScriptApp.getService().getUrl() }); sbRpc_('joil_prop_set', { p_key: 'GAS_SECRET', p_value: sbGasSecret_() });
+  }
+  if (i >= names.length) return { done: true, sheets: names.length };
+  var sh = SpreadsheetApp.getActive().getSheetByName(names[i]), last = sh.getLastRow(), w = Math.max(1, sh.getLastColumn());
+  while (true) {
+    var cnt = Math.min(1000, last - from + 1), rows = cnt > 0 ? sh.getRange(from, 1, cnt, w).getValues().map(function (r) { return r.map(sbEnc_); }) : [];
+    sbRpc_('joil_sheet_copy', { p_sheet: names[i], p_start: from, p_rows: rows, p_reset: from === 1 }); n += rows.length; from += Math.max(cnt, 0);
+    if (cnt <= 0 || from > last) return { i: i + 1, from: 1, sheet: names[i], copied: n, done: false };
+    if (Date.now() - t0 > 200000) return { i: i, from: from, sheet: names[i], copied: n, done: false };
+  }
+}
+function sbMd5_(rows) { return toHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, JSON.stringify(rows), Utilities.Charset.UTF_8)); }
+/** 전체 비교: 시트마다 줄 수·내용 지문 (Supabase 쪽은 함수 sys.hashes 가 같은 방식으로 계산) */
+function sbCompareAll_() {
+  var names = sbSheetNames_(), mine = {};
+  names.forEach(function (n) { var sh = SpreadsheetApp.getActive().getSheetByName(n), last = sh.getLastRow(), w = Math.max(1, sh.getLastColumn()); var rows = last ? sh.getRange(1, 1, last, w).getValues().map(function (r) { return r.map(sbEnc_); }) : []; mine[n] = { rows: rows.length, md5: sbMd5_(rows) }; });
+  var res = UrlFetchApp.fetch(sbFnUrl_(), { method: 'post', contentType: 'text/plain', payload: JSON.stringify({ action: 'sys.hashes', secret: sbGasSecret_(), names: names }), muteHttpExceptions: true });
+  var j = parseJson_(res.getContentText(), {}); if (!j.ok) throw new Error('Supabase 비교 실패: ' + (j.error || res.getResponseCode()));
+  var diffs = names.filter(function (n) { var b = j.hashes[n] || {}; return b.rows !== mine[n].rows || b.md5 !== mine[n].md5; }).map(function (n) { return { sheet: n, sheetRows: mine[n].rows, sbRows: (j.hashes[n] || {}).rows || 0 }; });
+  return { same: !diffs.length, sheets: names.length, diffs: diffs };
+}
+/** 드라이브·메일 대행 (Supabase 실행기의 DriveApp·MailApp) */
+function sbDrive_(op, a) {
+  var meta = function (f) { return { id: f.getId(), name: f.getName(), size: f.getSize(), mime: f.getMimeType(), url: f.getUrl() }; };
+  switch (op) {
+    case 'fmeta': var fo = DriveApp.getFolderById(String(a.id)); return { id: fo.getId(), name: fo.getName() };
+    case 'mkdir': return { id: (a.parent ? DriveApp.getFolderById(String(a.parent)) : DriveApp.getRootFolder()).createFolder(String(a.name)).getId() };
+    case 'create': return meta(DriveApp.getFolderById(String(a.folder)).createFile(Utilities.newBlob(Utilities.base64Decode(String(a.data || '')), String(a.mime || 'application/octet-stream'), String(a.name || 'file'))));
+    case 'meta': return meta(DriveApp.getFileById(String(a.id)));
+    case 'get': var f = DriveApp.getFileById(String(a.id)), b = f.getBlob(); return { data: Utilities.base64Encode(b.getBytes()), mime: b.getContentType(), name: f.getName() };
+    case 'trash': DriveApp.getFileById(String(a.id)).setTrashed(a.on !== false); return {};
+    case 'rename': DriveApp.getFileById(String(a.id)).setName(String(a.name)); return {};
+    case 'mail': MailApp.sendEmail(a); return {};
+  }
+  throw new Error('알 수 없는 드라이브 작업: ' + op);
+}

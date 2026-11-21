@@ -4,6 +4,7 @@ var cp = require('child_process'), fs = require('fs'), path = require('path'), L
 var SB = path.join(__dirname, '..', 'sb'), BIN = path.join(SB, 'node_modules', '.bin', 'deno');
 function deno() { if (fs.existsSync(BIN)) return BIN; cp.spawnSync('npm', ['install', '--no-audit', '--no-fund', '--no-save', '--prefix', SB, 'deno@2.1.4'], { encoding: 'utf8' }); return fs.existsSync(BIN) ? BIN : null; }
 (async function () {
+  require('child_process').spawnSync(process.execPath, [path.join(__dirname, '..', '..', 'supabase', 'functions', 'joil', 'build.js')]); // gas_src.js 만들기
   var bin = deno(); if (!bin) { console.log('PASS (건너뜀) Deno 를 설치하지 못했어요'); return; }
   var db = await PG.start(); if (!db) { console.log('PASS (건너뜀) 시험용 Postgres 가 없어요'); return; }
   var port = 8000, proc = null;
@@ -26,6 +27,9 @@ function deno() { if (fs.existsSync(BIN)) return BIN; cp.spawnSync('npm', ['inst
     await post({ action: 'dispatch.import', token: lg.j.token, cust: '삼다수', rows: many });
     var big = await post({ action: 'dispatch.day', token: lg.j.token, cust: '삼다수', date: '2026-11-21' });
     ok('큰 응답은 gzip 으로 줄여 보냄 (무료 전송량 아끼기)', big.enc === 'gzip' && big.j.ok && big.j.orders.length === 40, { enc: big.enc, n: big.j.orders && big.j.orders.length });
+    var ns = await post({ action: 'notice.save', token: lg.j.token, notice: { title: '첫 공지', body: '내용' } }), nl = await post({ action: 'notice.list', token: lg.j.token });
+    ok('Code.js 실행기(공지 저장·목록)가 Deno 에서 동작', ns.j.ok && nl.j.ok && nl.j.notices.length === 1 && nl.j.notices[0].title === '첫 공지', [ns.j, nl.j]);
+    var cs = await post({ action: 'cal.all', token: lg.j.token }); ok('일정 달력 읽기', cs.j.ok && Array.isArray(cs.j.events), cs.j.error);
     var bad = await post({ action: 'dispatch.day', token: 'nope', cust: '삼다수', date: '2026-11-20' });
     ok('토큰이 틀리면 같은 오류 문구', !bad.j.ok && bad.j.error === '로그인이 만료되었습니다. 다시 로그인하세요.', bad.j);
     var g = await fetch('http://127.0.0.1:' + port + '/'); ok('GET = 작동 확인 글', /정상 작동/.test(await g.text()));

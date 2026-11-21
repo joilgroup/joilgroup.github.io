@@ -34,6 +34,9 @@ T.run(async function () {
   ok('Supabase 갈림길: 15초 확인은 함수가 아니라 DB 직접 조회(RPC)', h1.indexOf('rpc joil_stamps') !== -1 && h1.indexOf('fn dispatch.stamp') === -1, h1);
   ok('Supabase 갈림길: 안 옮긴 액션(공지·날씨 등)은 그대로 Apps Script', h1.some(function (x) { return /^gas /.test(x); }), h1);
 
+  var h2 = await run('all');
+  ok('전체 갈림길: 로그인·배차·다른 메뉴 모두 Supabase 함수로', h2.indexOf('fn login') !== -1 && h2.some(function (x) { return /^fn (notice|info|cal|work|weekly)\./.test(x); }) && !h2.some(function (x) { return /^gas /.test(x); }), h2);
+
   var o = await T.open({}), p = o.page; // 데모: 관리자 → API 키에서 Supabase 연결 뒤 '서버 이전 준비' 칸
   await T.api(p, 'admin.saveTrackKeys', { url: 'https://demo.supabase.co', key: 'x' });
   await p.evaluate(function () { location.hash = '#/admin'; }); await p.waitForTimeout(800);

@@ -20,6 +20,7 @@ Sheet.prototype = {
         return R;
       },
       setValue: function (v) { return R.setValues([[v]]); },
+      getValue: function () { return R.getValues()[0][0]; },
       getValues: function () { var o = []; for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || [], x = []; for (var j = 0; j < nc; j++) { var v = t[c + j - 1]; x.push(v == null ? '' : (typeof v === 'string' ? v.replace(/^'/, '') : v)); } o.push(x); } return o; },
       clearContent: function () { for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1]; if (t) for (var j = 0; j < nc; j++) t[c + j - 1] = ''; } return R; },
       setFontWeight: function () { return R; }, setNumberFormat: function () { return R; },
@@ -27,6 +28,7 @@ Sheet.prototype = {
     };
     return R;
   },
+  getDataRange: function () { return this.getRange(1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); },
   appendRow: function (row) { var hw = (this.d[0] || []).filter(function (v) { return v !== ''; }).length; if (row.length !== hw) { var m = 'APPEND WIDTH ' + this.name + ' got ' + row.length + ' header ' + hw; errors.push(m); throw new Error(m); } this.d.splice(this.getLastRow(), 0, row.slice()); },
   deleteRow: function (i) { this.d.splice(i - 1, 1); }, deleteRows: function (i, n) { this.d.splice(i - 1, n); }, setFrozenRows: function () {}, getName: function () { return this.name; }
 };

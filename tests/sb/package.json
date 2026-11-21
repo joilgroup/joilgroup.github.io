@@ -1,1 +1,1 @@
-{"name":"joil-sb-tests","private":true,"dependencies":{"postgres":"3.4.5"}}
+{"name":"joil-sb-tests","private":true,"dependencies":{"fflate":"^0.8.2","postgres":"3.4.5"}}

@@ -873,5 +873,5 @@ export function makeServer(sql, opts) {
     out.ms = Date.now() - t0; if (out.ms > 3000) console.log('느린 요청 ' + (req && req.action) + ' ' + out.ms + 'ms');
     return out;
   }
-  return { call: call, handle: handle, _t: { hash: hash, sha256hex: sha256hex, dispCnKey: dispCnKey, rateTon: rateTon } };
+  return { call: call, handle: handle, requireSession: requireSession, pub: pub, gas: gas, _t: { hash: hash, sha256hex: sha256hex, dispCnKey: dispCnKey, rateTon: rateTon } };
 }
