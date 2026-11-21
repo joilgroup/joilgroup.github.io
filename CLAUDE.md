@@ -82,6 +82,9 @@
 - **4단계(나머지 메뉴 전체)**: Code.js 를 Supabase 에서 그대로 실행(`gas.js`, 시트 = `joil.sheet_rows`). Code.js 를 고치면 `supabase/deploy.sh` 로 배포 + `node tests/run.js sb-gas`. 드라이브·메일만 구글(`int.drive`).
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
+## 자동 알림 🔔 (011)
+- DB 예약 작업 `joil-alerts`(5분) → `joil.alerts` → 화면 `alertsInit`가 RPC `joil_alerts`로 3분마다. 규칙은 SQL `joil.alerts_scan` 한 곳. 데모는 demo.js `alerts.list`. 금액·메일 없음.
+
 ## 손익 대시보드
 - 배차시트 '손익'(`drawDispProfit`, 분석 권한만): 달마다 `dispatch.monthAll` → 월별 기록과 **같은 함수** `dispMonthCalc`(그 달 단가) → 기간 안 호차만 합침. 월별 기록 계산을 고치면 손익도 같이 바뀌어요. 센터별은 번들 비율로 나눔.
 

@@ -419,6 +419,50 @@
   }
   function allViews() { return navItems(); }
 
+  /* ───────── 자동 알림 🔔 (Supabase 예약 작업이 5분마다 올림 · 마이그레이션 011) ─────────
+     읽기는 공개 키 RPC joil_alerts(로그인 토큰 확인) → 함수 호출 수에 안 들어가요. 3분마다·화면이 다시 보일 때. 금액 없음. */
+  var ALR = { list: [], at: 0, t: null };
+  function alertsFetch() {
+    if (DEMO) return window.JoilDemo.call({ action: 'alerts.list', token: state.token });
+    if (!SB_ROUTE || !CFG.SB_REST || !CFG.SB_ANON || !state.token) return Promise.resolve({ list: [] });
+    return fetch(CFG.SB_REST.replace(/\/+$/, '') + '/rest/v1/rpc/joil_alerts', { method: 'POST', cache: 'no-store', credentials: 'omit', headers: { 'Content-Type': 'application/json', apikey: CFG.SB_ANON }, body: JSON.stringify({ p_token: state.token }) })
+      .then(function (res) { return res.json().then(function (j) { if (!res.ok) throw new Error((j && j.message) || '알림을 못 받았어요'); return j; }); });
+  }
+  function alertsDraw() {
+    var b = $('#alrBell'); if (!b) return; var n = $('.alr-n', b), c = ALR.list.length;
+    b.hidden = !SB_ROUTE && !DEMO; n.hidden = !c; n.textContent = c > 99 ? '99+' : String(c); b.classList.toggle('on', !!c);
+  }
+  function alertsLoad(force) {
+    if (!state.user || document.visibilityState === 'hidden' || (!force && Date.now() - ALR.at < 60000)) { alertsDraw(); return; }
+    ALR.at = Date.now();
+    alertsFetch().then(function (r) { ALR.list = (r && r.list) || []; alertsDraw(); }).catch(function () { ALR.at = 0; alertsDraw(); });
+  }
+  function alertsInit() {
+    alertsLoad(); var b = $('#alrBell'); if (b) b.onclick = function (e) { e.stopPropagation(); alertsOpen(b); };
+    if (ALR.t) return;
+    ALR.t = setInterval(function () { alertsLoad(true); }, 180000);
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') alertsLoad(); });
+  }
+  var ALR_KIND = { un: '미배정', nocar: '차량정보', rcpt: '인수증' };
+  function alertsOpen(btn) {
+    var old = $('.alr-pop'); if (old) { old.remove(); return; }
+    var r = btn.getBoundingClientRect(), pop = document.createElement('div'); pop.className = 'nav-pop alr-pop';
+    var tabName = function (key) { var co = key.replace(/\/.*$/, ''), st = dispState(), t = (st.tabList && st.tabList._cust === co ? st.tabList : []).filter(function (x) { return co + x.suf === key; })[0]; return t ? t.name : key; };
+    pop.innerHTML = '<div class="alr-head"><b>할 일 알림</b><span class="small muted">5분마다 자동 확인</span></div>' + (ALR.list.length ? ALR.list.map(function (a, i) {
+      return '<button type="button" data-ai="' + i + '"><span class="alr-k k-' + esc(a.kind) + '">' + esc(ALR_KIND[a.kind] || a.kind) + '</span> <b>' + esc(a.date.slice(5)) + ' ' + esc(tabName(a.cust)) + '</b><br><span class="small">' + esc(a.msg) + '</span></button>'; }).join('') : '<p class="muted small" style="margin:8px 12px">지금은 알림이 없어요.</p>');
+    pop.style.top = (r.bottom + 4) + 'px'; pop.style.left = Math.max(8, Math.min(r.left - 220, window.innerWidth - 330)) + 'px';
+    document.body.appendChild(pop);
+    $$('[data-ai]', pop).forEach(function (b) { b.onclick = function () { var a = ALR.list[Number(b.dataset.ai)]; pop.remove(); dispGoKey(a.cust, a.date); }; });
+  }
+  /** 업체 키(업체/탭)·날짜의 배차 화면으로 */
+  function dispGoKey(key, date) {
+    var st = dispState(), co = key.replace(/\/.*$/, '');
+    if (DISP_CUSTS.indexOf(co) === -1) return toast('이 업체 화면을 찾지 못했어요.', 'err');
+    if (st.cust !== co) { st.cust = co; st.tabList = null; }
+    st.date = date; st.view = 'day'; st.tabs = null; st.wantKey = key;
+    if (st.tabList) { var t = st.tabList.filter(function (x) { return co + x.suf === key && !x.hidden; })[0]; if (t) st.tab = t.name; st.wantKey = null; }
+    state.view = 'dispatch'; render();
+  }
   function render() {
     clearTimeout(stockTimer);
     if (!state.user) return renderLogin();
@@ -440,10 +484,12 @@
       '<span class="avatar" title="' + esc(state.user.name + ' (' + state.user.id + ')') + '">' + esc(String(state.user.name || state.user.id).charAt(0)) + '</span>' +
       '<span class="name">' + esc(state.user.name) + '</span>' +
       (isPartner() ? '<span class="badge region">협력사</span>' : '<button class="btn btn-ghost btn-sm' + (state.view === 'help' ? ' on' : '') + '" data-act="help">도움말</button>') +
+      '<button class="btn btn-ghost btn-sm alr-bell" id="alrBell" title="알림 (배차 할 일)" aria-label="알림">🔔<span class="alr-n" hidden></span></button>' +
       '<button class="btn btn-ghost btn-sm" data-act="pw">비밀번호</button>' +
       '<button class="btn btn-sm" data-act="logout">로그아웃</button></div>' +
       '</div></header><main id="main"></main>';
 
+    alertsInit();
     // 묶음 메뉴: 마우스를 올리면 아래로 펼침 (터치는 눌러서)
     var popT = null, popG = null, popAt = 0;
     var touchy = function () { return window.__navTouch || (window.matchMedia && matchMedia('(hover: none)').matches); }; // 태블릿·휴대폰: 마우스 올림/벗어남을 쓰지 않고 눌러서 열고 닫기
@@ -7298,6 +7344,7 @@
     var C = custDef(st); if (C.tabs && list.every(function (t) { return /^부자재/.test(t.name); })) list = C.tabs.slice(); // 서버(Code.js)가 예전 버전이면 새 업체 기본 탭이 없어요
     st.tabList = list; st.tabList._cust = st.cust;
     DISP_TABS = list.filter(function (t) { return !t.hidden; }).map(function (t) { return [t.name, t.suf, t.prefix]; });
+    if (st.wantKey) { var wk = list.filter(function (t) { return !t.hidden && st.cust + t.suf === st.wantKey; })[0]; if (wk) st.tab = wk.name; st.wantKey = null; } // 알림에서 온 탭
     if (!DISP_TABS.some(function (t) { return t[0] === st.tab; })) st.tab = DISP_TABS[0][0];
   }
   /* ── 여러 사람이 같이 볼 때: 바뀐 칸만 저장 + 15초마다 조용히 확인해서 다른 사람 변경을 그 칸만 반영 ── */

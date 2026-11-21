@@ -381,7 +381,7 @@
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'alerts.list', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
       if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
@@ -650,6 +650,13 @@
           x.fcs.forEach(function (fc) { var c = scm[fc] = scm[fc] || { fc: fc, n: 0, last: '', first: x.date }; c.n++; if (x.date > c.last) c.last = x.date; if (x.date < c.first) c.first = x.date; }); });
         var sbn = function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); };
         return { list: slist, drivers: Object.keys(sdm).map(function (k) { return sdm[k]; }).sort(sbn), centers: Object.keys(scm).map(function (k) { return scm[k]; }).sort(sbn), more: false };
+      case 'alerts.list': // 서버는 DB 예약 작업(011) · 데모는 부를 때 바로 계산 (오늘 미배정 오더 · 차량정보 빈 호차)
+        var ad = today().slice(0, 10), al = {}, aput = function (k, c, d, msg) { al[k + '|' + c + '|' + d] = { kind: k, cust: c, date: d, msg: msg, n: 1, nos: '', at: '' }; }, aun = {};
+        wk('dispOrd').forEach(function (o) { if (o.date === ad && (o.truck === '' || o.truck == null) && (me.role !== 'partner')) aun[o.cust] = (aun[o.cust] || 0) + 1; });
+        Object.keys(aun).forEach(function (c) { aput('un', c, ad, '호차 미배정 오더 ' + aun[c] + '줄'); });
+        var anc = {}; wk('dispTrk').forEach(function (t) { if (t.date === ad && !String(t.car || '').trim() && !t.status && wk('dispOrd').some(function (o) { return o.cust === t.cust && o.date === ad && o.truck === t.no; }) && (me.role !== 'partner' || (me.dispTabs || []).indexOf(t.cust) !== -1)) (anc[t.cust] = anc[t.cust] || []).push(t.no); });
+        Object.keys(anc).forEach(function (c) { aput('nocar', c, ad, '차량정보 빈 호차 ' + anc[c].length + '대 (' + anc[c].join('·') + '호차)'); });
+        return { list: Object.keys(al).map(function (k) { return al[k]; }) };
       case 'dispatch.history':
         var hrefs = (req.ids || []).concat(req.tk ? [req.tk] : []), hcost = me.perms.indexOf('analysis') !== -1;
         return { list: wk('audit').filter(function (x) { return x.cust === req.cust && x.date === req.date && (x.tbl === 'truck' || x.tbl === 'order') && (!hrefs.length || hrefs.indexOf(x.ref) !== -1); }).map(function (x) { var c = Object.assign({}, x.chg); if (!hcost) ['rev', 'cost', 'ret_cost', 'wait', 'support'].forEach(function (k) { delete c[k]; }); return Object.assign({}, x, { chg: c }); }).filter(function (x) { return Object.keys(x.chg).length; }) };
