@@ -4410,3 +4410,6 @@ function sbStatus_() {
   var counts = null, err = ''; try { counts = sbRpc_('joil_counts'); } catch (e) { err = e.message; }
   return { connected: !!(p.getProperty('SB_URL') && p.getProperty('SB_KEY')), counts: counts, error: err, sbAuth: p.getProperty('SB_AUTH') === '1', backupOn: on, backupLast: parseJson_(p.getProperty('SB_BACKUP_LAST'), null) };
 }
+/** 편집기에서 실행: 구글 쪽이 Supabase 로그인 토큰도 받게 (속성이 50개가 넘으면 설정 화면에서 못 고쳐서) */
+function sbAuthOn() { PropertiesService.getScriptProperties().setProperty('SB_AUTH', '1'); }
+function sbAuthOff() { PropertiesService.getScriptProperties().deleteProperty('SB_AUTH'); }
