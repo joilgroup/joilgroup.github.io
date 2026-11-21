@@ -6873,9 +6873,10 @@
   function renderManual() {
     var mv = state.manView = state.manView || { sel: '', q: '' };
     $('#main').innerHTML = '<div class="card info-head"><div><div class="eyebrow">Manual · 업무 매뉴얼</div><h2>업무 매뉴얼</h2><p class="muted small" style="margin:4px 0 0">업체별 처리 순서·연락처·문제와 대처를 모아 두는 곳이에요. 처음 맡는 사람도 이것만 보고 할 수 있게 적어 주세요.</p></div>' +
-      '<div class="actions"><input class="input input-sm" id="mnQ" placeholder="제목·업체·내용 검색" value="' + esc(mv.q) + '" style="width:200px"><button class="btn btn-sm btn-primary" id="mnAdd">＋ 매뉴얼 쓰기</button></div></div>' +
+      '<div class="actions"><input class="input input-sm" id="mnQ" placeholder="제목·업체·내용 검색" value="' + esc(mv.q) + '" style="width:200px"><button class="btn btn-sm" id="mnImp" title="인수인계 문서처럼 여러 매뉴얼을 한 번에">여러 개 붙여넣기</button><button class="btn btn-sm btn-primary" id="mnAdd">＋ 매뉴얼 쓰기</button></div></div>' +
       '<div class="man-grid" style="margin-top:16px"><div class="card man-list" id="mnList"><p class="muted"><span class="spinner dark"></span></p></div><div id="mnBody"></div></div>';
     $('#mnAdd').onclick = function () { editManual({}); };
+    $('#mnImp').onclick = openManualImport;
     var t; $('#mnQ').oninput = function () { var v = this.value; clearTimeout(t); t = setTimeout(function () { mv.q = v; drawManualList(); }, 200); };
     Promise.all([loadManuals(), loadInqs().catch(function () { return []; }), loadCusts().catch(function () { return []; })]).then(function () { if (state.view === 'manual') { drawManualList(); drawManualBody(); } })
       .catch(function (err) { $('#mnList').innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
@@ -6926,6 +6927,58 @@
           if (k === 'img') v.innerHTML = '<img src="' + url + '" alt="">'; else if (k === 'pdf') v.innerHTML = '<iframe src="' + url + '"></iframe>'; else if (k === 'xls') xlsPreview(v, bl);
           else v.innerHTML = '<p class="muted">미리보기를 지원하지 않는 형식이에요. 다운로드해서 여세요.</p>'; }).catch(function (err) { var v = $('#mfView', m); if (v) v.innerHTML = '<p class="err-text">' + esc(err.message) + '</p>'; });
         $('#mfDl', m).onclick = function () { getBlob().then(function (bl) { saveBlob(bl, f.name); }); };
+      } });
+  }
+  /* 여러 매뉴얼 한 번에: '#####' 줄로 나눈 글에서 "제목:"·"업체:"를 읽고, ■ 소제목 단락을 칸으로 나눠요 (연락처 → 연락처, 문제·리스크·사고 → 문제와 대처, 주의·원칙·팁 → 주의사항, 자료·파일 위치 → 메모, 나머지 → 처리 순서) — 같은 제목이 있으면 덮어써요 */
+  function manualParse(text) {
+    var blocks = String(text || '').replace(/\r/g, '').split(/\n\s*#{5,}\s*\n/), out = [];
+    blocks.forEach(function (b) {
+      var lines = b.split('\n'), title = '', cust = '', body = [];
+      lines.forEach(function (l) { var m = l.match(/^\s*제목\s*[:：]\s*(.+)$/), c = l.match(/^\s*업체\s*[:：]\s*(.*)$/); if (m && !title) title = m[1].trim(); else if (c && !cust && title) cust = c[1].trim(); else body.push(l); });
+      var txt = body.join('\n').trim(); if (!txt) return;
+      if (!title) { // 제목 줄이 없는 첫 덩어리(목차 등): 첫 줄을 제목으로, '사이트 AI 등록 안내' 단락은 빼요
+        txt = txt.replace(/=+\s*\n\s*\[사이트 AI 등록 안내\][\s\S]*?(?=\n=+\s*\n\s*\[|$)/, '').replace(/\n{3,}/g, '\n\n').trim();
+        var first = txt.split('\n')[0].trim(); if (!first) return; title = first.slice(0, 100); txt = txt.split('\n').slice(1).join('\n').trim();
+      }
+      var f = { steps: [], contacts: [], issues: [], cautions: [], memo: [] }, secs = txt.split(/\n(?=\s*■)/);
+      secs.forEach(function (sec) {
+        var h = (sec.match(/^\s*■\s*([^\n]*)/) || [])[1] || '', k = /연락처/.test(h) ? 'contacts' : /문제|리스크|사고|클레임/.test(h) ? 'issues' : /주의|원칙|팁|규칙/.test(h) ? 'cautions' : /자료|파일 위치|자료 위치/.test(h) ? 'memo' : 'steps';
+        f[k].push(sec.trim());
+      });
+      var m = { title: title.slice(0, 100), cust: /^공통/.test(cust) ? '' : cust.slice(0, 100), cat: '인수인계' };
+      Object.keys(f).forEach(function (k) { m[k] = f[k].join('\n\n'); });
+      out.push(m);
+    });
+    return out;
+  }
+  function openManualImport() {
+    var list = [];
+    modal({ wide: true, eyebrow: '업무 매뉴얼', title: '여러 개 붙여넣기',
+      body: '<p class="muted small" style="margin:0 0 8px">매뉴얼마다 <b>제목:</b>·<b>업체:</b> 줄로 시작하고, 매뉴얼 사이는 <b>#####</b> 줄로 나눠 주세요. ■ 소제목 단락은 그대로 두고 칸에 나눠 넣어요(연락처 → 연락처, 문제·리스크·사고 → 문제와 대처, 주의·원칙·팁 → 주의사항, 자료 위치 → 메모, 나머지 → 처리 순서). 분류는 "인수인계"예요. <b>같은 제목이 이미 있으면 덮어써요.</b></p>' +
+        '<textarea class="input" id="miIn" rows="10" placeholder="제목: …&#10;업체: …&#10;■ 개요&#10;…&#10;&#10;#####&#10;&#10;제목: …"></textarea><div id="miPrev" style="margin-top:10px"></div>',
+      foot: '<span class="small muted" id="miInfo" style="margin-right:auto"></span><button class="btn" data-close>취소</button><button class="btn btn-primary" id="miSave" disabled>등록</button>',
+      onMount: function (mo, close) {
+        var find = function (t) { return (state.manuals || []).filter(function (x) { return x.title === t; })[0]; };
+        var prev = function () {
+          list = manualParse($('#miIn', mo).value);
+          $('#miPrev', mo).innerHTML = list.length ? '<div class="table-wrap"><table class="data"><thead><tr><th class="left">제목</th><th class="left">업체</th><th>처리 순서</th><th>연락처</th><th>문제와 대처</th><th>주의사항</th><th>메모</th><th></th></tr></thead><tbody>' + list.map(function (m) {
+            var n = function (k) { return m[k] ? won(m[k].length) + '자' : '–'; };
+            return '<tr><td class="left"><b>' + esc(m.title) + '</b></td><td class="left small">' + esc(m.cust || '공통') + '</td><td class="num">' + n('steps') + '</td><td class="num">' + n('contacts') + '</td><td class="num">' + n('issues') + '</td><td class="num">' + n('cautions') + '</td><td class="num">' + n('memo') + '</td><td class="small">' + (find(m.title) ? '<span style="color:var(--orange)">덮어쓰기</span>' : '새로') + '</td></tr>';
+          }).join('') + '</tbody></table></div>' : '';
+          $('#miInfo', mo).textContent = list.length ? '매뉴얼 ' + list.length + '개 · 덮어쓰기 ' + list.filter(function (m) { return find(m.title); }).length + '개' : '';
+          $('#miSave', mo).disabled = !list.length;
+        };
+        var t; $('#miIn', mo).oninput = function () { clearTimeout(t); t = setTimeout(prev, 250); };
+        $('#miSave', mo).onclick = function () {
+          var btn = this, i = 0, done = 0; busy(btn, true, '등록 중…');
+          var next = function () {
+            if (i >= list.length) { close(); toast('매뉴얼 ' + done + '개를 등록했어요.'); drawManualList(); drawManualBody(); return; }
+            var m = list[i++], old = find(m.title); btn.textContent = '등록 중 ' + i + '/' + list.length;
+            api('manual.save', { id: old ? old.id : '', manual: m }).then(function (r) { state.manuals = r.manuals; done++; next(); })
+              .catch(function (err) { busy(btn, false); toast('"' + m.title + '" 등록 실패: ' + err.message + ' (그 앞 ' + done + '개는 등록됐어요)', 'err'); });
+          };
+          next();
+        };
       } });
   }
   function editManual(m) {
