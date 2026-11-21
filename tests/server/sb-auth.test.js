@@ -40,6 +40,7 @@ var L = require('../sb/lib.js'), ok = require('../lib/mock.js').ok;
     var D = '2026-11-20'; await S.sql`insert into disp_stamps (cust, date, stamp) values ('쿠팡부자재/평택', ${D}, 123), ('쿠팡부자재', ${D}, 456)`;
     var rpc = async function (tok, keys) { return S.sql.begin(async function (tx) { await tx.unsafe('set local role anon'); return (await tx.unsafe('select public.joil_stamps($1, $2, $3) r', [tok, keys, D]))[0].r; }).catch(function (e) { return { err: e.message }; }); };
     var r1 = await rpc(lp.token, ['쿠팡부자재/평택']); ok('RPC: 협력사 자기 탭 바뀐 시각', r1.ok && r1.stamps['쿠팡부자재/평택'] === 123, r1);
+    ok('RPC: 실시간 채널 이름(비밀값 해시) 같이', /^j[0-9a-f]{32}$/.test((r1.topics || {})['쿠팡부자재/평택'] || '') && JSON.stringify(r1).indexOf('RT_SECRET') === -1, r1);
     var r2 = await rpc(lp.token, ['쿠팡부자재']); ok('RPC: 협력사는 다른 탭 못 봄', /볼 수 없는 탭/.test(r2.err || ''), r2);
     var r3 = await rpc('nope', ['쿠팡부자재']); ok('RPC: 토큰이 틀리면 거부', /만료/.test(r3.err || ''), r3);
     var r4 = await rpc(lr.token, ['쿠팡부자재', '없음']); ok('RPC: 직원은 여러 탭 · 없는 탭은 0', r4.ok && r4.stamps['쿠팡부자재'] === 456 && r4.stamps['없음'] === 0, r4);

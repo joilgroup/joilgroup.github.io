@@ -7359,12 +7359,51 @@
   }
   function dispStampInit(keys, date) {
     var st = dispState();
-    api('dispatch.stamp', { keys: keys, date: date }).then(function (r) { st.patchOk = true; st.stamps = r.stamps; st.stampDate = date; dispPollStart(); }).catch(function () { st.patchOk = false; });
+    api('dispatch.stamp', { keys: keys, date: date }).then(function (r) { st.patchOk = true; st.stamps = r.stamps; st.stampDate = date; rtWatch(r.topics); dispPollStart(); }).catch(function () { st.patchOk = false; });
+  }
+  /* 실시간 반영 (Supabase Realtime · 마이그레이션 009): 누가 저장하면 서버가 '바뀌었어요' 신호만 보내고, 화면은 그때 다시 받아요.
+     채널 이름은 로그인 확인을 거친 joil_stamps 가 알려 줘요. 연결돼 있으면 확인은 2분에 한 번, 끊기면 예전처럼 15초. 외부 라이브러리 없이 웹소켓 직접. */
+  var RT = { ws: null, want: {}, joined: {}, ref: 0, hb: null, wait: 1000, kt: null, tries: 0 };
+  function rtLive() { return !!(RT.ws && RT.ws.readyState === 1 && Object.keys(RT.joined).length); }
+  function rtSend(m) { try { RT.ws.send(JSON.stringify(m)); } catch (e) { /* 다시 연결에서 */ } }
+  function rtJoin(tp) { RT.ref++; rtSend({ topic: 'realtime:' + tp, event: 'phx_join', payload: { config: { broadcast: { self: false, ack: false }, presence: { key: '' }, private: false } }, ref: String(RT.ref), join_ref: String(RT.ref) }); }
+  function rtWatch(topics) {
+    if (DEMO || !window.WebSocket || !CFG.SB_REST || !CFG.SB_ANON || !topics) return;
+    var want = {}; Object.keys(topics).forEach(function (k) { if (topics[k]) want[topics[k]] = k; });
+    if (Object.keys(want).sort().join() === Object.keys(RT.want).sort().join() && RT.ws) return;
+    var old = RT.want; RT.want = want;
+    if (!RT.ws) return rtOpen();
+    if (RT.ws.readyState !== 1) return;
+    Object.keys(old).forEach(function (tp) { if (!want[tp]) { rtSend({ topic: 'realtime:' + tp, event: 'phx_leave', payload: {}, ref: String(++RT.ref) }); delete RT.joined[tp]; } });
+    Object.keys(want).forEach(function (tp) { if (!old[tp] || !RT.joined[tp]) rtJoin(tp); });
+  }
+  function rtOpen() {
+    var ws; try { ws = new WebSocket(CFG.SB_REST.replace(/^http/, 'ws').replace(/\/+$/, '') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(CFG.SB_ANON) + '&vsn=1.0.0'); } catch (e) { return; }
+    RT.ws = ws; RT.joined = {};
+    ws.onopen = function () { RT.wait = 1000; Object.keys(RT.want).forEach(rtJoin); clearInterval(RT.hb); RT.hb = setInterval(function () { rtSend({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(++RT.ref) }); }, 25000); };
+    ws.onmessage = function (e) {
+      var m; try { m = JSON.parse(e.data); } catch (er) { return; }
+      var tp = String(m.topic || '').replace(/^realtime:/, ''); if (!RT.want[tp]) return;
+      if (m.event === 'phx_reply' && m.payload && m.payload.status === 'ok') RT.joined[tp] = 1;
+      else if (m.event === 'phx_close' || m.event === 'phx_error') delete RT.joined[tp];
+      else if (m.event === 'broadcast') rtKick();
+    };
+    ws.onclose = function () { clearInterval(RT.hb); if (RT.ws !== ws) return; RT.ws = null; RT.joined = {}; var w = RT.wait; RT.wait = Math.min(RT.wait * 2, 60000); setTimeout(function () { if (!RT.ws && Object.keys(RT.want).length) rtOpen(); }, w); };
+  }
+  /** 신호가 오면 곧바로 확인 (저장 중·고치는 중이면 끝난 뒤에) */
+  function rtKick() {
+    clearTimeout(RT.kt); RT.tries = 0;
+    var go = function () {
+      var st = dispState(); if (state.view !== 'dispatch' || st.view !== 'day') return;
+      if (dispSaving || st.polling || Object.keys(st.dirty || {}).length) { if (++RT.tries < 40) RT.kt = setTimeout(go, 1500); return; }
+      dispPoll();
+    };
+    RT.kt = setTimeout(go, 300);
   }
   var dispPollT = null;
   function dispPollStart() {
     if (dispPollT) return;
-    dispPollT = setInterval(dispPoll, 15000);
+    dispPollT = setInterval(function () { if (rtLive() && Date.now() - (dispState().lastPoll || 0) < 120000) return; dispPoll(); }, 15000);
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') dispPoll(); });
     window.addEventListener('focus', dispPoll);
   }
@@ -7372,8 +7411,9 @@
     var st = dispState();
     if (state.view !== 'dispatch' || st.view !== 'day' || !st.tabs || !st.patchOk || document.visibilityState === 'hidden' || dispSaving || st.polling || Object.keys(st.dirty || {}).length) return;
     var keys = DISP_TABS.map(function (t) { return dispKey(st, t[0]); }), date = st.date, cust = st.cust, tabs = st.tabs;
-    st.polling = 1;
+    st.polling = 1; st.lastPoll = Date.now();
     api('dispatch.stamp', { keys: keys, date: date }).then(function (r) {
+      rtWatch(r.topics);
       var old = st.stampDate === date ? st.stamps || {} : {}, ch = keys.some(function (k) { return (r.stamps[k] || 0) > (old[k] || 0); });
       if (!ch) return;
       return api('dispatch.dayAll', { keys: keys, date: date }).then(function (res) {
