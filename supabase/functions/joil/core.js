@@ -550,7 +550,7 @@ export function makeServer(sql, opts) {
     await locked('rates', async function (tx) {
       var cur = await dispRateRows(tx), nk = {}; add.forEach(function (x) { nk[key(x)] = 1; });
       var keep = cur.filter(function (x) { return req.mode === 'add' ? !nk[key(x)] : !custs[x.cust]; }), now = nowTxt();
-      await Q(tx, 'delete from disp_rates');
+      await Q(tx, 'delete from disp_rates where true');
       for (var x of keep.concat(add)) await Q(tx, 'insert into disp_rates (cust, "from", "to", ton, price, start, memo, dist, by_name, at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [x.cust, x.from, x.to, x.ton, x.price, x.start || '', x.memo || '', x.dist || null, session.name, now]);
     });
     var out = await dispRates(session); out.saved = add.length; return out;
@@ -581,7 +581,7 @@ export function makeServer(sql, opts) {
     await locked('dest', async function (tx) {
       var keep = (await Q(tx, 'select * from dest_book order by uid')).filter(function (r) { return custOfRow(r.cust) !== cust || (oldKind && destKindTxt(r.kind) !== oldKind); })
         .map(function (r) { return row({ kind: r.kind, code: r.code, name: r.name, addr: r.addr, cust: custOfRow(r.cust), manager: r.manager, tel: r.tel, hours: r.hours, rateTo: r.rate_to, memo: r.memo }, r.by_name, r.at); });
-      await Q(tx, 'delete from dest_book');
+      await Q(tx, 'delete from dest_book where true');
       for (var v of keep.concat(rows)) await Q(tx, 'insert into dest_book (kind, code, name, addr, by_name, at, cust, manager, tel, hours, rate_to, memo) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)', v);
     });
     return { dests: await destList(), saved: rows.length };

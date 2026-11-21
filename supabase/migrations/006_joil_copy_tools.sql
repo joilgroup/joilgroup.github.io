@@ -18,7 +18,7 @@ begin
   select string_agg(quote_ident(column_name), ', ' order by ordinal_position) into cols
     from information_schema.columns where table_schema = 'joil' and table_name = p_table and is_identity = 'NO' and is_generated = 'NEVER';
   if p_reset then
-    if p_table = 'props' then delete from joil.props where key not in ('SB_LIVE', 'GAS_URL', 'GAS_SECRET'); else execute format('delete from joil.%I', p_table); end if;
+    if p_table = 'props' then delete from joil.props where key not in ('SB_LIVE', 'GAS_URL', 'GAS_SECRET'); else execute format('delete from joil.%I where true', p_table); end if; -- where true: Supabase REST 는 조건 없는 delete 를 막아요(safeupdate)
   end if;
   if p_table = 'props' then
     insert into joil.props (key, value) select key, value from json_populate_recordset(null::joil.props, p_rows) on conflict (key) do update set value = excluded.value;
