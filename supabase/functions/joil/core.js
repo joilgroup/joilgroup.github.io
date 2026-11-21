@@ -23,9 +23,9 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
   'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search',
-  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete'];
+  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op'];
 /** 진짜 표로 옮긴 영역 (012): 액션 앞부분 → 시트 이름. props 'MOVED_시트'가 있을 때만 이 서버가 맡아요(없으면 gas.js 가 시트 그대로) */
-export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당' };
+export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당', 'work.': '업무기록' };
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
 var PUBLIC_DEFAULT = { tons: ['1톤', '1.4톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '25톤'], fuelMode: 'manual', manualPrice: 1500, baseTon: '5톤', roundTrip: false, maxRows: 1000, retentionDays: 90, quoteFooter: '※ 부가세 별도 / 대기·수작업 발생 시 별도 협의', maxKm: 600, priceRounding: { unit: 1000, mode: 'round' }, specials: [] };
 
@@ -767,6 +767,9 @@ export function makeServer(sql, opts) {
       case 'notice.list': return { notices: await noticesList() };
       case 'notice.save': return noticeSave(session, req);
       case 'notice.delete': return noticeDelete(session, req.id);
+      case 'work.list': return workList(session, req);
+      case 'work.stamp': return { stamp: await workStamp(workWho(session, req.uid)) };
+      case 'work.op': return workOp(session, req);
     }
     if (/^dispatch\.|^loading\.|^drivers\.|^dest\.|^inq\.|^owners\./.test(action)) requirePerm(session, 'quote'); // Code.js QUOTE_ACTIONS 안의 배차 액션들 · 문의·업무담당
     switch (action) {
@@ -956,6 +959,61 @@ export function makeServer(sql, opts) {
   async function ownerDelete(session, id) {
     var f = (await Q(sql, 'select * from owners where id = $1', [String(id || '')]))[0]; if (!f) throw err('업무를 찾을 수 없습니다.');
     await ownerLog(f.task, '삭제', session.name); await Q(sql, 'delete from owners where id = $1', [f.id]); return ownersList();
+  }
+
+  /* ───────────── 업무 기록 (013 · Code.js workList_·workOp_ 와 같은 규칙) ───────────── */
+  function workWho(session, uid) {
+    uid = String(uid || '');
+    if (!uid || uid === session.id) return session.id;
+    if (session.role !== 'admin') throw err('다른 사람의 업무 기록은 볼 수 없습니다.');
+    return uid;
+  }
+  async function workStamp(uid, db) { var r = (await Q(db || sql, 'select stamp from work_stamps where uid = $1', [uid]))[0]; return r ? r.stamp : ''; }
+  async function workRows(uid, db) { return (await Q(db || sql, 'select * from work_items where uid = $1 order by r', [uid])).map(function (r) { return { id: r.id, text: r.text, st: r.st, ord: Number(r.ord) || 0, at: r.at, start: r.start, done: r.done }; }); }
+  async function workList(session, req) {
+    var uid = workWho(session, req.uid), date = req.date ? String(req.date).trim().replace(/^'/, '') : ymd();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw err('날짜를 YYYY-MM-DD 형식으로 넣으세요.');
+    var items = (await workRows(uid)).filter(function (x) { return x.st !== '완료' || x.done.slice(0, 10) === date; });
+    var out = { items: items, date: date, uid: uid, stamp: await workStamp(uid) };
+    if (session.role === 'admin') out.users = (await listUsers()).filter(function (u) { return u.role !== 'partner' && u.active; }).map(function (u) { return { id: String(u.id), name: String(u.name) }; });
+    return out;
+  }
+  async function workOp(session, req) {
+    var uid = session.id, op = String(req.op || ''), now = nowTxt(), gone = false;
+    await locked('work|' + uid, async function (tx) {
+      var items = await workRows(uid, tx), ch = [];
+      var find = function (id) { return items.filter(function (x) { return x.id === String(id || ''); })[0]; };
+      var waits = function () { return items.filter(function (x) { return x.st === '대기'; }); };
+      var minOrd = function () { return waits().reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; };
+      var mark = function (x) { if (ch.indexOf(x) === -1) ch.push(x); };
+      if (op === 'add') {
+        var text = String(req.text || '').trim().slice(0, 500); if (!text) throw err('내용을 넣으세요.');
+        var id = /^K[0-9a-z]{6,24}$/.test(String(req.id || '')) && !find(req.id) ? String(req.id) : newId('K');
+        var ord = waits().reduce(function (m, x) { return Math.max(m, x.ord); }, 0) + 1;
+        await Q(tx, "insert into work_items (id, text, st, ord, at, start, done, uid) values ($1, $2, '대기', $3, $4, '', '', $5)", [id, text, ord, now, uid]);
+      } else if (op === 'order') {
+        var ids = (req.ids || []).map(String), rest = waits().filter(function (x) { return ids.indexOf(x.id) === -1; });
+        ids.map(find).filter(function (x) { return x && x.st === '대기'; }).concat(rest).forEach(function (x, i) { if (x.ord !== i + 1) { x.ord = i + 1; mark(x); } });
+      } else {
+        var it = find(req.id);
+        if (!it) { if (op === 'delete') { gone = true; return; } throw err('항목을 찾을 수 없습니다. 새로고침해 보세요.'); }
+        if (op === 'edit') {
+          var t = String(req.text || '').trim().slice(0, 500); if (!t) throw err('내용을 넣으세요.');
+          it.text = t; mark(it);
+        } else if (op === 'status') {
+          var to = String(req.st || '');
+          if (to === '진행 중') {
+            if (it.st !== to) { it.ord = items.filter(function (x) { return x.st === to; }).reduce(function (m, x) { return Math.min(m, x.ord); }, 1) - 1; it.st = to; it.start = it.start || now; it.done = ''; mark(it); }
+          } else if (to === '대기') { if (it.st !== '대기') { it.ord = minOrd(); it.st = to; it.done = ''; mark(it); } }
+          else if (to === '완료') { it.st = to; it.done = now; mark(it); }
+          else throw err('상태를 확인하세요.');
+        } else if (op === 'delete') await Q(tx, 'delete from work_items where id = $1 and uid = $2', [it.id, uid]);
+        else throw err('알 수 없는 요청입니다: work.' + op);
+      }
+      for (var x of ch) await Q(tx, 'update work_items set text = $2, st = $3, ord = $4, at = $5, start = $6, done = $7 where id = $1 and uid = $8', [x.id, x.text, x.st, x.ord, x.at, x.start || '', x.done || '', uid]);
+      await Q(tx, 'insert into work_stamps (uid, stamp) values ($1, $2) on conflict (uid) do update set stamp = excluded.stamp', [uid, String(Date.now())]);
+    });
+    return workList(session, req);
   }
 
   /* ───────────── 배차 이력 찾기 (차량번호·기사·연락처·센터·오더 키·주소 …) · 금액은 안 보냄 · 협력사는 배정된 탭만 ───────────── */

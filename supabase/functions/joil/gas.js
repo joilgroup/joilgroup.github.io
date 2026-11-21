@@ -16,6 +16,7 @@ var MOVED_VIEWS = {
   '공지': { head: ['ID', '제목', '내용', '고정', '작성자ID', '작성자', '작성일시', '수정일시'], q: 'select * from notices order by ord', row: function (r) { return [r.id, r.title, r.body, r.pinned ? 'Y' : '', r.owner_id, r.owner, r.created_at, r.updated_at]; } },
   '문의기록': { head: ['ID', '일시', '거래처', '문의자', '내용', '처리', '상태', '응대자ID', '응대자', '자주묻는질문', '수정일시'], q: 'select * from inquiries order by ord', row: function (r) { return [r.id, "'" + r.at, r.cust, r.who, r.body, r.answer, r.status, r.by_id, r.by_name, r.faq ? 'Y' : '', r.updated_at]; } },
   '업무담당': { head: ['ID', '업무', '거래처', '주담당', '부담당', '메모', '수정자', '수정일시'], q: 'select * from owners order by ord', row: function (r) { return [r.id, r.task, r.cust, r.main, r.sub, r.memo, r.by_name, r.at]; } },
+  '업무기록': { head: ['ID', '내용', '상태', '대기순서', '등록시간', '시작시간', '완료시간', '작성자'], q: 'select * from work_items order by r', row: function (r) { return [r.id, "'" + r.text, r.st, Number(r.ord), "'" + r.at, r.start ? "'" + r.start : '', r.done ? "'" + r.done : '', "'" + r.uid]; } },
   '담당변경기록': { flag: '업무담당', head: ['일시', '업무', '내용', '수정자'], q: 'select * from owner_log order by id', row: function (r) { return [r.at, r.task, r.text, r.by_name]; } }
 };
 var USER_COLS = ['아이디', '이름', '권한', '사용여부', '비밀번호해시', '솔트', '비밀번호변경필요', '생성일', '마지막로그인', '메뉴권한', '배차탭'];
