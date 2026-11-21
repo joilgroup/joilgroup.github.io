@@ -19,5 +19,7 @@ T.run(async function () {
   await p.goto(p.url().replace(/#.*$/, '') + '#/admin'); await p.waitForTimeout(800);
   var tabBtn = await p.$('.rail button[data-tab="audit"]'); ok('관리자 메뉴에 변경 이력 탭', !!tabBtn);
   if (tabBtn) { await tabBtn.click(); await p.waitForSelector('#audOut', { timeout: 10000 }); await p.waitForTimeout(500); var at = await p.$eval('#audOut', function (x) { return x.innerText; }); ok('관리자 변경 이력 화면이 열림', /변경 이력이 없어요|언제/.test(at), at); }
+  var ub = await p.$('.rail button[data-tab="usage"]'); ok('관리자 메뉴에 사용량 탭', !!ub);
+  if (ub) { await ub.click(); await p.waitForTimeout(800); ok('사용량: DB 용량 · 500MB 중', /500MB 중/.test(await T.text(p, '#usOut')), await T.text(p, '#usOut')); }
   await T.done(o);
 });

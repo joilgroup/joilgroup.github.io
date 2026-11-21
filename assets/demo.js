@@ -947,6 +947,7 @@
         store.tariff = { tons: s.tons.map(function (t) { return t.name; }), rows: req.tariff.rows.map(function (r) { return r.map(Number); }) };
         save(); return {};
       case 'admin.listUsers': return { users: userList() };
+      case 'admin.usage': return { db: 21 * 1048576, limit: 500 * 1048576, tables: [{ t: 'joil.disp_orders', bytes: 2 * 1048576, rows: wk('dispOrd').length }, { t: 'joil.disp_trucks', bytes: 1048576, rows: wk('dispTrk').length }], counts: { audit: wk('audit').length, alerts: 0, positions: 0, sessions: 1 } };
       case 'admin.audit': return { list: wk('audit').filter(function (x) { return x.tbl !== 'truck' && x.tbl !== 'order' && (!req.tbl || x.tbl === req.tbl); }) };
       case 'analysis.upload':
         if (['조일물류', '명일로지스', '조일로지스'].indexOf(req.biz) === -1) fail('사업자를 선택하세요.');

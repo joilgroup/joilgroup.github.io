@@ -53,6 +53,8 @@ var L = require('../sb/lib.js'), ok = require('../lib/mock.js').ok;
     var ac = by('account');
     ok('계정 권한 변경 · 비밀번호는 값 없이 (바뀜)', ac.some(function (x) { return x.ref === 's' && x.chg.perms && x.chg.perms[1] === 'quote,track'; }) && ac.some(function (x) { return x.chg.pw_hash && x.chg.pw_hash[1] === '(바뀜)'; }) && JSON.stringify(ac).indexOf('salt') === -1, ac);
     var raw = await S.sql`select chg::text t from audit where tbl = 'account'`; ok('DB 이력에도 비밀번호 해시 없음', raw.every(function (r) { return !/[0-9a-f]{64}/.test(r.t); }), raw);
+    var us = await S.call(tok.a, 'admin.usage'); ok('사용량: DB 크기·큰 표·줄 수', us.ok && us.db > 0 && us.limit === 524288000 && us.tables.length > 0 && us.counts.audit > 0, us);
+    var us2 = await S.call(tok.s, 'admin.usage'); ok('사용량은 관리자만', !us2.ok);
     var as = await S.call(tok.s, 'admin.audit', {}); ok('관리자 이력은 관리자만', !as.ok, as);
     var lg = (await S.sql`select count(*)::int n from audit where tbl = 'account' and chg ? 'last_login'`)[0].n; ok('로그인 시각은 이력에 안 남김', lg === 0);
   } finally { await S.stop(); }

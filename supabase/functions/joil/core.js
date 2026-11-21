@@ -23,7 +23,7 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
   'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search',
-  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op'];
+  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage'];
 /** 진짜 표로 옮긴 영역 (012): 액션 앞부분 → 시트 이름. props 'MOVED_시트'가 있을 때만 이 서버가 맡아요(없으면 gas.js 가 시트 그대로) */
 export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당', 'work.': '업무기록' };
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
@@ -831,6 +831,7 @@ export function makeServer(sql, opts) {
       case 'admin.updateUser': return updateUser(session, req.id, req.patch || {});
       case 'admin.resetPassword': return resetPassword(req.id);
       case 'admin.audit': return auditList(session, req);
+      case 'admin.usage': return adminUsage();
     }
     throw err('알 수 없는 요청입니다: ' + action);
   }
@@ -961,6 +962,14 @@ export function makeServer(sql, opts) {
     await ownerLog(f.task, '삭제', session.name); await Q(sql, 'delete from owners where id = $1', [f.id]); return ownersList();
   }
 
+  /** 관리자: 무료 한도 사용량 (DB 용량 500MB 중 · 큰 표 · 변경 이력·알림·위치 기록 줄 수) — 금액 없음 */
+  async function adminUsage() {
+    var db = (await Q(sql, 'select pg_database_size(current_database())::bigint b'))[0];
+    var tabs = (await Q(sql, "select n.nspname || '.' || c.relname t, pg_total_relation_size(c.oid)::bigint b, greatest(c.reltuples, 0)::bigint n from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind = 'r' and n.nspname in ('joil', 'public') order by 2 desc limit 12"));
+    var cnt = async function (q) { try { return Number((await Q(sql, q))[0].n) || 0; } catch (e) { return null; } };
+    return { db: Number(db.b), limit: 500 * 1024 * 1024, tables: tabs.map(function (r) { return { t: r.t, bytes: Number(r.b), rows: Number(r.n) }; }),
+      counts: { audit: await cnt('select count(*) n from audit'), alerts: await cnt('select count(*) n from alerts where resolved_at is null'), positions: await cnt('select count(*) n from public.positions'), sessions: await cnt('select count(*) n from sessions where expires_at > now()') } };
+  }
   /* ───────────── 업무 기록 (013 · Code.js workList_·workOp_ 와 같은 규칙) ───────────── */
   function workWho(session, uid) {
     uid = String(uid || '');

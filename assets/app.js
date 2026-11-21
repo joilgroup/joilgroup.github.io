@@ -89,7 +89,7 @@
    * - 조회성 요청(READ)은 오류·지연 시 1번 자동 재시도, 같은 요청이 동시에 겹치면 하나로 합침
    * - 저장·변경 요청은 중복 실행을 막기 위해 재시도하지 않음
    */
-  var READ_ACTIONS = ['me', 'dispatch.search', 'dispatch.history', 'admin.audit', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
+  var READ_ACTIONS = ['me', 'admin.usage', 'dispatch.search', 'dispatch.history', 'admin.audit', 'track.list', 'track.route', 'publicSettings', 'dieselPrice', 'admin.bootstrap', 'admin.getSettings', 'admin.getTariff', 'admin.listUsers', 'admin.getLogs', 'admin.cacheInfo', 'history.list', 'history.get', 'quotes.list', 'quotes.get', 'analysis.index', 'analysis.load', 'analysis.accessLog', 'admin.dieselHistory', 'docs.list', 'docs.get', 'addr.list', 'companies', 'diesel.recent', 'info.diesel', 'info.news', 'info.weather', 'rates.list', 'rates.get', 'reqs.list', 'reqs.get', 'reqs.file', 'notes.list', 'cal.all', 'staff.list', 'notice.list', 'custs.list', 'weekly.get', 'stock.quotes', 'stock.search', 'stock.chart', 'manual.list', 'manual.file', 'inq.list', 'owners.list', 'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.tabs', 'loading.list', 'dispatch.rates', 'dispatch.geo', 'dispatch.receipt', 'drivers.list', 'dispatch.map', 'work.list', 'work.stamp'];
   var TIMEOUT_MS = 30000, SAVE_TIMEOUT_MS = 45000; // 저장은 서버에서 끝까지 돌아서, 화면이 먼저 포기하면 '실패'로 보이지만 실제로는 저장돼요 → 더 기다려요
   var inflight = {};
 
@@ -3715,6 +3715,7 @@
     ['anrule', '분석 규칙', 'var(--red)'],
     ['diesel', '유가 기록', 'var(--cyan)'],
     ['audit', '변경 이력', 'var(--ink-2)'],
+    ['usage', '사용량', 'var(--ink-2)'],
     ['company', '회사 정보', 'var(--green)'],
     ['keys', 'API 키', 'var(--ink-2)']
   ];
@@ -3809,7 +3810,7 @@
   function showAdminTab() {
     syncRoute();
     var a = state.admin, tab = a.tab;
-    var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, audit: adminAudit, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials, staff: adminStaff };
+    var views = { basic: adminBasic, region: adminRegion, tariff: adminTariff, users: adminUsers, audit: adminAudit, usage: adminUsage, keys: adminKeys, andata: adminAnData, anmap: adminAnMap, anrule: adminAnRules, diesel: adminDiesel, company: adminCompany, special: adminSpecials, staff: adminStaff };
     var ready = a.loaded && (tab !== 'tariff' || a.tariff);
     if (ready) {
       views[tab]();
@@ -8375,6 +8376,21 @@
             histTable(r.list || [], function (x) { return x.tbl === 'truck' ? (x.no ? x.no + '호차' : '호차') : '오더' + (fcOf[x.ref] ? '(' + fcOf[x.ref] + ')' : ''); });
         }).catch(function (err) { box.innerHTML = '<p class="err-text" style="margin:0">' + esc(/알 수 없는 요청/.test(err.message) ? '서버가 아직 변경 이력을 몰라요. 잠시 뒤 다시 해 주세요.' : err.message) + '</p>'; });
       } });
+  }
+  /** 관리자 → 사용량: Supabase 무료 한도(DB 500MB) 중 얼마나 썼는지 · 큰 표 */
+  function adminUsage() {
+    var body = $('#adminBody'), mb = function (b) { return (b / 1048576).toFixed(1) + 'MB'; };
+    body.innerHTML = '<div class="card"><div class="eyebrow">Usage · 사용량</div><h2>무료 한도 사용량</h2><div id="usOut" class="muted"><span class="spinner dark"></span> 불러오는 중…</div></div>';
+    api('admin.usage').then(function (r) {
+      if (state.admin.tab !== 'usage') return;
+      var pct = Math.round(r.db / r.limit * 1000) / 10, c = r.counts || {};
+      $('#usOut').classList.remove('muted');
+      $('#usOut').innerHTML = '<div class="tr-kpis" style="margin-bottom:14px"><div><small>DB 용량</small><b' + (pct > 80 ? ' style="color:#C0392B"' : '') + '>' + mb(r.db) + '</b><span class="small muted">무료 500MB 중 ' + pct + '%</span></div>' +
+        '<div><small>변경 이력</small><b>' + won(c.audit) + '줄</b><span class="small muted">1년 지나면 지워요</span></div><div><small>열린 알림</small><b>' + won(c.alerts) + '개</b></div>' +
+        '<div><small>위치 기록</small><b>' + won(c.positions) + '줄</b></div><div><small>로그인 중</small><b>' + won(c.sessions) + '개</b><span class="small muted">기기·브라우저 수</span></div></div>' +
+        '<div class="table-wrap"><table class="data"><thead><tr><th class="left">큰 표</th><th>크기</th><th>줄 수(대략)</th></tr></thead><tbody>' + (r.tables || []).map(function (t) { return '<tr><td class="left">' + esc(t.t) + '</td><td class="num">' + mb(t.bytes) + '</td><td class="num">' + won(t.rows) + '</td></tr>'; }).join('') + '</tbody></table></div>' +
+        '<p class="hint" style="margin:10px 0 0">함수 호출 수(무료 월 50만)·전송량(월 5GB)은 Supabase 대시보드 → Usage 에서 봐요. 400MB를 넘으면 오래된 위치 기록부터 줄이는 게 좋아요.</p>';
+    }).catch(function (err) { var o = $('#usOut'); if (o) o.innerHTML = '<p class="err-text" style="margin:0">' + esc(/알 수 없는 요청/.test(err.message) ? '이 화면은 Supabase 서버에서만 돼요.' : err.message) + '</p>'; });
   }
   /** 관리자 → 변경 이력: 계정·권한·단가표·특이사항·월별 단가·코드·탭·센터도착 */
   function adminAudit() {
