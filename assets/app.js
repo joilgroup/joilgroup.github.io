@@ -792,6 +792,19 @@
       }
     });
   }
+  /** 지입·고정차 기사에게 문자로 보낼 앱 설치 안내 (짧게 · 서버 주소에 비밀 키가 있어 그 차 기사에게만) */
+  function trInstallSms(v, url) {
+    return '[차량 위치 앱 설치 안내] ' + v.plate + '\n' +
+      '1) Play 스토어에서 "Traccar Client" 설치 (무료)\n' +
+      '2) 앱 설정에서 아래처럼 바꿔 주세요\n' +
+      '- 기기 ID: ' + v.device_id + '\n' +
+      '- 서버 URL: ' + url + '\n' +
+      '- 간격(Frequency): 300\n' +
+      '- 거리(Distance)·각도(Angle): 0\n' +
+      '- 정지 감지(Stop detection): 끄기\n' +
+      '3) 위치 권한 "항상 허용", 폰 설정 > 앱 > Traccar Client > 배터리 "제한 없음"\n' +
+      '4) 맨 위 "서비스 상태"를 켜면 끝이에요. 운행 중에는 켜 두세요.';
+  }
   /** 기사에게 줄 Traccar Client 설정 안내 (차를 고르면 그 차 기기 ID로) */
   function trGuide(v) {
     var st = trSt(), url = st.appUrl, dev = v ? v.device_id : '';
@@ -809,8 +822,11 @@
         '<li>맨 위 <b>서비스 상태</b>(Service status / 추적 켜기)를 켜요. 위치 권한은 <b>항상 허용</b>으로 해 주세요.</li>' +
         '<li>폰 설정 → 애플리케이션 → Traccar Client → 배터리 → <b>제한 없음</b>(최적화 안 함)으로 해요. 안 하면 화면을 끄고 얼마 뒤 멈춰요.</li>' +
         '<li>5~10분 뒤 이 화면에서 그 차의 마지막 시각이 바뀌면 끝이에요. 안 바뀌면 기기 ID 철자와 서버 주소를 다시 확인해 주세요.</li></ol>' +
-        '<p class="hint">앱 버전마다 메뉴 이름이 조금 달라요(괄호 안 영어 이름을 찾아 주세요). 기사 위치는 개인위치정보라서 앱을 켜기 전에 기사 본인에게 서면 동의를 받아 주세요.</p>',
+        '<p class="hint">앱 버전마다 메뉴 이름이 조금 달라요(괄호 안 영어 이름을 찾아 주세요). 기사 위치는 개인위치정보라서 앱을 켜기 전에 기사 본인에게 서면 동의를 받아 주세요.</p>' +
+        (v && url ? '<div class="field"><label>기사에게 보낼 설치 안내 문자 (지입·고정차)</label><textarea class="input" id="trSmsTxt" rows="8" readonly>' + esc(trInstallSms(v, url)) + '</textarea></div>' : ''),
+      foot: '<button class="btn" data-close>닫기</button>' + (v && url ? '<button class="btn btn-primary" id="trSmsCopy">설치 안내 문자 복사</button>' : ''),
       onMount: function (m) {
+        var sc = $('#trSmsCopy', m); if (sc) sc.onclick = function () { copyText($('#trSmsTxt', m).value).then(function () { toast('설치 안내 문자를 복사했어요. 이 차 기사에게만 보내 주세요.'); }, function () { toast('복사하지 못했어요. 길게 눌러 복사해 주세요.', 'err'); }); };
         $$('[data-copy]', m).forEach(function (b) { b.onclick = function () { copyText($('#' + b.dataset.copy, m).textContent).then(function () { toast('복사했어요.'); }, function () { toast('복사하지 못했어요. 길게 눌러 복사해 주세요.', 'err'); }); }; });
       }
     });

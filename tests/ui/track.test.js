@@ -42,6 +42,9 @@ T.run(async function () {
   await p.fill('[data-tf="plate"]', '00라 0004'); await p.fill('[data-tf="driver_name"]', '가짜기사4'); await p.selectOption('[data-tf="affiliation"]', '용차'); await p.fill('[data-tf="ton"]', '8톤'); await p.fill('[data-tf="body_type"]', '카고');
   await p.click('#trSave'); await p.waitForSelector('#trD', { timeout: 8000 });
   ok('등록하면 앱 설정 안내: 기기 ID = 차량번호(띄어쓰기 뺌) · 서버 주소 · 300초', (await T.text(p, '#trD')) === '00라0004' && /functions\/v1\/track\//.test(await T.text(p, '#trU')) && /300/.test(await T.text(p, '.modal')), await T.text(p, '.modal'));
+  var sms = await p.$eval('#trSmsTxt', function (x) { return x.value; });
+  ok('설치 안내 문자: 차량번호·기기 ID·서버 URL·간격 300·정지 감지 끄기 · 짧게', /00라 0004/.test(sms) && /기기 ID: 00라0004/.test(sms) && /서버 URL: .*functions\/v1\/track\//.test(sms) && /300/.test(sms) && /정지 감지.*끄기/.test(sms) && sms.split('\n').length <= 12, sms);
+  await p.click('#trSmsCopy'); await p.waitForTimeout(300); ok('문자 복사 버튼', /복사/.test(await T.text(p, 'body')));
   await p.click('.modal [data-close]'); await p.waitForTimeout(200);
   ok('새 차는 위치 없음(회색)으로 목록에', /00라 0004.*위치 없음/.test(await T.text(p, '#trList')), [await T.text(p, '#trList'), await T.text(p, '.modal')]);
   await p.click('.tr-item[data-tv="4"] [data-te]'); await p.waitForSelector('[data-tf="plate"]');
