@@ -77,6 +77,12 @@ export function makePort(o) {
   /* ── 스크립트 속성(joil.gas_props · Code.js PropertiesService 와 같은 곳) ── */
   async function propGet(k, db) { var r = (await Q(db || sql, 'select value from gas_props where key = $1', [k]))[0]; return r ? r.value : null; }
   async function propSet(db, k, v) { await Q(db, 'insert into gas_props (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value', [k, String(v)]); await Q(db, "select sheet_touch(array['__props'])"); }
+  /* ── 캐시 (016 joil.kv_cache · Code.js CacheService 대신, 초 단위) ── */
+  async function cacheGet(k) { var r = (await Q(sql, 'select value from kv_cache where key = $1 and expires_at > now()', [k]))[0]; return r ? r.value : null; }
+  async function cachePut(k, v, sec) { await Q(sql, "insert into kv_cache (key, value, expires_at) values ($1, $2, now() + $3::int * interval '1 second') on conflict (key) do update set value = excluded.value, expires_at = excluded.expires_at", [k, String(v), sec]); }
+  async function cacheDel(k) { await Q(sql, 'delete from kv_cache where key = $1', [k]); }
+  var netFetch = o.fetch || (typeof fetch !== 'undefined' ? fetch : null);
+  function ymdNow(d) { return formatDate(d || new Date(), '', 'yyyy-MM-dd'); }
   /* ── 구글 드라이브 (Code.js int.drive 에 맡김 — gas.js 와 같은 일) ── */
   async function drive(op, arg) { return (await o.gas('int.drive', { op: op, arg: arg })).result; }
   async function docsFolder(db) {
@@ -308,6 +314,323 @@ export function makePort(o) {
   }
   async function staffList() { return { staff: await calStaff(), accounts: (await o.listUsers()).map(function (u) { return { id: String(u.id), name: String(u.name), active: u.active }; }) }; }
 
+  /* ───────────── 일정 (달력 · 할 일 · 휴가 · 당직 · 공휴일 · Code.js calAll_ …) ───────────── */
+  var SHEET_EVENTS = '일정', EVENT_HEADER = ['ID', '시작일', '종료일', '제목', '메모', '공개', '작성자ID', '작성자', '작성일시'];
+  var SHEET_TASKS = '할일규칙', TASK_HEADER = ['ID', '업체', '제목', '규칙', '휴일처리', '담당ID', '담당', '메모', '사용', '시작일', '작성자', '작성일시'];
+  var SHEET_TASK_DONE = '할일완료', TASK_DONE_HEADER = ['규칙ID', '기한일', '완료일시', '완료자', '메모'];
+  var SHEET_LEAVES = '휴가', LEAVE_HEADER = ['ID', '아이디', '이름', '종류', '시작일', '종료일', '메모', '등록자', '등록일시', '시작시각', '종료시각', '시간'];
+  var LEAVE_KINDS = ['연차', '오전 반차', '오후 반차', '병가', '경조', '공가', '대체휴무', '기타', '야간근무', '휴일근무', '당직'];
+  var LEAVE_ALIAS = { '반차(오전)': '오전 반차', '반차(오후)': '오후 반차', '오전반차': '오전 반차', '오후반차': '오후 반차', '반차': '오후 반차' };
+  function isWorkKind(k) { return /근무|당직/.test(k); }
+  var SHEET_GRANTS = '연차부여', GRANT_HEADER = ['연도', '아이디', '이름', '부여일수'];
+  var SHEET_DUTY_OVR = '당직변경', DUTY_OVR_HEADER = ['규칙ID', '주시작', '아이디', '이름', '시간', '취소', '메모', '등록자', '등록일시'];
+  var SHEET_HOLI = '공휴일', HOLI_HEADER = ['날짜', '이름', '구분'];
+  var KR_HOLIDAY_ICS = 'https://calendar.google.com/calendar/ical/ko.south_korea%23holiday%40group.v.calendar.google.com/public/basic.ics';
+  var KR_HOLIDAY_BUILTIN = [
+    ['2026-01-01', '신정'], ['2026-02-16', '설날 연휴'], ['2026-02-17', '설날'], ['2026-02-18', '설날 연휴'], ['2026-03-01', '삼일절'], ['2026-03-02', '대체공휴일(삼일절)'],
+    ['2026-05-05', '어린이날'], ['2026-05-24', '부처님오신날'], ['2026-05-25', '대체공휴일(부처님오신날)'], ['2026-06-03', '전국동시지방선거'], ['2026-06-06', '현충일'],
+    ['2026-08-15', '광복절'], ['2026-08-17', '대체공휴일(광복절)'], ['2026-09-24', '추석 연휴'], ['2026-09-25', '추석'], ['2026-09-26', '추석 연휴'],
+    ['2026-10-03', '개천절'], ['2026-10-05', '대체공휴일(개천절)'], ['2026-10-09', '한글날'], ['2026-12-25', '기독탄신일'],
+    ['2027-01-01', '신정'], ['2027-02-06', '설날 연휴'], ['2027-02-07', '설날'], ['2027-02-08', '설날 연휴'], ['2027-02-09', '대체공휴일(설날)'], ['2027-03-01', '삼일절'],
+    ['2027-05-05', '어린이날'], ['2027-05-13', '부처님오신날'], ['2027-06-06', '현충일'], ['2027-08-15', '광복절'], ['2027-08-16', '대체공휴일(광복절)'],
+    ['2027-09-14', '추석 연휴'], ['2027-09-15', '추석'], ['2027-09-16', '추석 연휴'], ['2027-10-03', '개천절'], ['2027-10-04', '대체공휴일(개천절)'],
+    ['2027-10-09', '한글날'], ['2027-10-11', '대체공휴일(한글날)'], ['2027-12-25', '기독탄신일'], ['2027-12-27', '대체공휴일(기독탄신일)']
+  ];
+  function holidayDedupe(list) { var seen = {}; return list.filter(function (h) { var k = h.date + h.name; if (seen[k]) return false; seen[k] = true; return true; }).sort(function (a, b) { return a.date < b.date ? -1 : 1; }); }
+  function parseHolidayIcs(text) {
+    var lines = String(text).replace(/\r\n[ \t]/g, '').split(/\r?\n/), out = [], ev = null;
+    lines.forEach(function (l) {
+      if (l === 'BEGIN:VEVENT') ev = {};
+      else if (l === 'END:VEVENT') {
+        if (ev && ev.start) {
+          var st = ev.start, e = ev.end || null, d = new Date(Date.UTC(+st.slice(0, 4), +st.slice(4, 6) - 1, +st.slice(6, 8)));
+          var endD = e ? new Date(Date.UTC(+e.slice(0, 4), +e.slice(4, 6) - 1, +e.slice(6, 8))) : new Date(d.getTime() + 86400000);
+          for (var t = d; t < endD; t = new Date(t.getTime() + 86400000)) out.push({ date: t.toISOString().slice(0, 10), name: ev.name || '', off: !/기념일|observance/i.test(ev.desc || '') });
+        }
+        ev = null;
+      } else if (ev) {
+        var m = /^DTSTART[^:]*:(\d{8})/.exec(l); if (m) ev.start = m[1];
+        m = /^DTEND[^:]*:(\d{8})/.exec(l); if (m) ev.end = m[1];
+        m = /^SUMMARY[^:]*:(.*)$/.exec(l); if (m) ev.name = m[1].replace(/\\,/g, ',').trim();
+        m = /^DESCRIPTION[^:]*:(.*)$/.exec(l); if (m) ev.desc = m[1];
+      }
+    });
+    return holidayDedupe(out);
+  }
+  /** 공휴일: (구글 캘린더는 Supabase 에서 못 씀) 공개 ics → 시트에 저장된 목록 → 기본 목록 */
+  async function loadHolidays() {
+    var list = null, source = '', errs = ['캘린더: CalendarApp 는 Supabase 서버에서 쓸 수 없어요.'];
+    try {
+      if (!netFetch) throw new Error('인터넷 없음');
+      var res = await netFetch(KR_HOLIDAY_ICS); if (res.status !== 200) throw new Error('응답 코드 ' + res.status);
+      list = parseHolidayIcs(await res.text()); source = '공개 캘린더 주소(ics)';
+    } catch (e) { errs.push('ics: ' + ((e && e.message) || e)); }
+    if (list && list.length) {
+      list = holidayDedupe(list);
+      await edit([SHEET_HOLI], async function (W) {
+        var n = await W.lastRow(SHEET_HOLI); if (n < 1) { await W.putRows(SHEET_HOLI, 1, [HOLI_HEADER]); n = 1; }
+        if (n > 1) await W.clearRows(SHEET_HOLI, 2, n - 1, HOLI_HEADER.length);
+        await W.putRows(SHEET_HOLI, 2, list.map(function (h) { return ["'" + h.date, h.name, h.off ? '공휴일' : '기념일']; }));
+      });
+      return { list: list, source: source, ok: true, errors: errs };
+    }
+    list = (await rowsOf(SHEET_HOLI, HOLI_HEADER)).map(function (r) { return { date: textDate(r[0]), name: String(r[1]), off: String(r[2]) !== '기념일' }; });
+    if (list.length) return { list: list, source: '시트에 저장된 목록', ok: false, errors: errs };
+    return { list: KR_HOLIDAY_BUILTIN.map(function (h) { return { date: h[0], name: h[1], off: true }; }), source: '기본 목록(2026~2027)', ok: false, errors: errs };
+  }
+  async function krHolidays() {
+    var hit = await cacheGet('KR_HOLI'); if (hit) return JSON.parse(hit);
+    var r = await loadHolidays(); await cachePut('KR_HOLI', JSON.stringify(r.list), r.ok ? 43200 : 600); return r.list;
+  }
+  async function refreshHolidays() { await cacheDel('KR_HOLI'); var r = await loadHolidays(); await cachePut('KR_HOLI', JSON.stringify(r.list), r.ok ? 43200 : 600); return { ok: r.ok, source: r.source, count: r.list.length, errors: r.errors }; }
+  async function companyHolidays() { var raw = await propGet('COMPANY_HOLI'); return raw ? JSON.parse(raw) : []; }
+  async function saveCompanyHolidays(list) {
+    var clean = (list || []).map(function (h) { return { date: checkDate(h.date), name: String(h.name || '회사 휴무').trim().slice(0, 40) || '회사 휴무' }; }).slice(0, 200);
+    await sql.begin(function (tx) { return propSet(tx, 'COMPANY_HOLI', JSON.stringify(clean)); });
+    return { companyHolidays: clean };
+  }
+  function hm(v) { if (v instanceof Date) return formatDate(v, '', 'HH:mm'); var m = /^(\d{1,2}):(\d{2})/.exec(String(v || '').replace(/^'/, '').trim()); return m ? ('0' + m[1]).slice(-2) + ':' + m[2] : ''; }
+  /* 직원 ↔ 계정 연결 (Code.js calLink_ · calRelink_ · calUsers_ · staffInfo_) — 요청 하나 안에서만 재사용 */
+  async function calCtx() {
+    var users = await o.listUsers(), staff = await calStaff(), acc = {}; users.forEach(function (u) { if (u.active) acc[String(u.id)] = 1; });
+    var link = { byStaff: {}, nameOf: {} };
+    staff.forEach(function (s2) { if (s2.active && s2.account && acc[s2.account]) { link.byStaff[s2.id] = s2.account; link.nameOf[s2.account] = s2.name; } });
+    var accU = users.filter(function (u) { return u.active; }).map(function (u) { return { id: String(u.id), name: link.nameOf[String(u.id)] || String(u.name) }; });
+    var names = {}, ids = {}; accU.forEach(function (u) { names[u.name] = 1; ids[u.id] = 1; });
+    var calUsers = accU.concat(staff.filter(function (s2) { return s2.active && !names[s2.name] && !(s2.account && ids[s2.account]); }).map(function (s2) { return { id: s2.id, name: s2.name, nameOnly: true }; }));
+    var accName = {}; users.forEach(function (u) { accName[String(u.id)] = String(u.name); });
+    var info = {}; staff.forEach(function (s2) { var v = { biz: s2.biz, dept: s2.dept, team: s2.team }; info[s2.name] = v; if (s2.account && accName[s2.account]) info[accName[s2.account]] = v; });
+    return { link: link, users: calUsers, staff: staff, info: info, relink: function (x) { if (link.byStaff[x.userId]) x.userId = link.byStaff[x.userId]; if (link.nameOf[x.userId]) x.name = link.nameOf[x.userId]; return x; } };
+  }
+  async function dutyRules(cc) {
+    var list = parseJson(await propGet('DUTY_RULES'), []);
+    list.forEach(function (r) { (r.members || []).forEach(function (m) { var x = cc.relink({ userId: m.id, name: m.name }); m.id = x.userId; m.name = x.name; }); });
+    return list;
+  }
+  function mondayOf(st) { var d = new Date(Date.UTC(+st.slice(0, 4), +st.slice(5, 7) - 1, +st.slice(8, 10))), w = (d.getUTCDay() + 6) % 7; return new Date(d.getTime() - w * 86400000).toISOString().slice(0, 10); }
+  async function calAll(session) {
+    var events = (await rowsOf(SHEET_EVENTS, EVENT_HEADER)).map(function (r) {
+      return { id: String(r[0]), start: textDate(r[1]), end: textDate(r[2]) || textDate(r[1]), title: String(r[3]), memo: String(r[4] || ''), private: String(r[5]) === '나만', ownerId: String(r[6]), owner: String(r[7]), at: fmtV(r[8]) };
+    }).filter(function (e) { return !e.private || e.ownerId === session.id; });
+    var tasks = (await rowsOf(SHEET_TASKS, TASK_HEADER)).map(function (r) {
+      return { id: String(r[0]), cust: String(r[1] || ''), title: String(r[2]), rule: parseJson(r[3], { type: 'once' }), adjust: String(r[4] || 'prev'), assigneeId: String(r[5] || ''), assignee: String(r[6] || ''),
+        memo: String(r[7] || ''), active: String(r[8]) !== 'N', start: textDate(r[9]), by: String(r[10]), at: fmtV(r[11]) };
+    });
+    var since = ymdNow(new Date(Date.now() - 400 * 86400000));
+    var done = (await rowsOf(SHEET_TASK_DONE, TASK_DONE_HEADER)).map(function (r) { return { taskId: String(r[0]), date: textDate(r[1]), at: fmtV(r[2]), by: String(r[3]), memo: String(r[4] || '') }; }).filter(function (d) { return d.date >= since; });
+    var leaves = (await rowsOf(SHEET_LEAVES, LEAVE_HEADER)).map(function (r) {
+      return { id: String(r[0]), userId: String(r[1]), name: String(r[2]), kind: String(r[3]), start: textDate(r[4]), end: textDate(r[5]) || textDate(r[4]), memo: String(r[6] || ''), by: String(r[7]), at: fmtV(r[8]), from: hm(r[9]), to: hm(r[10]), hours: Number(r[11]) || 0 };
+    });
+    var grants = (await rowsOf(SHEET_GRANTS, GRANT_HEADER)).map(function (r) { return { year: String(r[0]), userId: String(r[1]), name: String(r[2]), days: Number(r[3]) || 0 }; });
+    var cc = await calCtx(); leaves.forEach(cc.relink); grants.forEach(cc.relink);
+    var dutyOvr = (await rowsOf(SHEET_DUTY_OVR, DUTY_OVR_HEADER)).map(function (r) { return { ruleId: String(r[0]), week: textDate(r[1]), userId: String(r[2] || ''), name: String(r[3] || ''), hours: r[4] === '' ? null : Number(r[4]), cancel: String(r[5]) === 'Y', memo: String(r[6] || ''), by: String(r[7] || ''), at: fmtV(r[8]) }; });
+    dutyOvr.forEach(function (x) { if (x.userId) cc.relink(x); });
+    return { events: events, tasks: tasks, done: done, leaves: leaves, grants: grants, users: cc.users, holidays: await krHolidays(), companyHolidays: await companyHolidays(), today: ymdNow(),
+      dutyRules: await dutyRules(cc), dutyOverrides: dutyOvr, staffInfo: cc.info };
+  }
+  async function eventSave(session, req) {
+    var e = req.event || {}, start = checkDate(e.start, '시작일'), end = e.end ? checkDate(e.end, '종료일') : start;
+    if (end < start) throw err('종료일이 시작일보다 빠릅니다.');
+    var title = String(e.title || '').trim(); if (!title) throw err('일정 제목을 입력하세요.');
+    var row = ["'" + start, "'" + end, title.slice(0, 100), String(e.memo || '').slice(0, 1000), e.private ? '나만' : '팀'];
+    await edit([SHEET_EVENTS], async function (W) {
+      if (req.id) {
+        var f = await W.findRow(SHEET_EVENTS, EVENT_HEADER, req.id); if (!f) throw err('일정을 찾을 수 없습니다.');
+        if (String(f.raw[6]) !== session.id && session.role !== 'admin') throw err('작성한 사람이나 관리자만 고칠 수 있습니다.');
+        await W.set(SHEET_EVENTS, f.row, 2, row);
+      } else await W.append(SHEET_EVENTS, EVENT_HEADER, [newId('C')].concat(row).concat([session.id, session.name, nowTxt()]));
+    });
+    return calAll(session);
+  }
+  async function eventDelete(session, id) {
+    await edit([SHEET_EVENTS], async function (W) {
+      var f = await W.findRow(SHEET_EVENTS, EVENT_HEADER, id); if (!f) throw err('일정을 찾을 수 없습니다.');
+      if (String(f.raw[6]) !== session.id && session.role !== 'admin') throw err('작성한 사람이나 관리자만 지울 수 있습니다.');
+      await W.del(SHEET_EVENTS, f.row);
+    });
+    return calAll(session);
+  }
+  var TASK_TYPES = ['once', 'daily', 'monthEnd', 'monthDay', 'weekly', 'yearly'];
+  function cleanRule(r) {
+    r = r || {};
+    var type = TASK_TYPES.indexOf(r.type) !== -1 ? r.type : 'once', out = { type: type };
+    if (type === 'once') out.date = checkDate(r.date, '날짜');
+    if (type === 'monthDay') { out.day = Math.round(Number(r.day)); if (!(out.day >= 1 && out.day <= 31)) throw err('매월 며칠인지 1~31로 넣으세요.'); }
+    if (type === 'daily') out.workdays = r.workdays !== false;
+    if (type === 'weekly') { out.dow = Math.round(Number(r.dow)); if (!(out.dow >= 0 && out.dow <= 6)) throw err('요일을 고르세요.'); }
+    if (type === 'yearly') { out.month = Math.round(Number(r.month)); out.day = Math.round(Number(r.day)); if (!(out.month >= 1 && out.month <= 12 && out.day >= 1 && out.day <= 31)) throw err('매년 몇 월 며칠인지 넣으세요.'); }
+    return out;
+  }
+  async function taskSave(session, req) {
+    var t = req.task || {};
+    var title = String(t.title || '').trim(); if (!title) throw err('할 일 제목을 입력하세요.');
+    var rule = cleanRule(t.rule), adjust = ['prev', 'next', 'none'].indexOf(t.adjust) !== -1 ? t.adjust : 'prev';
+    var start = t.start ? checkDate(t.start, '시작일') : ymdNow();
+    var row = [String(t.cust || '').slice(0, 100), title.slice(0, 200), JSON.stringify(rule), adjust, String(t.assigneeId || ''), String(t.assignee || '').slice(0, 50), String(t.memo || '').slice(0, 1000), t.active === false ? 'N' : 'Y', "'" + start];
+    await edit([SHEET_TASKS], async function (W) {
+      if (req.id) { var f = await W.findRow(SHEET_TASKS, TASK_HEADER, req.id); if (!f) throw err('할 일을 찾을 수 없습니다.'); await W.set(SHEET_TASKS, f.row, 2, row); }
+      else await W.append(SHEET_TASKS, TASK_HEADER, [newId('T')].concat(row).concat([session.name, nowTxt()]));
+    });
+    return calAll(session);
+  }
+  async function taskDelete(session, id) {
+    await edit([SHEET_TASKS], async function (W) { var f = await W.findRow(SHEET_TASKS, TASK_HEADER, id); if (!f) throw err('할 일을 찾을 수 없습니다.'); await W.del(SHEET_TASKS, f.row); });
+    return calAll(session);
+  }
+  async function taskDone(session, req) {
+    var id = String(req.id || ''), date = checkDate(req.date, '기한일');
+    if (!(await findRow(SHEET_TASKS, TASK_HEADER, id))) throw err('할 일을 찾을 수 없습니다.');
+    await edit([SHEET_TASK_DONE], async function (W) {
+      var all = await readAll(SHEET_TASK_DONE, W.tx), idx = -1;
+      for (var i = 1; i < all.length; i++) { var r = all[i]; if (String(readValue(r[0] == null ? '' : r[0])) === id && textDate(readValue(r[1] == null ? '' : r[1])) === date) idx = i + 1; }
+      if (req.undo) { if (idx !== -1) await W.del(SHEET_TASK_DONE, idx); }
+      else if (idx === -1) await W.append(SHEET_TASK_DONE, TASK_DONE_HEADER, [id, "'" + date, nowTxt(), session.name, String(req.memo || '').slice(0, 500)]);
+    });
+    return calAll(session);
+  }
+  function cleanLeave(l) {
+    var k = String(l.kind || '').trim(); k = LEAVE_ALIAS[k] || k;
+    if (LEAVE_KINDS.indexOf(k) === -1) throw err('종류 "' + k + '"를 알 수 없습니다.');
+    var start = checkDate(l.start, '시작일'), end = l.end ? checkDate(l.end, '종료일') : start;
+    if (/반차/.test(k)) end = start;
+    if (end < start) throw err('종료일이 시작일보다 빠릅니다.');
+    var work = isWorkKind(k), hours = work ? Math.round(Number(l.hours) * 100) / 100 || 0 : 0;
+    if (hours < 0 || hours > 400) throw err('추가근무 시간을 확인하세요.');
+    return { kind: k, start: start, end: end, memo: String(l.memo || '').slice(0, 500), from: work ? hm(l.from) : '', to: work ? hm(l.to) : '', hours: hours };
+  }
+  function leaveRow(id, userId, name, v, by) { return [id, userId, name, v.kind, "'" + v.start, "'" + v.end, v.memo, by, nowTxt(), "'" + v.from, "'" + v.to, v.hours]; }
+  /** Code.js leaveSheet_: 예전 시트(칸이 적음)면 제목 줄을 늘려요 */
+  async function leaveHeader(W) { var h = ((await Q(W.tx, 'select sheet_getrow($1, 1) v', [SHEET_LEAVES]))[0].v || []); if (h.filter(function (x) { return x !== '' && x != null; }).length < LEAVE_HEADER.length && h.length) await W.putRows(SHEET_LEAVES, 1, [LEAVE_HEADER]); }
+  async function leaveSave(session, req) {
+    var l = req.leave || {}, cc = await calCtx();
+    var userId = String(l.userId || session.id), lk = cc.link.byStaff[userId]; if (lk) userId = lk;
+    if (userId !== session.id && session.role !== 'admin') throw err('다른 사람의 휴가는 관리자만 등록할 수 있습니다.');
+    var u = cc.users.filter(function (x) { return x.id === userId; })[0];
+    if (!u) throw err('직원을 찾을 수 없습니다.');
+    var v = cleanLeave(l);
+    await edit([SHEET_LEAVES], async function (W) {
+      await leaveHeader(W);
+      if (req.id) {
+        var f = await W.findRow(SHEET_LEAVES, LEAVE_HEADER, req.id); if (!f) throw err('기록을 찾을 수 없습니다.');
+        if (String(f.raw[1]) !== session.id && session.role !== 'admin') throw err('본인이나 관리자만 고칠 수 있습니다.');
+        await W.set(SHEET_LEAVES, f.row, 2, [userId, u.name, v.kind, "'" + v.start, "'" + v.end, v.memo]);
+        await W.set(SHEET_LEAVES, f.row, 10, ["'" + v.from, "'" + v.to, v.hours]);
+      } else await W.append(SHEET_LEAVES, LEAVE_HEADER, leaveRow(newId('L'), userId, u.name, v, session.name));
+    });
+    return calAll(session);
+  }
+  async function leaveDelete(session, id) {
+    await edit([SHEET_LEAVES], async function (W) {
+      var f = await W.findRow(SHEET_LEAVES, LEAVE_HEADER, id); if (!f) throw err('기록을 찾을 수 없습니다.');
+      if (String(f.raw[1]) !== session.id && session.role !== 'admin') throw err('본인이나 관리자만 지울 수 있습니다.');
+      await W.del(SHEET_LEAVES, f.row);
+    });
+    return calAll(session);
+  }
+  async function writeGrants(W, rows) {
+    var n = await W.lastRow(SHEET_GRANTS); if (n < 1) { await W.putRows(SHEET_GRANTS, 1, [GRANT_HEADER]); n = 1; }
+    if (n > 1) await W.clearRows(SHEET_GRANTS, 2, n - 1, GRANT_HEADER.length);
+    if (rows.length) await W.putRows(SHEET_GRANTS, 2, rows);
+  }
+  async function grantsSave(session, req) {
+    var year = String(req.year || ''); if (!/^\d{4}$/.test(year)) throw err('연도를 확인하세요.');
+    var cc = await calCtx();
+    await edit([SHEET_GRANTS], async function (W) {
+      var keep = (await W.rowsOf(SHEET_GRANTS, GRANT_HEADER)).filter(function (r) { return String(r[0]) !== year; }).map(function (r) { return r.slice(); });
+      var add = Object.keys(req.grants || {}).map(function (uid) {
+        var u = cc.users.filter(function (x) { return String(x.id) === uid; })[0]; if (!u) return null;
+        var v = Number(req.grants[uid]); if (!(v >= 0 && v <= 100)) throw err(u.name + ' 부여 일수를 확인하세요.');
+        return [year, uid, String(u.name), v];
+      }).filter(Boolean);
+      await writeGrants(W, keep.concat(add));
+    });
+    return calAll(session);
+  }
+  async function dutyRuleSave(session, req) {
+    var r = req.rule || {}, cc = await calCtx(), list = await dutyRules(cc);
+    var name = String(r.name || '').trim().slice(0, 30); if (!name) throw err('규칙 이름을 넣으세요.');
+    var byName = {}; cc.users.forEach(function (u) { byName[u.name] = u.id; });
+    var members = (r.members || []).map(function (m) { var n = String((m && m.name) || m || '').trim(); if (!n) return null; if (!byName[n]) throw err('"' + n + '"은(는) 계정이나 직원 명단에 없습니다. 먼저 직원 명단에 추가하세요.'); return { id: byName[n], name: n }; }).filter(Boolean);
+    if (members.length < 1) throw err('순번에 들어갈 사람을 한 명 이상 넣으세요.');
+    var mode = r.mode === 'days' ? 'days' : 'week', hours = Number(r.hours);
+    if (!(hours >= 0 && hours <= 100)) throw err('시간을 확인하세요.');
+    var days = (r.days || []).map(Number).filter(function (x) { return x >= 0 && x <= 6; });
+    if (mode === 'days' && !days.length && !r.holidays) throw err('요일이나 공휴일을 하나 이상 고르세요.');
+    var ob = { id: r.id || 'R' + crypto.randomUUID().replace(/-/g, '').slice(0, 8), name: name, members: members, start: mondayOf(checkDate(r.start, '시작 주')), mode: mode, hours: hours, days: days, holidays: !!r.holidays, active: r.active !== false };
+    var i = -1; list.forEach(function (x, k) { if (x.id === ob.id) i = k; });
+    if (i === -1) list.push(ob); else list[i] = ob;
+    await sql.begin(function (tx) { return propSet(tx, 'DUTY_RULES', JSON.stringify(list)); });
+    return calAll(session);
+  }
+  async function dutyRuleDelete(session, id) {
+    var list = (await dutyRules(await calCtx())).filter(function (x) { return x.id !== id; });
+    await sql.begin(function (tx) { return propSet(tx, 'DUTY_RULES', JSON.stringify(list)); });
+    return calAll(session);
+  }
+  async function dutyOverride(session, req) {
+    var cc = await calCtx(), rule = (await dutyRules(cc)).filter(function (x) { return x.id === req.ruleId; })[0]; if (!rule) throw err('규칙을 찾을 수 없습니다.');
+    var mine = rule.members.some(function (m) { return m.id === session.id || m.name === session.name; });
+    if (session.role !== 'admin' && !mine) throw err('관리자나 이 당직 순번에 있는 사람만 바꿀 수 있습니다.');
+    var week = mondayOf(checkDate(req.week, '주'));
+    await edit([SHEET_DUTY_OVR], async function (W) {
+      var rows = await W.rowsOf(SHEET_DUTY_OVR, DUTY_OVR_HEADER);
+      for (var i = rows.length - 1; i >= 0; i--) if (String(rows[i][0]) === rule.id && textDate(rows[i][1]) === week) await W.del(SHEET_DUTY_OVR, rows[i]._r);
+      if (!req.clear) {
+        var u = null;
+        if (!req.cancel) { u = cc.users.filter(function (x) { return x.id === req.userId || x.name === req.name; })[0]; if (!u) throw err('바꿀 사람을 고르세요.'); }
+        var h = req.hours === '' || req.hours == null ? '' : Number(req.hours);
+        if (h !== '' && !(h >= 0 && h <= 100)) throw err('시간을 확인하세요.');
+        await W.append(SHEET_DUTY_OVR, DUTY_OVR_HEADER, [rule.id, "'" + week, u ? u.id : '', u ? u.name : '', h, req.cancel ? 'Y' : '', String(req.memo || '').slice(0, 200), session.name, nowTxt()]);
+      }
+    });
+    return calAll(session);
+  }
+  async function calImport(session, req) {
+    var cc = await calCtx(), staff = cc.staff.map(function (x) { return Object.assign({}, x); }), byName = {};
+    cc.users.forEach(function (u) { byName[u.name] = u.id; });
+    var who = function (name) {
+      name = String(name || '').trim(); if (!name) throw err('이름이 비어 있는 줄이 있습니다.');
+      if (byName[name]) return byName[name];
+      var id = 'S' + crypto.randomUUID().replace(/-/g, '').slice(0, 10);
+      staff.push({ id: id, name: name.slice(0, 30), active: true }); byName[name] = id; return id;
+    };
+    var res = { leaves: 0, events: 0, grants: 0, skipped: 0, staff: 0 }, n0 = staff.length;
+    await edit([SHEET_LEAVES, SHEET_EVENTS, SHEET_GRANTS, SHEET_STAFF], async function (W) {
+      await leaveHeader(W);
+      var have = {}; (await W.rowsOf(SHEET_LEAVES, LEAVE_HEADER)).forEach(function (r) { have[String(r[2]) + '|' + String(r[3]) + '|' + textDate(r[4])] = 1; });
+      var add = [];
+      (req.leaves || []).slice(0, 3000).forEach(function (l, i) {
+        var v; try { v = cleanLeave(l); } catch (e) { throw err('휴가·근무 ' + (i + 2) + '번째 줄: ' + e.message); }
+        var name = String(l.name || '').trim(), key = name + '|' + v.kind + '|' + v.start;
+        if (have[key]) { res.skipped++; return; }
+        have[key] = 1; add.push(leaveRow(newId('L'), who(name), name, v, session.name + ' (가져오기)')); res.leaves++;
+      });
+      if (add.length) { var n1 = await W.lastRow(SHEET_LEAVES); if (n1 < 1) { await W.putRows(SHEET_LEAVES, 1, [LEAVE_HEADER]); n1 = 1; } await W.putRows(SHEET_LEAVES, n1 + 1, add); }
+      var ehave = {}, eadd = [];
+      (await W.rowsOf(SHEET_EVENTS, EVENT_HEADER)).forEach(function (r) { ehave[String(r[3]) + '|' + textDate(r[1])] = 1; });
+      (req.events || []).slice(0, 3000).forEach(function (e, i) {
+        var title = String(e.title || '').trim().slice(0, 100); if (!title) { res.skipped++; return; }
+        var start = checkDate(e.start, '일정 ' + (i + 2) + '번째 줄 시작일'), end = e.end ? checkDate(e.end, '종료일') : start;
+        if (ehave[title + '|' + start]) { res.skipped++; return; }
+        ehave[title + '|' + start] = 1; eadd.push([newId('C'), "'" + start, "'" + (end < start ? start : end), title, String(e.memo || '').slice(0, 1000), '팀', session.id, session.name, nowTxt()]); res.events++;
+      });
+      if (eadd.length) { var n2 = await W.lastRow(SHEET_EVENTS); if (n2 < 1) { await W.putRows(SHEET_EVENTS, 1, [EVENT_HEADER]); n2 = 1; } await W.putRows(SHEET_EVENTS, n2 + 1, eadd); }
+      var g = req.grants || [];
+      if (g.length) {
+        var rows = (await W.rowsOf(SHEET_GRANTS, GRANT_HEADER)).map(function (r) { return r.slice(); });
+        g.forEach(function (x) {
+          var y = String(x.year || ''), d = Number(x.days); if (!/^\d{4}$/.test(y) || !(d >= 0 && d <= 100)) { res.skipped++; return; }
+          var id = who(x.name);
+          rows = rows.filter(function (r) { return !(String(r[0]) === y && String(r[1]) === id); }).concat([[y, id, String(x.name).trim(), d]]); res.grants++;
+        });
+        await writeGrants(W, rows);
+      }
+      res.staff = staff.length - n0;
+      if (res.staff) await staffWrite(W, staff);
+    });
+    return { result: res, cal: await calAll(session) };
+  }
+
   /* ───────────── 요청 나누기 (Code.js handle_ 의 순서·권한 그대로) ───────────── */
   // 권한: quote = 견적 메뉴 권한(Code.js QUOTE_ACTIONS) · admin = 관리자만 · '' = 로그인만
   var TABLE = {
@@ -328,7 +651,22 @@ export function makePort(o) {
     'companies': ['quote', async function (s, q) { return { companies: await companies() }; }],
     'admin.saveCompanies': ['admin', function (s, q) { return saveCompanies(q.companies); }],
     'staff.list': ['admin1', function (s, q) { return staffList(); }],
-    'staff.save': ['admin1', function (s, q) { return staffSave(s, q); }]
+    'staff.save': ['admin1', function (s, q) { return staffSave(s, q); }],
+    'cal.all': ['', function (s, q) { return calAll(s); }],
+    'cal.eventSave': ['', function (s, q) { return eventSave(s, q); }],
+    'cal.eventDelete': ['', function (s, q) { return eventDelete(s, q.id); }],
+    'cal.taskSave': ['', function (s, q) { return taskSave(s, q); }],
+    'cal.taskDelete': ['', function (s, q) { return taskDelete(s, q.id); }],
+    'cal.taskDone': ['', function (s, q) { return taskDone(s, q); }],
+    'cal.leaveSave': ['', function (s, q) { return leaveSave(s, q); }],
+    'cal.leaveDelete': ['', function (s, q) { return leaveDelete(s, q.id); }],
+    'cal.dutyRuleSave': ['admin1', function (s, q) { return dutyRuleSave(s, q); }],
+    'cal.dutyRuleDelete': ['admin1', function (s, q) { return dutyRuleDelete(s, q.id); }],
+    'cal.dutyOverride': ['', function (s, q) { return dutyOverride(s, q); }],
+    'cal.import': ['admin1', function (s, q) { return calImport(s, q); }],
+    'cal.grantsSave': ['admin1', function (s, q) { return grantsSave(s, q); }],
+    'cal.refreshHolidays': ['admin1', async function (s, q) { return { result: await refreshHolidays(), cal: await calAll(s) }; }],
+    'cal.companyHolidays': ['admin1', async function (s, q) { await saveCompanyHolidays(q.list); return calAll(s); }]
   };
   async function handle(action, session, req) {
     var t = TABLE[action];
