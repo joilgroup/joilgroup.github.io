@@ -679,7 +679,32 @@ export function makeServer(sql, opts) {
   }
   async function receiptRow(id) { return (await Q(sql, 'select * from receipts where id = $1', [String(id || '')]))[0] || null; }
   async function dispReceipt(id) { var f = await receiptRow(id); if (!f) throw err('사진을 찾을 수 없습니다.'); var r = await gas('int.fileGet', { fileId: f.file_id }); return { data: r.data, mime: 'image/jpeg' }; }
-  async function dispGeo(addrs) { var r = await gas('int.geo', { addrs: addrs || [] }); return r.coords || {}; }
+  /** 주소 → 좌표. 예전엔 구글 서버(int.geo)에 물어봐서 기사 링크를 열 때마다 몇 초씩 걸렸어요 → 이제 Supabase 안 주소캐시·카카오(port.geo)로 바로. 못 찾으면 Code.js dispGeo_ 처럼 덜 엄격하게 다시 찾기 */
+  async function dispGeo(addrs) {
+    var list = (addrs || []).map(function (a) { return String(a || '').replace(/\s+/g, ' ').trim().slice(0, 200); }).filter(function (a, i, l) { return a && l.indexOf(a) === i; }).slice(0, 60);
+    if (!list.length) return {};
+    var out = {}, g;
+    try { g = await port.geo(list); } catch (e) { var r = await gas('int.geo', { addrs: list }); return r.coords || {}; }
+    list.forEach(function (a) { var x = g[a]; if (x && !x.error) out[a] = { lat: x.lat, lng: x.lng }; });
+    var left = list.filter(function (a) { return !out[a]; });
+    for (var round = 0; round < 5 && left.length; round++) {
+      var ask = {}; left.forEach(function (a) { var alt = dispGeoAlts(a)[round]; if (alt) ask[a] = alt; });
+      var qs = Object.keys(ask).map(function (a) { return ask[a]; }); if (!qs.length) continue;
+      var g2 = await port.geo(qs);
+      Object.keys(ask).forEach(function (a) { var x = g2[ask[a]]; if (x && !x.error) out[a] = { lat: x.lat, lng: x.lng, approx: round === 4 }; });
+      left = left.filter(function (a) { return !out[a]; });
+    }
+    return out;
+  }
+  function dispGeoAlts(a) {
+    var s = String(a).replace(/\([^)]*\)/g, ' ').replace(/[,，].*$/, '').replace(/\s+/g, ' ').trim();
+    var lot = (s.match(/^(.*?\S(?:로|길|동|리|가|읍|면)\s*\d+(?:-\d+)?)(?=\s|$)/) || [])[1] || '';
+    var noSub = (lot || s).replace(/(\d+)-\d+$/, '$1');
+    var toks = s.split(' '), dong = '';
+    for (var i = 1; i < toks.length; i++) if (/(동|읍|면|리|가)$/.test(toks[i])) { dong = toks.slice(0, i + 1).join(' '); break; }
+    var bun = (s.match(/^(.*?\S(?:로|길))\s+(\d+)\s+(\d+(?:-\d+)?)(?=\s|$)/) || []); bun = bun[0] ? bun[1] + bun[2] + '번길 ' + bun[3] : '';
+    return [s !== a ? s : '', bun, lot && lot !== s ? lot : '', noSub !== (lot || s) ? noSub : '', dong];
+  }
 
   /* ───────────── 기사 링크 (drv.*) ───────────── */
   async function drvFind(t) {
