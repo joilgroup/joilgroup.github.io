@@ -80,6 +80,8 @@
 - 화면 갈림길: `app.js` `SB_ACTIONS`·`apiUrl()` — `config.js` `SB_ROUTE: 'dispatch'`(또는 기기별 `#sb-on`)일 때만 Supabase. 15초 확인은 RPC `joil_stamps`(함수 호출 수 아낌). 서버에 배차 액션을 추가하면 `SB_ACTIONS`·core.js `ACTIONS` 에도.
 - **2026-11-21 전환 완료**(로그인·계정·배차 원본 = Supabase). 함수는 `joil`(사이트)·`info`(기사 사이트, 회사명 안 보이게 · 같은 코드) — core.js 를 고치면 **둘 다** 배포(관리 API `functions/deploy?slug=…`, verify_jwt false).
 - **4단계(나머지 메뉴 전체)**: Code.js 를 Supabase 에서 그대로 실행(`gas.js`). 시트 = 시트마다 칸 있는 표 `joil.gs_…`(014, 목록 `joil.sheet_tables`, 읽기·쓰기 `sheet_read`·`sheet_write`·`sheet_cut`) — 새로 생긴 시트만 `sheet_rows`(줄 값 배열), `joil.sheet_tabulate_all()`로 표로. Code.js 를 고치면 `supabase/deploy.sh` 로 배포 + `node tests/run.js sb-gas`. 드라이브·메일만 구글(`int.drive`).
+- **로직 옮기기(port.js · 2026-11-22 끝)**: Code.js 의 나머지 메뉴(거래처·매뉴얼·일정·견적·조회기록·견적모음·업체단가·접수·서류·주간 요약·관리자 설정·분석·뉴스·날씨·주식)는 `supabase/functions/joil/port.js` 가 표(`gs_…`)를 바로 읽고 써요(Code.js 와 같은 이름·같은 응답, 계산식은 Calc.js 그대로). **이 메뉴를 고치면 port.js 를 고치고** `node tests/run.js sb-port`(같은 응답 비교) 통과 + `supabase/deploy.sh`. gas.js 를 거치는 건 차량 위치(track.*)·구글 전용 도구뿐. 꺼짐 스위치 `props.PORT_OFF`. Deno 에선 `Buffer` 등 node 전역이 없으니 `node:` 에서 import.
+- **압축 값 풀어 둔 표(017)**: `quote_snaps`·`tariff_vers`·`an_rows` — 원본(압축) 표와 port.js 가 같이 맞춰요. 화면 응답은 아직 원본에서. 분석 금액이 들어 있으니 분석 권한 규칙 그대로(밖으로 보내지 않기).
 - **진짜 표로 정리(012~)**: 옮긴 영역은 core.js `MOVED`(액션 앞부분 → 시트) + props `MOVED_시트`가 있을 때만 core.js 가 맡고, gas.js `MOVED_VIEWS`가 그 시트를 새 표에서 읽어 줘요. 지금 옮긴 것: 공지·문의 기록·업무 담당표(012)·업무 기록(013). 이 영역은 **Code.js 가 아니라 core.js 를 고쳐요**.
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
