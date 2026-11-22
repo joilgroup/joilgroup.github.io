@@ -3,6 +3,8 @@
 // 요청 → 응답은 Code.js 와 같게: tests/server/sb-port.test.js 가 목(Code.js)과 같은 요청을 보내 비교해요.
 // 꺼짐 스위치: props 'PORT_OFF' = 'custs,manual' 처럼 액션 앞부분을 쉼표로 → 그 영역은 다시 gas.js(Code.js 그대로)가 맡아요(index.ts).
 import { sheetValue, readValue, enc, dec, display, formatDate } from './gas.js';
+import { createHash } from 'node:crypto';
+import { gzipSync, gunzipSync } from 'node:zlib';
 
 /** 이 파일이 맡는 액션 목록 (core.js ACTIONS 에 더해요) */
 export function portActions() { return makePort({}).ACTIONS; }
@@ -1047,6 +1049,432 @@ export function makePort(o) {
     return { sent: to.length, to: to };
   }
 
+  /* ───────────── 견적 계산 공통 (설정 · 타리프 · 버전 · 경유가 · 카카오 주소·경로 캐시) ───────────── */
+  // Calc.js(견적 계산식)는 그대로: 함수 입구가 글자로 넘겨 주면 여기서 한 번 읽어요
+  var CALC = null;
+  function calc() {
+    if (!CALC) CALC = new Function(String(o.calcSrc || '') + '\n;return { joilDefaultSettings: joilDefaultSettings, joilMergeSettings: joilMergeSettings, joilFindTon: joilFindTon, joilNormalizeAddress: joilNormalizeAddress, joilComputeQuote: joilComputeQuote, joilValidateTariff: joilValidateTariff };')();
+    return CALC;
+  }
+  var SHEET_TARIFF = '타리프', SHEET_LOG = '조회기록', SHEET_SNAP = '스냅샷', SHEET_QDATA = '견적데이터', SHEET_VER = '타리프버전';
+  var SHEET_GEO_CACHE = '주소캐시', SHEET_ROUTE_CACHE = '경로캐시', SHEET_DIESEL = '유가기록', SHEET_RATES = '업체단가', SHEET_CUSTSET = '업체설정';
+  var PACK_HEADER = ['ID', '저장시각', '아이디', '데이터'], VER_HEADER = ['버전ID', '처음 사용', '사용자', '데이터1', '데이터2', '데이터3'];
+  var LOG_HEADER = ['일시', '아이디', '이름', '상차지', '하차지', '거리(km)', '비고', '기록ID', '종류', '건수'];
+  var GEO_HEADER = ['주소(입력)', '위도', '경도', '시도', '찾은 주소', '저장일'], ROUTE_HEADER = ['경로키', '거리(km)', '통행료', '저장일'];
+  var DIESEL_HEADER = ['날짜', '경유(원/L)', '출처', '기록시각'];
+  var RATES_HEADER = ['업체', '상차지', '하차지', '톤수', '단가', '적용시작일', '비고', '올린사람', '올린일시'], CUSTSET_HEADER = ['업체', '특수운임', '메모', '수정일시'];
+  var CALC_KEYS = ['tons', 'maxKm', 'kmRounding', 'priceRounding', 'regionRules', 'downhill', 'specials'];
+  var BATCH_CHUNK_MAX = 50, ADJ_MAX = 5000, QUOTE_STATUS = ['작성', '제출', '수주', '미수주'];
+  function md5(v) { return createHash('md5').update(String(v), 'utf8').digest('hex'); }
+  function firstToken(v) { return String(v || '').split(' ')[0]; }
+  function packJson(obj) { return Buffer.from(gzipSync(Buffer.from(JSON.stringify(obj), 'utf8'))).toString('base64'); }
+  function unpackJson(v) { return JSON.parse(Buffer.from(gunzipSync(Buffer.from(String(v), 'base64'))).toString('utf8')); }
+  async function getSettings(db) { var raw = await propGet('SETTINGS', db); return calc().joilMergeSettings(raw ? JSON.parse(raw) : null); }
+  async function readTariff(db) {
+    var all = await readAll(SHEET_TARIFF, db);
+    return { tons: (all[0] || []).slice(1).map(function (v) { return String(readValue(v == null ? '' : v)); }), rows: all.slice(1).map(function (r) { return r.slice(1).map(function (v) { return Number(readValue(v == null ? '' : v)) || 0; }); }) };
+  }
+  function calcPart(st) { var ob = {}; CALC_KEYS.forEach(function (k) { ob[k] = st[k]; }); return ob; }
+  async function currentVersion(session) {
+    var content = { s: calcPart(await getSettings()), t: (await readTariff()).rows };
+    var id = 'V' + md5(JSON.stringify(content)).slice(0, 12);
+    if (!(await findRow(SHEET_VER, VER_HEADER, id))) {
+      var packed = packJson(content), parts = [];
+      for (var i = 0; i < packed.length; i += CELL_LIMIT) parts.push(packed.slice(i, i + CELL_LIMIT));
+      if (parts.length > 3) throw err('타리프 버전 데이터가 너무 큽니다.');
+      while (parts.length < 3) parts.push('');
+      await edit([SHEET_VER], function (W) { return W.append(SHEET_VER, VER_HEADER, [id, nowTxt(), session ? session.name + ' (' + session.id + ')' : ''].concat(parts)); });
+    }
+    return id;
+  }
+  async function loadVersion(id) {
+    var all = id ? await readAll(SHEET_VER) : [], row = null;
+    for (var i = 1; i < all.length; i++) if (display(readValue(all[i][0] == null ? '' : all[i][0])) === String(id)) { row = all[i].map(function (v) { return readValue(v == null ? '' : v); }); break; }
+    if (!row) return null;
+    var c = unpackJson(String(row[3] || '') + String(row[4] || '') + String(row[5] || '')), st = await getSettings();
+    CALC_KEYS.forEach(function (k) { st[k] = c.s[k]; });
+    return { settings: st, tariff: { tons: c.s.tons.map(function (t) { return t.name; }), rows: c.t }, at: fmtV(row[1]) };
+  }
+  /* 경유가 (Code.js dieselHistoryMap_ · upsertDiesel_ · recordDieselDaily · dieselPrice_) */
+  function dieselDate(v) { return v instanceof Date ? formatDate(v, '', 'yyyy-MM-dd') : String(v).replace(/^'/, ''); }
+  async function dieselHistoryMap(db) {
+    var out = {}; (await readAll(SHEET_DIESEL, db)).slice(1).forEach(function (r) {
+      var d = dieselDate(readValue(r[0] == null ? '' : r[0])), pr = Number(readValue(r[1] == null ? '' : r[1]));
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d) && pr > 0) out[d] = { price: pr, source: String(readValue(r[2] == null ? '' : r[2]) || '') };
+    });
+    return out;
+  }
+  async function upsertDiesel(entries) {
+    if (!entries.length) return 0;
+    await edit([SHEET_DIESEL], async function (W) {
+      var all = await readAll(SHEET_DIESEL, W.tx), rows = all.slice(1).filter(function (r) { return r.some(function (v) { return v !== '' && v != null; }); }), at = {};
+      rows.forEach(function (r, i) { at[dieselDate(readValue(r[0] == null ? '' : r[0]))] = i; });
+      var now = nowTxt();
+      entries.forEach(function (e) { var row = ["'" + e.date, Math.round(e.price * 100) / 100, e.source, now].map(sheetValue); if (at[e.date] != null) rows[at[e.date]] = row; else { at[e.date] = rows.length; rows.push(row); } });
+      rows.sort(function (a, b) { var x = String(a[0] instanceof Date ? formatDate(a[0], '', 'yyyy-MM-dd') : a[0]), y = String(b[0] instanceof Date ? formatDate(b[0], '', 'yyyy-MM-dd') : b[0]); return x < y ? -1 : x > y ? 1 : 0; }); // 날짜순 (글자 날짜)
+      if (all.length < 1) await W.putRows(SHEET_DIESEL, 1, [DIESEL_HEADER]);
+      await Q(W.tx, 'select sheet_write($1, $2::text::jsonb)', [SHEET_DIESEL, JSON.stringify(rows.map(function (v, i) { return { r: i + 2, v: v.map(enc) }; }))]);
+    });
+    await cacheDel('DIESEL_TODAY');
+    return entries.length;
+  }
+  async function recordDieselDaily() {
+    var key = await propGet('OPINET_KEY'); if (!key) throw err('오피넷 키가 없습니다. 관리자 > API 키에서 입력하세요.');
+    if (!netFetch) throw err('인터넷 없음');
+    var res = await netFetch('https://www.opinet.co.kr/api/avgRecentPrice.do?out=json&prodcd=D047&code=' + encodeURIComponent(key)); if (res.status !== 200) throw err('오피넷 응답 오류 (' + res.status + ')');
+    var oils = (JSON.parse(await res.text()).RESULT || {}).OIL || [];
+    var entries = oils.filter(function (x) { return !x.PRODCD || x.PRODCD === 'D047'; }).map(function (x) { var d = String(x.DATE || x.TRADE_DT || ''); return { date: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8), price: Number(x.PRICE), source: '오피넷 전국평균' }; })
+      .filter(function (e) { return /^\d{4}-\d{2}-\d{2}$/.test(e.date) && e.price > 0; });
+    if (!entries.length) throw err('오피넷에서 받은 경유가가 없습니다.');
+    await upsertDiesel(entries);
+    await sql.begin(function (tx) { return propSet(tx, 'DIESEL_LAST_FETCH', ymdNow()); });
+    return entries.length;
+  }
+  async function dieselStatus() {
+    var h = await dieselHistoryMap(), dates = Object.keys(h).sort();
+    return { count: dates.length, first: dates[0] || '', last: dates[dates.length - 1] || '', lastPrice: dates.length ? h[dates[dates.length - 1]].price : null, triggerOn: false, hasKey: !!(await propGet('OPINET_KEY')) };
+  }
+  async function dieselPrice() {
+    var st = await getSettings(), manual = { price: Number(st.fuel.manualPrice) || 0, source: '관리자 기본값' };
+    if (st.fuel.mode !== 'auto') return manual;
+    var hit = await cacheGet('DIESEL_TODAY'); if (hit) return JSON.parse(hit);
+    var today = ymdNow();
+    if ((await propGet('OPINET_KEY')) && (await propGet('DIESEL_LAST_FETCH')) !== today) { try { await recordDieselDaily(); } catch (e) { await sql.begin(function (tx) { return propSet(tx, 'DIESEL_LAST_FETCH', today); }); } }
+    var h = await dieselHistoryMap(), dates = Object.keys(h).sort();
+    if (!dates.length) { manual.source = '관리자 기본값 (유가 기록 없음)'; return manual; }
+    var d = dates[dates.length - 1], out = { price: Math.round(h[d].price), source: (h[d].source || '오피넷') + ' (' + d + ')' };
+    await cachePut('DIESEL_TODAY', JSON.stringify(out), 3600); return out;
+  }
+  async function dieselRecent(n) { var h = await dieselHistoryMap(), dates = Object.keys(h).sort().slice(-n); return { now: await dieselPrice(), rows: dates.map(function (d) { return [d, h[d].price]; }) }; }
+  /* 카카오 (주소 → 좌표 · 경로) : 조회한 것은 시트(표)에 계속 저장해 다시 씀 */
+  async function kakaoKey() { var k = await propGet('KAKAO_REST_KEY'); if (!k) throw err('카카오 REST 키가 설정되지 않았습니다. 관리자 > API 키에서 입력하세요.'); return k; }
+  function kakaoError(code) { if (code === 401 || code === 403) return '카카오 키 인증 실패 (키와 사용 설정을 확인하세요)'; if (code === 429) return '카카오 호출 한도 초과 (잠시 후 다시 시도)'; return '카카오 API 오류 (' + code + ')'; }
+  async function fetchAllKakao(urls) {
+    var key = await kakaoKey(), out = new Array(urls.length), todo = urls.map(function (u, i) { return i; });
+    for (var attempt = 0; attempt < 2 && todo.length; attempt++) {
+      if (attempt > 0) await new Promise(function (r) { setTimeout(r, 1200); });
+      var res = await Promise.all(todo.map(function (i) { return netFetch(urls[i], { headers: { Authorization: 'KakaoAK ' + key } }).then(function (r) { return r.text().then(function (t) { return { code: r.status, text: t }; }); }, function () { return { code: 599, text: '' }; }); }));
+      var retry = [];
+      res.forEach(function (r, j) { var i = todo[j]; if ((r.code === 429 || r.code >= 500) && attempt === 0) { retry.push(i); return; } var json = null; try { json = JSON.parse(r.text); } catch (e) { /* 무시 */ } out[i] = { code: r.code, json: json }; });
+      todo = retry;
+    }
+    return out;
+  }
+  async function cacheRows(name, header, keys, parseRow) {
+    var want = {}, found = {}; keys.forEach(function (k) { want[k] = 1; });
+    (await readAll(name)).slice(1).forEach(function (r) { var row = header.map(function (h, j) { return readValue(r[j] == null ? '' : r[j]); }), k = String(row[0]); if (want[k]) found[k] = parseRow(row); });
+    return found;
+  }
+  async function cacheAdd(name, header, rows) { if (!rows.length) return; try { await edit([name], async function (W) { var n = await W.lastRow(name); if (n < 1) { await W.putRows(name, 1, [header]); n = 1; } await W.putRows(name, n + 1, rows); }); } catch (e) { /* 저장 못 해도 계산에는 영향 없음 */ } }
+  async function geocodeMany(queries) {
+    var uniq = [], seen = {}; queries.forEach(function (q) { if (q && !seen[q]) { seen[q] = true; uniq.push(q); } });
+    var found = await cacheRows(SHEET_GEO_CACHE, GEO_HEADER, uniq, function (row) { return { lat: Number(row[1]), lng: Number(row[2]), sido: String(row[3]), address: String(row[4]) }; });
+    var missing = uniq.filter(function (q) { return !found[q]; }); if (!missing.length) return found;
+    var res = await fetchAllKakao(missing.map(function (q) { return 'https://dapi.kakao.com/v2/local/search/address.json?size=1&query=' + encodeURIComponent(q); })), needKeyword = [];
+    res.forEach(function (r, i) {
+      var q = missing[i]; if (r.code !== 200) { found[q] = { error: kakaoError(r.code) }; return; }
+      var doc = r.json.documents && r.json.documents[0]; if (!doc) { needKeyword.push(q); return; }
+      var region = doc.address || doc.road_address || {};
+      found[q] = { lat: Number(doc.y), lng: Number(doc.x), sido: region.region_1depth_name || firstToken(doc.address_name), address: doc.address_name };
+    });
+    if (needKeyword.length) (await fetchAllKakao(needKeyword.map(function (q) { return 'https://dapi.kakao.com/v2/local/search/keyword.json?size=1&query=' + encodeURIComponent(q); }))).forEach(function (r, i) {
+      var q = needKeyword[i]; if (r.code !== 200) { found[q] = { error: kakaoError(r.code) }; return; }
+      var doc = r.json.documents && r.json.documents[0]; if (!doc) { found[q] = { error: '주소를 찾지 못했습니다 ("' + q + '")' }; return; }
+      found[q] = { lat: Number(doc.y), lng: Number(doc.x), sido: firstToken(doc.address_name), address: doc.address_name + (doc.place_name ? ' (' + doc.place_name + ')' : '') };
+    });
+    var today = nowTxt();
+    await cacheAdd(SHEET_GEO_CACHE, GEO_HEADER, missing.filter(function (q) { return found[q] && !found[q].error; }).map(function (q) { var pt = found[q]; return [q, pt.lat, pt.lng, pt.sido, pt.address, today]; }));
+    return found;
+  }
+  function routeKey(a, d, tollClass) { return a.lng.toFixed(6) + ',' + a.lat.toFixed(6) + '>' + d.lng.toFixed(6) + ',' + d.lat.toFixed(6) + '#' + tollClass; }
+  async function routeMany(list, tollClass) {
+    var keys = [], byKey = {}; list.forEach(function (x) { var k = routeKey(x.origin, x.dest, tollClass); if (!byKey[k]) { byKey[k] = x; keys.push(k); } });
+    var found = await cacheRows(SHEET_ROUTE_CACHE, ROUTE_HEADER, keys, function (row) { return { km: Number(row[1]), toll: Number(row[2]) }; });
+    var missing = keys.filter(function (k) { return !found[k]; }); if (!missing.length) return found;
+    var res = await fetchAllKakao(missing.map(function (k) { var x = byKey[k]; return 'https://apis-navi.kakaomobility.com/v1/directions?summary=true&priority=RECOMMEND&car_fuel=DIESEL&car_type=' + tollClass + '&origin=' + x.origin.lng + ',' + x.origin.lat + '&destination=' + x.dest.lng + ',' + x.dest.lat; }));
+    var fresh = [], today = nowTxt();
+    res.forEach(function (r, i) {
+      var k = missing[i]; if (r.code !== 200) { found[k] = { error: kakaoError(r.code) }; return; }
+      var route = r.json && r.json.routes && r.json.routes[0];
+      if (!route || route.result_code !== 0) { found[k] = { error: '경로 없음: ' + ((route && route.result_msg) || '알 수 없음') }; return; }
+      var v = { km: route.summary.distance / 1000, toll: (route.summary.fare && route.summary.fare.toll) || 0 }; found[k] = v; fresh.push([k, v.km, v.toll, today]);
+    });
+    await cacheAdd(SHEET_ROUTE_CACHE, ROUTE_HEADER, fresh);
+    return found;
+  }
+  /* 업체별 특수 추가운임 (Code.js custSpecials_ · resolveSpecials_) */
+  async function custSpecials(cust) { if (!cust) return null; var f = await findRow(SHEET_CUSTSET, CUSTSET_HEADER, cust); return f ? parseJson(f.raw[1], null) : null; }
+  async function resolveSpecials(st, ids, cust) {
+    ids = (ids || []).map(String); if (!ids.length) return [];
+    var over = (await custSpecials(cust)) || {};
+    return (st.specials || []).filter(function (sp) { return ids.indexOf(sp.id) !== -1; }).map(function (sp) { var x = over[sp.id]; return x ? { id: sp.id, name: sp.name, mode: x.mode || sp.mode, values: x.values || {}, cust: cust } : { id: sp.id, name: sp.name, mode: sp.mode, values: sp.values || {} }; });
+  }
+  /** 주소 → 좌표 → 경로 → 계산 (한 건이 실패해도 나머지는 계속) */
+  async function quoteMany(pairs, req, ver) {
+    var st = ver ? ver.settings : await getSettings(), tariff = ver ? ver.tariff : await readTariff(), C = calc();
+    var baseTon = C.joilFindTon(st, req.baseTon) || C.joilFindTon(st, st.milkrun.baseTon) || st.tons[0], tollClass = Number(baseTon.tollClass) || 1;
+    var specials = req.specialsResolved || await resolveSpecials(st, req.specials, req.cust);
+    var diesel = (req.dieselMode === 'manual' && Number(req.dieselPrice) > 0) ? { price: Number(req.dieselPrice), source: '직접 입력' } : await dieselPrice();
+    var queries = []; pairs.forEach(function (pp) { queries.push(pp.origin, pp.dest); });
+    var points = await geocodeMany(queries), routeReqs = [];
+    pairs.forEach(function (pp) { var a = points[pp.origin], d = points[pp.dest]; if (a && !a.error && d && !d.error) routeReqs.push({ origin: a, dest: d }); });
+    var routes = routeReqs.length ? await routeMany(routeReqs, tollClass) : {};
+    var items = pairs.map(function (pp) {
+      var a = points[pp.origin], d = points[pp.dest];
+      if (!a || a.error) return { error: '상차지: ' + ((a && a.error) || '주소를 찾지 못했습니다') };
+      if (!d || d.error) return { error: '하차지: ' + ((d && d.error) || '주소를 찾지 못했습니다') };
+      var r = routes[routeKey(a, d, tollClass)]; if (!r || r.error) return { error: (r && r.error) || '경로를 찾지 못했습니다' };
+      var result = C.joilComputeQuote({ origin: a, dest: d, distanceKm: r.km, toll: r.toll, dieselPrice: diesel.price, baseTon: baseTon.name, specials: specials }, st, tariff);
+      result.origin = a; result.dest = d; result.dieselSource = diesel.source; return { result: result };
+    });
+    return { items: items, diesel: diesel, baseTon: baseTon.name, specials: specials.map(function (x) { return x.id; }), cust: req.cust ? String(req.cust) : '' };
+  }
+  /* 조회기록 · 스냅샷 (결과를 압축해 한 칸에 — 예전 그대로 · 나중에 풀어서 표로) */
+  async function logAdd(session, from, to, km, note, recordId, type, count) {
+    await edit([SHEET_LOG], async function (W) {
+      var h = (await Q(W.tx, 'select sheet_getrow($1, 1) v', [SHEET_LOG]))[0].v; if (!h) return; // Code.js: 조회기록 시트가 없으면 기록 안 함
+      if (String(dec(h[7] == null ? '' : h[7])) !== '기록ID') await W.putRows(SHEET_LOG, 1, [LOG_HEADER]);
+      var n = await W.lastRow(SHEET_LOG); await W.putRows(SHEET_LOG, n + 1, [[nowTxt(), session.id, session.name, from, to, km, note, recordId || '', type || '', count || '']]);
+    });
+  }
+  function packChunks(meta, items) { var packed = packJson({ meta: meta, items: items }); if (packed.length <= CELL_LIMIT || items.length <= 1) return [packed]; var half = Math.ceil(items.length / 2); return packChunks(meta, items.slice(0, half)).concat(packChunks(meta, items.slice(half))); }
+  async function appendPacked(name, id, userId, meta, items) {
+    var now = Date.now(), rows = packChunks(meta, items).map(function (d) { return [id, now, userId, d]; });
+    await edit([name], async function (W) { var n = await W.lastRow(name); if (n < 1) { await W.putRows(name, 1, [PACK_HEADER]); n = 1; } await W.putRows(name, n + 1, rows); });
+  }
+  async function packedRows(name, id, db) { return (await bodyRows(name, 4, db)).filter(function (r) { return display(r[0]) === String(id); }); }
+  async function readPacked(name, id) {
+    var rows = await packedRows(name, id); if (!rows.length) return null;
+    var meta = null, byNo = {};
+    rows.forEach(function (r) { var d = unpackJson(r[3]); meta = d.meta; d.items.forEach(function (it) { var prev = byNo[it.no]; if (!prev || it.result || !prev.result) byNo[it.no] = it; }); });
+    return { meta: meta, items: Object.keys(byNo).map(function (k) { return byNo[k]; }).sort(function (a, b) { return a.no - b.no; }) };
+  }
+  async function snapshotMeta(session, type, count, out) {
+    var st = await getSettings(), ver = '';
+    try { ver = await currentVersion(session); } catch (e) { /* 버전 기록 실패해도 조회는 계속 */ }
+    return { ver: ver, type: type, at: nowTxt(), user: { id: session.id, name: session.name }, count: count, baseTon: out.baseTon, diesel: out.diesel, roundTrip: !!st.milkrun.roundTrip, specials: out.specials || [], cust: out.cust || '', tons: st.tons.map(function (t) { return t.name; }) };
+  }
+  async function saveSnapshotSafe(recordId, session, meta, items) { try { await appendPacked(SHEET_SNAP, recordId, session.id, meta, items); } catch (e) { console.log('스냅샷 저장 실패: ' + e); } }
+  async function quote(session, req) {
+    var C = calc(), originQ = C.joilNormalizeAddress(req.origin), destQ = C.joilNormalizeAddress(req.dest);
+    if (!originQ || !destQ) throw err('상차지와 하차지를 모두 입력하세요.');
+    var out = await quoteMany([{ origin: originQ, dest: destQ }], req), item = out.items[0];
+    if (item.error) throw err(item.error);
+    var recordId = newId('R'), r = item.result;
+    await logAdd(session, r.origin.address, r.dest.address, r.distanceKm, '', recordId, '단건', 1);
+    await saveSnapshotSafe(recordId, session, await snapshotMeta(session, '단건', 1, out), [{ no: 1, origin: originQ, dest: destQ, result: r }]);
+    return { result: r, recordId: recordId };
+  }
+  async function quoteBatch(session, req) {
+    var C = calc(), pairs = (req.pairs || []).map(function (pp, i) { return { no: Number(pp.no) || i + 1, origin: C.joilNormalizeAddress(pp.origin), dest: C.joilNormalizeAddress(pp.dest) }; });
+    if (!pairs.length) throw err('계산할 경로가 없습니다.');
+    if (pairs.length > BATCH_CHUNK_MAX) throw err('한 번에 ' + BATCH_CHUNK_MAX + '건까지만 보낼 수 있습니다.');
+    var st = await getSettings(), b = req.batch || {}, count = Number(b.count) || pairs.length;
+    if (count > Number(st.batch.maxRows)) throw err('대량 계산은 최대 ' + st.batch.maxRows + '건까지입니다.');
+    var recordId = /^[A-Za-z0-9_-]{6,40}$/.test(String(b.id || '')) ? String(b.id) : null;
+    var out = await quoteMany(pairs, req);
+    if (Number(b.index) === 0) {
+      var origins = {}; pairs.forEach(function (pp) { origins[pp.origin] = true; });
+      await logAdd(session, Object.keys(origins).length === 1 ? pairs[0].origin : '여러 상차지', '하차지 ' + count + '곳', '', '대량 ' + count + '건', recordId || '', '대량', count);
+    }
+    if (recordId) await saveSnapshotSafe(recordId, session, await snapshotMeta(session, '대량', count, out), pairs.map(function (pp, i) { var it = out.items[i]; return { no: pp.no, origin: pp.origin, dest: pp.dest, result: it.result || null, error: it.error || null }; }));
+    out.recordId = recordId; return out;
+  }
+  function logRowToObj(r) { return { at: fmtV(r[0]), id: String(r[1]), name: String(r[2]), from: r[3], to: r[4], km: r[5], note: r[6], recordId: String(r[7] || ''), type: String(r[8] || ''), count: r[9] }; }
+  async function getLogs(limit) { var rows = await bodyRows(SHEET_LOG, LOG_HEADER.length); return rows.slice(Math.max(0, rows.length - Math.min(limit, rows.length))).reverse().map(logRowToObj); }
+  async function cleanupSnapshots() {
+    var last = Number((await propGet('SNAP_CLEAN_AT')) || 0); if (Date.now() - last < 86400000) return;
+    await sql.begin(function (tx) { return propSet(tx, 'SNAP_CLEAN_AT', String(Date.now())); });
+    var cutoff = Date.now() - Number((await getSettings()).snapshot.retentionDays || 90) * 86400000;
+    await edit([SHEET_SNAP], async function (W) {
+      var rows = await bodyRows(SHEET_SNAP, 2, W.tx), n = 0; while (n < rows.length && Number(rows[n][1]) < cutoff) n++;
+      for (var i = 0; i < n; i++) await W.del(SHEET_SNAP, 2);
+    });
+  }
+  async function historyList(session, req) {
+    await cleanupSnapshots();
+    var isAdmin = session.role === 'admin', days = Number(req.days) || 0, since = days ? Date.now() - days * 86400000 : 0, q = String(req.q || '').trim();
+    var who = isAdmin ? String(req.userId || '') : session.id, type = String(req.type || ''), limit = Math.min(Number(req.limit) || 300, 1000);
+    var snapIds = {}; (await bodyRows(SHEET_SNAP, 1)).forEach(function (r) { snapIds[r[0]] = true; });
+    var values = await bodyRows(SHEET_LOG, LOG_HEADER.length), out = [];
+    for (var i = values.length - 1; i >= 0 && out.length < limit; i--) {
+      var r = values[i], t = r[0] instanceof Date ? r[0].getTime() : Date.parse(String(r[0]).replace(' ', 'T') + '+09:00');
+      if (since && t < since) break;
+      var ob = logRowToObj(r);
+      if (who && ob.id !== who) continue;
+      if (type && (ob.type || (ob.note && /^대량/.test(ob.note) ? '대량' : '단건')) !== type) continue;
+      if (q && (ob.from + ' ' + ob.to + ' ' + ob.name + ' ' + ob.id).indexOf(q) === -1) continue;
+      ob.hasSnapshot = !!(ob.recordId && snapIds[ob.recordId]); out.push(ob);
+    }
+    var res = { logs: out };
+    if (isAdmin) res.users = (await o.listUsers()).map(function (u) { return { id: u.id, name: u.name }; });
+    return res;
+  }
+  async function findLogByRecord(recordId) { if (!recordId) return null; var hit = (await bodyRows(SHEET_LOG, LOG_HEADER.length)).filter(function (r) { return display(r[7]) === recordId; })[0]; return hit ? logRowToObj(hit) : null; }
+  async function historyGet(session, recordId) {
+    var log = await findLogByRecord(String(recordId || '')); if (!log) throw err('기록을 찾을 수 없습니다.');
+    if (session.role !== 'admin' && log.id !== session.id) throw err('본인 기록만 볼 수 있습니다.');
+    var snap = await readPacked(SHEET_SNAP, log.recordId); if (!snap) throw err('보관 기간(' + (await getSettings()).snapshot.retentionDays + '일)이 지나 상세 내용이 삭제된 기록입니다.');
+    return { log: log, meta: snap.meta, items: snap.items };
+  }
+  /* 견적모음 (Code.js quotesSave_ … quotesAddRoutes_) */
+  function checkQuoteFields(f) {
+    var name = String(f.name || '').trim(); if (!name) throw err('견적명을 입력하세요.'); if (name.length > 100) throw err('견적명은 100자 이내로 입력하세요.');
+    return { name: name, client: String(f.client || '').trim().slice(0, 100), memo: String(f.memo || '').slice(0, 2000), status: QUOTE_STATUS.indexOf(f.status) !== -1 ? f.status : '작성' };
+  }
+  function cleanAdj(adj) {
+    if (!adj) return null;
+    var out = { rows: {}, cols: {}, cells: {} }, n = 0, num = function (v) { v = Math.round(Number(v)); if (!isFinite(v) || Math.abs(v) > 100000000) throw err('조정 금액이 올바르지 않습니다.'); return v; };
+    ['rows', 'cols', 'cells'].forEach(function (k) { Object.keys(adj[k] || {}).forEach(function (key) { var v = num(adj[k][key]); if (k !== 'cells' && !v) return; if (++n > ADJ_MAX) throw err('조정이 너무 많습니다. (최대 ' + ADJ_MAX + '개)'); out[k][String(key).slice(0, 60)] = v; }); });
+    return n ? out : null;
+  }
+  async function addAdjLog(W, row, session, note) {
+    var cur = ((await Q(W.tx, 'select sheet_getrow($1, $2) v', [SHEET_QUOTES, row]))[0].v || []).map(dec), list = parseJson(readValue(cur[17] == null ? '' : cur[17]), []);
+    list.push({ at: nowTxt(), by: session.name + ' (' + session.id + ')', note: String(note || '').slice(0, 300) }); if (list.length > 60) list = list.slice(-60);
+    await W.set(SHEET_QUOTES, row, 18, [JSON.stringify(list)]);
+  }
+  async function quotesSave(session, req) {
+    var log = await findLogByRecord(String(req.recordId || '')); if (!log) throw err('저장할 조회 기록을 찾을 수 없습니다.');
+    if (session.role !== 'admin' && log.id !== session.id) throw err('본인 조회만 저장할 수 있습니다.');
+    var snap = await readPacked(SHEET_SNAP, log.recordId); if (!snap) throw err('보관 기간이 지나 저장할 수 없는 기록입니다.');
+    var f = checkQuoteFields(req), id = newId('E');
+    await appendPacked(SHEET_QDATA, id, session.id, snap.meta, snap.items);
+    var isBatch = snap.meta.type === '대량', first = snap.items[0] || {}, origins = {};
+    snap.items.forEach(function (it) { origins[it.origin] = true; });
+    var from = isBatch ? (Object.keys(origins).length === 1 ? first.origin : '여러 상차지') : (first.result ? first.result.origin.address : first.origin);
+    var to = isBatch ? '하차지 ' + snap.items.length + '곳' : (first.result ? first.result.dest.address : first.dest);
+    var now = nowTxt(), adj = cleanAdj(req.adj);
+    await edit([SHEET_QUOTES], async function (W) {
+      await quotesHeader(W);
+      await W.append(SHEET_QUOTES, QUOTE_HEADER, [id, now, session.id, session.name, f.name, f.client, f.memo, f.status, snap.meta.type, snap.items.length, from, to, log.recordId, log.at, now, '', adj ? JSON.stringify(adj) : '',
+        JSON.stringify([{ at: now, by: session.name + ' (' + session.id + ')', note: '견적 저장' + (adj ? ' (조정 포함: ' + String(req.adjNote || '').slice(0, 200) + ')' : '') }])]);
+    });
+    return { quote: (await findQuote(id)).data };
+  }
+  async function quotesList(session, req) {
+    var isAdmin = session.role === 'admin', q = String(req.q || '').trim(), out = [];
+    (await bodyRows(SHEET_QUOTES, QUOTE_HEADER.length)).forEach(function (r) {
+      var ob = quoteRowToObj(r); if (!isAdmin && ob.userId !== session.id) return;
+      if (q && (ob.name + ' ' + ob.client + ' ' + ob.memo + ' ' + ob.from + ' ' + ob.to + ' ' + ob.userName).indexOf(q) === -1) return;
+      out.push(ob);
+    });
+    return { quotes: out.reverse() };
+  }
+  async function findQuoteAny(id, db) { if (!id) return null; var hit = (await bodyRows(SHEET_QUOTES, QUOTE_HEADER.length, db)).filter(function (r) { return display(r[0]) === String(id); })[0]; return hit ? { row: hit._r, data: quoteRowToObj(hit), raw: hit } : null; }
+  async function quoteAccess(session, id) { var found = await findQuoteAny(id); if (!found) throw err('견적을 찾을 수 없습니다.'); if (session.role !== 'admin' && found.data.userId !== session.id) throw err('본인 견적만 볼 수 있습니다.'); return found; }
+  async function quotesGet(session, id) {
+    var found = await quoteAccess(session, id), data = await readPacked(SHEET_QDATA, found.data.id); if (!data) throw err('견적 데이터가 없습니다.');
+    var meta = data.meta;
+    if (meta.ver) { var all = await readAll(SHEET_VER); for (var i = 1; i < all.length; i++) if (display(readValue(all[i][0] == null ? '' : all[i][0])) === meta.ver) { meta.verAt = fmtV(readValue(all[i][1] == null ? '' : all[i][1])); break; } }
+    return { quote: found.data, meta: meta, items: data.items, adj: parseJson(found.raw[16], null), adjLog: parseJson(found.raw[17], []) };
+  }
+  async function quotesUpdate(session, id, patch) {
+    var found = await quoteAccess(session, id);
+    await edit([SHEET_QUOTES], async function (W) {
+      await quotesHeader(W);
+      if (patch && Object.prototype.hasOwnProperty.call(patch, 'adj')) {
+        var adj = cleanAdj(patch.adj), v = adj ? JSON.stringify(adj) : ''; if (v.length > CELL_LIMIT) throw err('조정이 너무 많아 저장할 수 없습니다.');
+        await W.set(SHEET_QUOTES, found.row, 17, [v]); await addAdjLog(W, found.row, session, patch.adjNote || (adj ? '금액 조정' : '조정 모두 해제'));
+      }
+      if (patch && Object.prototype.hasOwnProperty.call(patch, 'link')) {
+        var l = patch.link, clean = l ? { cust: String(l.cust || '').slice(0, 100), from: String(l.from || '').slice(0, 100), to: String(l.to || '').slice(0, 100), weight: String(l.weight || '').slice(0, 30), since: /^\d{4}-\d{2}$/.test(l.since) ? l.since : '', price: Number(l.price) || 0, ton: String(l.ton || '').slice(0, 20) } : null;
+        if (clean && !clean.cust) throw err('연결할 매출처를 고르세요.');
+        await W.set(SHEET_QUOTES, found.row, 16, [clean ? JSON.stringify(clean) : '']);
+      }
+      var f = checkQuoteFields(Object.assign({}, found.data, patch || {}));
+      await W.set(SHEET_QUOTES, found.row, 5, [f.name, f.client, f.memo, f.status]); await W.set(SHEET_QUOTES, found.row, 15, [nowTxt()]);
+    });
+    return { quote: (await findQuoteAny(id)).data };
+  }
+  async function quotesDelete(session, id) {
+    var found = await quoteAccess(session, id);
+    await edit([SHEET_QDATA, SHEET_QUOTES], async function (W) {
+      var rows = (await packedRows(SHEET_QDATA, found.data.id, W.tx)).map(function (r) { return r._r; }).sort(function (a, b) { return b - a; });
+      for (var r of rows) await W.del(SHEET_QDATA, r);
+      var f = await findQuoteAny(id, W.tx); await W.del(SHEET_QUOTES, f.row);
+    });
+    return {};
+  }
+  async function quotesAddRoutes(session, req) {
+    var found = await quoteAccess(session, req.id), data = await readPacked(SHEET_QDATA, found.data.id); if (!data) throw err('견적 데이터가 없습니다.');
+    var C = calc(), pairs = (req.pairs || []).map(function (pp) { return { origin: C.joilNormalizeAddress(pp.origin), dest: C.joilNormalizeAddress(pp.dest) }; }).filter(function (pp) { return pp.origin && pp.dest; });
+    if (!pairs.length) throw err('추가할 구간을 입력하세요.');
+    if (pairs.length > BATCH_CHUNK_MAX) throw err('한 번에 ' + BATCH_CHUNK_MAX + '건까지 추가할 수 있습니다.');
+    var meta = data.meta, ver = meta.ver ? await loadVersion(meta.ver) : null, used = null;
+    data.items.some(function (it) { if (it.result && it.result.specials) { used = it.result.specials; return true; } return false; });
+    var out = await quoteMany(pairs, { baseTon: meta.baseTon, dieselMode: 'manual', dieselPrice: meta.diesel && meta.diesel.price, specialsResolved: used || [] }, ver);
+    if (meta.diesel) out.items.forEach(function (it) { if (it.result) it.result.dieselSource = meta.diesel.source; });
+    var maxNo = data.items.reduce(function (m, it) { return Math.max(m, Number(it.no) || 0); }, 0), added = [], failed = [], stamp = { at: nowTxt(), by: session.name };
+    out.items.forEach(function (it, i) { if (it.error) failed.push({ origin: pairs[i].origin, dest: pairs[i].dest, error: it.error }); else added.push({ no: ++maxNo, origin: pairs[i].origin, dest: pairs[i].dest, result: it.result, added: stamp }); });
+    if (added.length) {
+      var total = data.items.length + added.length, newMeta = JSON.parse(JSON.stringify(meta));
+      newMeta.type = '대량'; newMeta.count = total;
+      if (!newMeta.ver && !newMeta.verNote) newMeta.verNote = '버전 기록 이전 견적 · 추가 구간은 ' + stamp.at.slice(0, 10) + ' 기준';
+      await appendPacked(SHEET_QDATA, found.data.id, session.id, newMeta, added);
+      var origins = {}; data.items.concat(added).forEach(function (x) { origins[x.origin] = true; });
+      await edit([SHEET_QUOTES], async function (W) {
+        var f = await findQuoteAny(req.id, W.tx);
+        await W.set(SHEET_QUOTES, f.row, 9, ['대량', total]); await W.set(SHEET_QUOTES, f.row, 11, [Object.keys(origins).length === 1 ? data.items[0].origin : '여러 상차지', '하차지 ' + total + '곳']);
+        await W.set(SHEET_QUOTES, f.row, 15, [nowTxt()]); await addAdjLog(W, f.row, session, '구간 ' + added.length + '건 추가' + (ver ? ' (견적 당시 기준 ' + meta.ver + ')' : ' (현재 기준)'));
+      });
+    }
+    var res = await quotesGet(session, req.id); res.added = added.map(function (x) { return x.no; }); res.failed = failed; res.usedVersion = ver ? meta.ver : null; return res;
+  }
+  /* 업체별 단가표 · 특수 추가운임 (Code.js ratesList_ … ratesDelete_) */
+  async function ratesList() {
+    var by = {};
+    (await bodyRows(SHEET_RATES, RATES_HEADER.length)).forEach(function (r) { var c = String(r[0]); if (!c) return; var x = by[c] || (by[c] = { cust: c, count: 0, updated: '', by: '' }); x.count++; var at = fmtV(r[8]); if (at > x.updated) { x.updated = at; x.by = String(r[7]); } });
+    (await bodyRows(SHEET_CUSTSET, 3)).forEach(function (r) { var c = String(r[0]); if (!c) return; var x = by[c] || (by[c] = { cust: c, count: 0, updated: '', by: '' }); x.hasSpecial = !!String(r[1]); x.memo = String(r[2] || ''); });
+    return { custs: Object.keys(by).sort().map(function (k) { return by[k]; }) };
+  }
+  async function ratesGet(cust) {
+    cust = String(cust || ''); var rows = [];
+    (await bodyRows(SHEET_RATES, RATES_HEADER.length)).forEach(function (r) { if (String(r[0]) === cust) rows.push([String(r[1]), String(r[2]), String(r[3]), Number(r[4]) || 0, textDate(r[5]), String(r[6] || '')]); });
+    return { cust: cust, rows: rows, specials: (await custSpecials(cust)) || {} };
+  }
+  function checkCustName(c) { c = String(c || '').trim(); if (!c) throw err('업체 이름을 입력하세요.'); if (c.length > 60) throw err('업체 이름이 너무 깁니다.'); return c; }
+  /** 그 업체 줄을 모두 지움 (아래에서부터 — 줄 번호가 밀리지 않게) */
+  async function removeCustRows(W, cust) { var rows = await bodyRows(SHEET_RATES, 1, W.tx); for (var i = rows.length - 1; i >= 0; i--) if (String(rows[i][0]) === cust) await W.del(SHEET_RATES, rows[i]._r); }
+  async function cleanSpecialsOverride(sp) {
+    var st = await getSettings(), ids = (st.specials || []).map(function (x) { return x.id; }), tons = st.tons.map(function (t) { return t.name; }), out = {};
+    Object.keys(sp || {}).forEach(function (id) { if (ids.indexOf(id) === -1) return; var x = sp[id] || {}, vals = {}; tons.forEach(function (t) { var v = Number((x.values || {})[t]); if (v) vals[t] = Math.round(v * 100) / 100; }); out[id] = { mode: x.mode === 'percent' ? 'percent' : 'amount', values: vals }; });
+    return out;
+  }
+  async function saveCustSpecials(cust, specials) {
+    cust = checkCustName(cust);
+    var clean = await cleanSpecialsOverride(specials), json = Object.keys(clean).length ? JSON.stringify(clean) : '';
+    await edit([SHEET_CUSTSET], async function (W) {
+      var f = await W.findRow(SHEET_CUSTSET, CUSTSET_HEADER, cust);
+      if (f) await W.set(SHEET_CUSTSET, f.row, 2, [json, f.raw[2], nowTxt()]); else await W.append(SHEET_CUSTSET, CUSTSET_HEADER, [cust, json, '', nowTxt()]);
+    });
+    return { specials: clean };
+  }
+  async function ratesUpload(session, req) {
+    var cust = checkCustName(req.cust), tons = (await getSettings()).tons.map(function (t) { return t.name; });
+    var rows = (req.rows || []).map(function (r, i) {
+      var from = String(r[0] || '').trim(), to = String(r[1] || '').trim(), ton = String(r[2] || '').trim(), price = Number(r[3]);
+      if (!from || !to) throw err((i + 1) + '번째 줄: 상차지·하차지를 확인하세요.');
+      if (tons.indexOf(ton) === -1) throw err((i + 1) + '번째 줄: 톤수 "' + ton + '"를 알 수 없습니다.');
+      if (!(price > 0)) throw err((i + 1) + '번째 줄: 단가를 확인하세요.');
+      var since = String(r[4] || '').trim(); if (since && !/^\d{4}-\d{2}-\d{2}$/.test(since)) throw err((i + 1) + '번째 줄: 적용 시작일은 YYYY-MM-DD 입니다.');
+      return [cust, from.slice(0, 200), to.slice(0, 200), ton, Math.round(price), "'" + since, String(r[5] || '').slice(0, 200), session.name + ' (' + session.id + ')', nowTxt()];
+    });
+    if (!rows.length) throw err('올릴 단가가 없습니다.');
+    if (rows.length > 5000) throw err('한 번에 5,000줄까지 올릴 수 있습니다.');
+    await edit([SHEET_RATES], async function (W) {
+      if (req.mode !== 'append') await removeCustRows(W, cust);
+      var n = await W.lastRow(SHEET_RATES); if (n < 1) { await W.putRows(SHEET_RATES, 1, [RATES_HEADER]); n = 1; }
+      await W.putRows(SHEET_RATES, n + 1, rows);
+    });
+    if (req.specials) await saveCustSpecials(cust, req.specials);
+    return { count: rows.length };
+  }
+  async function ratesDelete(cust) {
+    cust = checkCustName(cust);
+    await edit([SHEET_RATES, SHEET_CUSTSET], async function (W) { await removeCustRows(W, cust); var f = await W.findRow(SHEET_CUSTSET, CUSTSET_HEADER, cust); if (f) await W.del(SHEET_CUSTSET, f.row); });
+    return {};
+  }
+
   /* ───────────── 요청 나누기 (Code.js handle_ 의 순서·권한 그대로) ───────────── */
   // 권한: quote = 견적 메뉴 권한(Code.js QUOTE_ACTIONS) · admin = 관리자만 · '' = 로그인만
   var TABLE = {
@@ -1099,6 +1527,23 @@ export function makePort(o) {
     'docs.get': ['quote', function (s, q) { return docsGet(q.id); }],
     'docs.zip': ['quote', function (s, q) { return docsZip(q.ids); }],
     'docs.delete': ['quote', function (s, q) { return docsDelete(s, q.id); }],
+    'quote': ['quote', function (s, q) { return quote(s, q); }],
+    'quoteBatch': ['quote', function (s, q) { return quoteBatch(s, q); }],
+    'dieselPrice': ['quote', function (s, q) { return dieselPrice(); }],
+    'diesel.recent': ['quote', function (s, q) { return dieselRecent(60); }],
+    'history.list': ['quote', function (s, q) { return historyList(s, q); }],
+    'history.get': ['quote', function (s, q) { return historyGet(s, q.recordId); }],
+    'quotes.save': ['quote', function (s, q) { return quotesSave(s, q); }],
+    'quotes.list': ['quote', function (s, q) { return quotesList(s, q); }],
+    'quotes.get': ['quote', function (s, q) { return quotesGet(s, q.id); }],
+    'quotes.update': ['quote', function (s, q) { return quotesUpdate(s, q.id, q.patch); }],
+    'quotes.delete': ['quote', function (s, q) { return quotesDelete(s, q.id); }],
+    'quotes.addRoutes': ['quote', function (s, q) { return quotesAddRoutes(s, q); }],
+    'rates.list': ['quote', function (s, q) { return ratesList(); }],
+    'rates.get': ['quote', function (s, q) { return ratesGet(q.cust); }],
+    'rates.upload': ['quote', function (s, q) { return ratesUpload(s, q); }],
+    'rates.saveSpecials': ['quote', function (s, q) { return saveCustSpecials(q.cust, q.specials); }],
+    'rates.delete': ['admin', function (s, q) { return ratesDelete(q.cust); }],
     'weekly.get': ['', async function (s, q) { return { weekly: await weekly(q.week, s) }; }],
     'weekly.send': ['admin1', function (s, q) { return weeklySend(q.week, q.onlyMe ? s : null); }],
     'cal.companyHolidays': ['admin1', async function (s, q) { await saveCompanyHolidays(q.list); return calAll(s); }]

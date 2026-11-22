@@ -5,7 +5,8 @@ var CORE = path.join(__dirname, '..', '..', 'supabase', 'functions', 'joil', 'co
 async function boot(opts) {
   var db = await PG.start(); if (!db) return null;
   var postgres = require(require('path').join(__dirname, 'node_modules', 'postgres')), sql = postgres(db.url, { max: 4, onnotice: function () {}, connection: { search_path: 'joil, extensions, public' } });
-  var core = await import(CORE), srv = core.makeServer(sql, opts || {});
+  opts = Object.assign({ calcSrc: require('fs').readFileSync(path.join(__dirname, '..', '..', 'apps-script', 'Calc.js'), 'utf8') }, opts || {});
+  var core = await import(CORE), srv = core.makeServer(sql, opts);
   return { sql: sql, srv: srv, core: core, call: function (tok, action, req) { return srv.call(Object.assign({ action: action, token: tok }, req || {})); },
     stop: async function () { await sql.end(); await db.stop(); } };
 }

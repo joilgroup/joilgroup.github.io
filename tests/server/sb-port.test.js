@@ -2,11 +2,12 @@
 // 목에 가짜 자료를 넣고 → 시트를 시험용 DB 로 복사 → 시트마다 칸 있는 표로(014) → 양쪽에 같은 요청(읽기·저장·오류)을 차례로 보내 비교.
 process.env.TZ = 'Asia/Seoul';
 var M = require('../lib/mock.js'), ok = M.ok, L = require('../sb/lib.js');
+require('vm').runInContext(require('fs').readFileSync(require('path').join(__dirname, '..', '..', 'apps-script', 'Calc.js'), 'utf8'), M.ctx); // 견적 계산식
 function norm(o) {
   var names = {}, n = 0, nm = function (s) { return names[s] || (names[s] = '#' + (++n)); };
   return JSON.stringify(o, function (k, v) {
     if (k === 'ms') return undefined;
-    if (typeof v === 'string') { if (/^S[0-9a-f]{10}$/.test(v) || /^R[0-9a-f]{8}$/.test(v) || /^[A-Z]{1,2}\d{12}[0-9a-f]{5}\d*$/.test(v) || /^[A-Z]{1,2}yy\d{10}[0-9a-f]{5}\d*$/.test(v)) return nm(v); return v.replace(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?/g, 'TS'); }
+    if (typeof v === 'string') { if (/^S[0-9a-f]{10}$/.test(v) || /^R[0-9a-f]{8}$/.test(v) || /^V[0-9a-f]{12}$/.test(v) || /^[A-Z]{1,2}\d{12}[0-9a-f]{5}\d*$/.test(v) || /^[A-Z]{1,2}yy\d{10}[0-9a-f]{5}\d*$/.test(v)) return nm(v); return v.replace(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}(:\d{2})?/g, 'TS').replace(/\bV[0-9a-f]{12}\b/g, 'V#'); }
     return v;
   });
 }
@@ -32,6 +33,7 @@ var STEPS = require('./sb-port.steps.js');
     await L.users(S, [{ id: 'a', name: '관리', role: 'admin', perms: 'quote,analysis' }, { id: 's', name: '직원', role: 'staff', perms: 'quote' }, { id: 'x', name: '견적없음', role: 'staff', perms: 'track' }, { id: 'p', name: '협력A', role: 'partner', perms: 'none', tabs: ['쿠팡부자재/평택'] }]);
     var tok = {}; for (var u of [['adm', 'a'], ['stf', 's'], ['nq', 'x'], ['ptn', 'p']]) tok[u[0]] = (await S.call('', 'login', { id: u[1], password: 'test1234' })).token;
     M.SESS.nq = { id: 'x', name: '견적없음', role: 'staff', perms: ['track'] };
+    STEPS.prep(M);
     STEPS.seed.forEach(function (x) { M.call(x[0], x[1], x[2]); });
     for (var name of Object.keys(M.sheets)) {
       if (name === '계정') continue;

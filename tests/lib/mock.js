@@ -24,7 +24,7 @@ Sheet.prototype = {
       getValues: function () { var o = []; for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || [], x = []; for (var j = 0; j < nc; j++) { var v = t[c + j - 1]; x.push(v == null ? '' : (typeof v === 'string' ? v.replace(/^'/, '') : v)); } o.push(x); } return o; },
       clearContent: function () { for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1]; if (t) for (var j = 0; j < nc; j++) t[c + j - 1] = ''; } return R; },
       setFontWeight: function () { return R; }, setNumberFormat: function () { return R; },
-      createTextFinder: function (s) { return { matchEntireCell: function () { return this; }, findNext: function () { for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || []; if (String(t[c - 1]).replace(/^'/, '') === s) return { getRow: function () { return r + i; } }; } return null; } }; }
+      createTextFinder: function (s) { return { matchEntireCell: function () { return this; }, findNext: function () { for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || []; if (String(t[c - 1]).replace(/^'/, '') === s) return { getRow: function () { return r + i; } }; } return null; }, findAll: function () { var out = []; for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || []; if (String(t[c - 1]).replace(/^'/, '') === s) out.push({ getRow: (function (n) { return function () { return n; }; })(r + i) }); } return out; } }; }
     };
     return R;
   },
@@ -44,6 +44,8 @@ var ctx = { console: console, JSON: JSON, Math: Math, Date: Date,
   Utilities: { DigestAlgorithm: { SHA_256: 1 }, Charset: { UTF_8: 1 },
     computeDigest: function (alg, str) { return Array.from(require('crypto').createHash('sha256').update(String(str)).digest()).map(function (b) { return b > 127 ? b - 256 : b; }); },
     formatDate: function (d, tz, f) { return f.replace('yyyy', d.getFullYear()).replace('MM', p2(d.getMonth() + 1)).replace('dd', p2(d.getDate())).replace('HH', p2(d.getHours())).replace('mm', p2(d.getMinutes())).replace('ss', p2(d.getSeconds())); },
+    gzip: function (b) { var x = b.getBytes(); return mockBlob(Array.from(require('zlib').gzipSync(typeof x === 'string' ? Buffer.from(x, 'utf8') : Buffer.from(Uint8Array.from(x, function (v) { return v & 255; })))), 'application/x-gzip'); },
+    ungzip: function (b) { var x = b.getBytes(), out = require('zlib').gunzipSync(Buffer.from(Uint8Array.from(x, function (v) { return v & 255; }))); var r = mockBlob(Array.from(out)); r.getDataAsString = function () { return out.toString('utf8'); }; return r; },
     getUuid: function () { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function () { return (Math.random() * 16 | 0).toString(16); }); },
     // 파일(드라이브) 흉내에 필요한 것: 바이트 = -128~127 숫자 배열
     base64Decode: function (s) { return Array.from(Buffer.from(String(s), 'base64')).map(function (b) { return b > 127 ? b - 256 : b; }); },

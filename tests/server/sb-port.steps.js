@@ -1,7 +1,21 @@
 // sb-port.test.js 의 요청 목록: seed = 목에만 먼저 넣는 가짜 자료 (복사 전) · steps = 양쪽에 같은 순서로 보내 비교
 // 요청 자리에 함수를 쓰면 바로 앞 응답(c.last.a = 목, c.last.b = 새 서버)에서 ID 를 골라 [목 요청, 새 서버 요청] 으로 보낼 수 있어요.
 var pick = function (list, f) { return list.filter(f)[0] || {}; };
+// 견적 계산용: 타리프 + 주소·경로 캐시(가짜 좌표) → 카카오 호출 없이 계산
+var GEO = { '테스트시 가동 1': [37.1, 127.1, '테스트시'], '시험도 나동 2': [36.2, 127.6, '시험도'], '서울 가상구 3': [37.5, 127.0, '서울'] };
+function prep(M) {
+  var ss = M.ctx.SpreadsheetApp.getActive(), t = M.ctx.joilDummyTariff(), ts = ss.insertSheet('타리프');
+  ts.d.push(['km'].concat(t.tons)); t.rows.forEach(function (r, i) { ts.d.push([i + 1].concat(r)); });
+  ss.insertSheet('조회기록').d.push(['일시', '아이디', '이름', '상차지', '하차지', '거리(km)', '비고', '기록ID', '종류', '건수']);
+  var g = ss.insertSheet('주소캐시'), r = ss.insertSheet('경로캐시'), names = Object.keys(GEO);
+  g.d.push(['주소(입력)', '위도', '경도', '시도', '찾은 주소', '저장일']); r.d.push(['경로키', '거리(km)', '통행료', '저장일']);
+  names.forEach(function (n) { g.d.push([n, GEO[n][0], GEO[n][1], GEO[n][2], n + ' (찾음)', '2026-11-01 09:00:00']); });
+  names.forEach(function (a, i) { names.forEach(function (b, j) { if (a === b) return; var k = GEO[a][1].toFixed(6) + ',' + GEO[a][0].toFixed(6) + '>' + GEO[b][1].toFixed(6) + ',' + GEO[b][0].toFixed(6) + '#3'; r.d.push([k, 80 + 37 * i + 11 * j, 5000 + 300 * j, '2026-11-01 09:00:00']); }); });
+}
+var A = '테스트시 가동 1', B = '시험도 나동 2', C = '서울 가상구 3';
+var rec = function (f) { return function (c) { return [f(c.last.a), f(c.last.b)]; }; };
 module.exports = {
+  prep: prep,
   seed: [
     ['adm', 'custs.save', { cust: { name: '가나상사', aliases: '가나, GANA', biz: '조일물류', start: '2026-01-01', end: '2026-12-31', memo: '메모' } }],
     ['adm', 'custs.save', { cust: { name: '다라물산', owner: '김' } }],
@@ -136,6 +150,42 @@ module.exports = {
     ['stf', 'weekly.send', {}, '관리자만'],
     ['adm', 'weekly.send', { onlyMe: true }, '나에게 (메일 없음)'],
     ['adm', 'staff.save', { staff: [{ name: '김직원', email: 'a@b.cd', weekly: true }, { name: '관리', account: 'a', email: 'adm@b.cd' }] }],
-    ['adm', 'weekly.send', { onlyMe: true }, '나에게'], ['adm', 'weekly.send', { week: '2026-11-23' }, '받기 체크한 직원 모두']
+    ['adm', 'weekly.send', { onlyMe: true }, '나에게'], ['adm', 'weekly.send', { week: '2026-11-23' }, '받기 체크한 직원 모두'],
+    // 견적 계산 · 조회기록 · 견적모음 · 업체단가
+    ['nq', 'quote', { origin: A, dest: B }, '권한 없음'], ['stf', 'quote', { origin: '', dest: B }, '빈 주소'],
+    ['stf', 'quote', { origin: A, dest: '없는 주소 9' }, '캐시에 없는 주소 (카카오 키 없음)'],
+    ['stf', 'dieselPrice'], ['stf', 'diesel.recent'],
+    ['stf', 'quote', { origin: A, dest: B }],
+    ['stf', 'quote', { origin: '  ' + C + ' ', dest: A, baseTon: '11톤' }, '다른 톤수 (경로 캐시 없음)'],
+    ['stf', 'quote', { origin: C, dest: A, dieselMode: 'manual', dieselPrice: 1777, specials: ['sp1', 'sp3'] }, '경유 직접 · 특수'],
+    ['stf', 'quoteBatch', { pairs: [], batch: {} }, '빈 대량'],
+    ['stf', 'quoteBatch', { pairs: [{ no: 1, origin: A, dest: B }, { no: 2, origin: B, dest: C }, { no: 3, origin: C, dest: B }], batch: { id: 'BATCH0001', index: 0, count: 3 } }, '대량'],
+    ['adm', 'history.list', {}, '관리자'], ['stf', 'history.list', { type: '단건', q: '테스트' }, '찾기'], ['adm', 'history.list', { userId: 'a' }, '남의 것'],
+    ['stf', 'history.get', { recordId: 'BATCH0001' }, '대량 기록'], ['stf', 'history.get', { recordId: 'nope' }, '없는 기록'],
+    ['stf', 'history.list'],
+    ['stf', 'history.get', rec(function (l) { return { recordId: l.logs[l.logs.length - 1].recordId }; }), '단건 기록'],
+    ['adm', 'quotes.save', { recordId: 'BATCH0001', name: '' }, '견적명 없음'],
+    ['adm', 'quotes.save', { recordId: 'BATCH0001', name: '11월 견적', client: '가나상사', memo: 'm', status: '제출', adj: { rows: { '1': 1000 }, cols: {}, cells: { '2|5톤': -500 } }, adjNote: '첫 조정' }, '대량 저장'],
+    ['stf', 'quotes.save', { recordId: 'BATCH0001', name: '남의 것' }, '남의 기록'],
+    ['stf', 'quotes.list'], ['adm', 'quotes.list', { q: '11월' }],
+    ['adm', 'quotes.get', rec(function (l) { return { id: l.quotes[0].id }; })],
+    ['adm', 'quotes.update', rec(function (l) { return { id: l.quote.id, patch: { name: '11월 견적 (수정)', status: '수주', adj: { rows: { '2': 2000 } }, adjNote: '두 번째', link: { cust: '가나상사', from: A, to: B, since: '2026-11', price: 120000, ton: '5톤' } } }; }), '고치기'],
+    ['adm', 'quotes.get', rec(function (l) { return { id: l.quote.id }; }), '고친 뒤'],
+    ['adm', 'quotes.addRoutes', rec(function (l) { return { id: l.quote.id, pairs: [{ origin: C, dest: B }, { origin: B, dest: A }] }; }), '구간 추가'],
+    ['adm', 'quotes.addRoutes', rec(function (l) { return { id: l.quote.id, pairs: [] }; }), '빈 추가'],
+    ['adm', 'quotes.list'],
+    ['stf', 'quotes.get', rec(function (l) { return { id: l.quotes[0].id }; }), '남의 견적'],
+    ['adm', 'quotes.list'],
+    ['adm', 'quotes.delete', rec(function (l) { return { id: l.quotes[0].id }; }), '지우기'],
+    ['adm', 'quotes.list', {}, '지운 뒤'],
+    ['stf', 'rates.upload', { cust: '', rows: [] }, '업체 없음'], ['stf', 'rates.upload', { cust: '가나상사', rows: [[A, B, '7톤', 1000]] }, '모르는 톤수'],
+    ['stf', 'rates.upload', { cust: '가나상사', rows: [[A, B, '5톤', 150000, '2026-11-01', '비고'], [A, C, '11톤', 300000]], specials: { sp1: { mode: 'percent', values: { '5톤': 10 } }, zz: {} } }],
+    ['stf', 'rates.upload', { cust: '가나상사', mode: 'append', rows: [[B, C, '1톤', 50000]] }, '덧붙이기'],
+    ['stf', 'rates.upload', { cust: '다라물산', rows: [[B, A, '25톤', 700000]] }],
+    ['stf', 'rates.list'], ['stf', 'rates.get', { cust: '가나상사' }],
+    ['stf', 'quote', { origin: A, dest: B, cust: '가나상사', specials: ['sp1'] }, '업체 특수운임'],
+    ['stf', 'rates.saveSpecials', { cust: '다라물산', specials: { sp2: { values: { '1톤': 3000.555 } } } }],
+    ['stf', 'rates.delete', { cust: '가나상사' }, '권한 없음'], ['adm', 'rates.delete', { cust: '가나상사' }],
+    ['stf', 'rates.list', {}, '지운 뒤'], ['stf', 'rates.get', { cust: '다라물산' }]
   ]
 };

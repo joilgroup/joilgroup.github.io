@@ -972,7 +972,7 @@ export function makeServer(sql, opts) {
     return { db: Number(db.b), limit: 500 * 1024 * 1024, tables: tabs.map(function (r) { return { t: r.t, bytes: Number(r.b), rows: Number(r.n) }; }),
       counts: { audit: await cnt('select count(*) n from audit'), alerts: await cnt('select count(*) n from alerts where resolved_at is null'), positions: await cnt('select count(*) n from public.positions'), sessions: await cnt('select count(*) n from sessions where expires_at > now()') } };
   }
-  var port = makePort({ sql: sql, fetch: opts.netFetch, zip: opts.zip, err: err, nowTxt: nowTxt, newId: newId, requirePerm: requirePerm, who: ctxWho, gas: function (a, p) { return gas(a, p); }, noticesList: function () { return noticesList(); }, ownersList: function () { return ownersList(); }, listUsers: function () { return listUsers(); } });
+  var port = makePort({ sql: sql, fetch: opts.netFetch, zip: opts.zip, calcSrc: opts.calcSrc, err: err, nowTxt: nowTxt, newId: newId, requirePerm: requirePerm, who: ctxWho, gas: function (a, p) { return gas(a, p); }, noticesList: function () { return noticesList(); }, ownersList: function () { return ownersList(); }, listUsers: function () { return listUsers(); } });
   /* ───────────── 업무 기록 (013 · Code.js workList_·workOp_ 와 같은 규칙) ───────────── */
   function workWho(session, uid) {
     uid = String(uid || '');

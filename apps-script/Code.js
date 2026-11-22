@@ -983,7 +983,7 @@ function quotesAddRoutes_(session, req) {
 var SHEET_RATES = '업체단가';
 var RATES_HEADER = ['업체', '상차지', '하차지', '톤수', '단가', '적용시작일', '비고', '올린사람', '올린일시'];
 var SHEET_CUST = '업체설정';
-var CUST_HEADER = ['업체', '특수운임', '메모', '수정일시'];
+var CUSTSET_HEADER = ['업체', '특수운임', '메모', '수정일시']; // 거래처 표의 CUST_HEADER 와 이름이 겹쳐 업체설정 시트가 거래처 제목으로 만들어지던 것 고침
 
 function custSpecials_(cust) {
   if (!cust) return null;
@@ -1087,7 +1087,7 @@ function cleanSpecialsOverride_(sp) {
 function saveCustSpecials_(cust, specials) {
   cust = checkCustName_(cust);
   var clean = cleanSpecialsOverride_(specials);
-  var sh = cacheSheet_(SHEET_CUST, CUST_HEADER);
+  var sh = cacheSheet_(SHEET_CUST, CUSTSET_HEADER);
   var hit = sh.getLastRow() >= 2 && sh.getRange(2, 1, sh.getLastRow() - 1, 1).createTextFinder(cust).matchEntireCell(true).findNext();
   var json = Object.keys(clean).length ? JSON.stringify(clean) : '';
   if (hit) sh.getRange(hit.getRow(), 2, 1, 3).setValues([[json, sh.getRange(hit.getRow(), 3).getValue(), now_()]]);
