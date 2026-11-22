@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="ko">
+<!-- 기사용 출발·도착 버튼 (별도 주소용 · 저장소의 go.html과 같은 내용, 서버 주소만 들어 있음) -->
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>출발·도착</title>
+  <style>
+    :root { --bg: #F3EEE5; --panel: #FFFFFF; --ink: #1E1C19; --muted: #7A7265; --line: #E2D9C9; --orange: #F07A22; --green: #2C7040; --red: #C2412B; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-family: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif; font-size: 16px; line-height: 1.5; -webkit-text-size-adjust: 100%; }
+    .wrap { max-width: 560px; margin: 0 auto; padding: 14px 14px 40px; }
+    .bar { height: 5px; background: linear-gradient(90deg, #E0472E 0 20%, #F07A22 20% 40%, #F4BE2E 40% 60%, #4FA864 60% 80%, #2A9DB0 80%); }
+    h1 { font-size: 22px; margin: 6px 0 2px; }
+    .sub { color: var(--muted); font-size: 14px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-top: 12px; }
+    .card.from { background: #FFF8EE; }
+    .no { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: #fff; font-weight: 800; font-size: 15px; margin-right: 8px; flex: none; }
+    .ttl { display: flex; align-items: center; font-size: 19px; font-weight: 800; }
+    .row { margin-top: 6px; font-size: 15px; }
+    .muted { color: var(--muted); }
+    .big { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 64px; margin-top: 12px; border-radius: 14px; border: 0; background: var(--orange); color: #fff; font: inherit; font-size: 20px; font-weight: 800; cursor: pointer; }
+    .big.arr { background: var(--ink); }
+    .big.done { background: #E7F3EA; color: var(--green); border: 1px solid #BFDDC6; cursor: default; }
+    .big[disabled] { opacity: .7; }
+    .undo { display: block; margin: 6px auto 0; background: none; border: 0; color: var(--muted); font: inherit; font-size: 14px; text-decoration: underline; cursor: pointer; }
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .btn { display: flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; border-radius: 12px; border: 1px solid var(--line); background: #fff; color: var(--ink); font: inherit; font-weight: 700; text-decoration: none; cursor: pointer; padding: 0 10px; }
+    .btn.rc { grid-column: 1 / -1; }
+    .btn.ok { background: #E7F3EA; color: var(--green); border-color: #BFDDC6; }
+    .tip { font-size: 13px; color: var(--muted); text-align: center; margin-top: 6px; }
+    .err { color: var(--red); font-weight: 700; }
+    .spin { display: inline-block; width: 18px; height: 18px; border: 3px solid rgba(255,255,255,.5); border-top-color: #fff; border-radius: 50%; animation: s .8s linear infinite; vertical-align: -3px; }
+    .btn .spin { border-color: #ddd; border-top-color: var(--ink); }
+    @keyframes s { to { transform: rotate(360deg); } }
+    input[type=file] { display: none; }
+  </style>
+</head>
+<body>
+  <div class="bar"></div>
+  <div class="wrap" id="app"><p class="muted">불러오는 중…</p></div>
+  <script>
+  (function () {
+    'use strict';
+    var API_URL = 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/info';
+    var T = String(location.hash || '').replace(/^#\/?/, '');
+    var app = document.getElementById('app'), data = null, ev = [], busy = {};
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+    function api(action, payload) {
+      var req = Object.assign({ action: action, t: T }, payload || {});
+      return fetch(API_URL + (API_URL.indexOf('?') === -1 ? '?' : '&') + '_t=' + Date.now(), { method: 'POST', body: JSON.stringify(req), cache: 'no-store', credentials: 'omit', redirect: 'follow' })
+        .then(function (r) { if (!r.ok) throw new Error('서버 연결 오류 (' + r.status + ')'); return r.json(); })
+        .then(function (j) { if (!j.ok) throw new Error(j.error || '오류가 났어요.'); return j; });
+    }
+    function nav(name, addr, lat, lng) {
+      var k = lat ? 'https://map.kakao.com/link/to/' + encodeURIComponent(name) + ',' + lat + ',' + lng : 'https://map.kakao.com/link/search/' + encodeURIComponent(addr || name);
+      var t = lat ? 'tmap://route?goalname=' + encodeURIComponent(name) + '&goalx=' + lng + '&goaly=' + lat : 'tmap://search?name=' + encodeURIComponent(addr || name);
+      return '<a class="btn" href="' + k + '" target="_blank" rel="noopener">🗺 카카오맵</a><a class="btn" href="' + t + '">🚗 티맵</a>';
+    }
+    function hit(kind, stop) { return ev.filter(function (x) { return x.kind === kind && x.stop === stop; })[0]; }
+    function hm(x) { return String(x.at).slice(11, 16); }
+    /** 큰 버튼 하나: 누르기 전 / 누르는 중 / 누른 뒤(시각 + 되돌리기) */
+    function bigBtn(kind, stop, label) {
+      var k = kind + stop, x = hit(kind, stop);
+      if (busy[k]) return '<button class="big ' + kind + '" disabled><span class="spin"></span> 기록하는 중…</button>';
+      if (x) return '<button class="big done" disabled>✅ ' + (kind === 'dep' ? '출발' : '도착') + ' ' + esc(hm(x)) + '</button><button class="undo" data-undo="' + k + '" data-kind="' + kind + '" data-stop="' + stop + '">잘못 눌렀어요 (되돌리기)</button>';
+      return '<button class="big ' + kind + '" data-ev="' + kind + '" data-stop="' + stop + '">' + label + '</button>';
+    }
+    function draw() {
+      var d = data, p = d.place, got = function (s) { return d.receipts.filter(function (r) { return r.fc === s.fc && (!r.tk || !s.tk || r.tk === s.tk); }); };
+      app.innerHTML = '<div class="sub">' + esc(d.date) + ' · ' + esc(d.no) + '호차' + (d.car ? ' · ' + esc(d.car) : '') + '</div><h1>하차 ' + d.stops.length + '곳</h1>' +
+        '<div class="card from"><div class="ttl">🏭 상차지 · ' + esc(p ? p.name : d.from || '-') + '</div>' + (p && p.addr ? '<div class="row">' + esc(p.addr) + '</div>' : '') + (p && p.time ? '<div class="row muted">상차가능시간 ' + esc(p.time) + '</div>' : '') +
+        bigBtn('dep', 0, '🚚 상차지 출발') + '</div>' +
+        d.stops.map(function (s, i) {
+          var g = got(s), bk = (s.tk || '') + '|' + s.fc;
+          return '<div class="card" id="st' + i + '"><div class="ttl"><span class="no">' + (i + 1) + '</span>' + esc(s.fc) + '</div>' +
+            (s.addr ? '<div class="row">' + esc(s.addr) + '</div>' : '') + (s.hours ? '<div class="row muted">⏰ ' + esc(s.hours) + '</div>' : '') +
+            bigBtn('arr', i, '📍 ' + esc(s.fc) + ' 도착') +
+            '<div class="btns">' + nav(s.fc, s.addr, s.lat, s.lng) +
+            '<label class="btn rc' + (g.length ? ' ok' : '') + '">' + (busy[bk] ? '<span class="spin"></span> 올리는 중…' : g.length ? '✅ 인수증 올림 · 다시 올리기' : '📷 인수증 올리기') +
+            '<input type="file" accept="image/*" capture="environment" data-fc="' + esc(s.fc) + '" data-tk="' + esc(s.tk || '') + '"></label></div></div>';
+        }).join('') +
+        '<p class="tip">누르면 그 시각과 그때 위치가 한 번 기록돼요. (위치를 허용하지 않아도 시각은 기록돼요)</p>';
+      Array.prototype.forEach.call(app.querySelectorAll('[data-ev]'), function (b) { b.onclick = function () { press(b.dataset.ev, Number(b.dataset.stop)); }; });
+      Array.prototype.forEach.call(app.querySelectorAll('[data-undo]'), function (b) { b.onclick = function () { if (confirm((b.dataset.kind === 'dep' ? '출발' : '도착') + ' 기록을 지울까요?')) undo(b.dataset.kind, Number(b.dataset.stop)); }; });
+      Array.prototype.forEach.call(app.querySelectorAll('input[type=file]'), function (inp) { inp.onchange = function () { if (inp.files[0]) upload(inp.dataset.fc, inp.dataset.tk, inp.files[0]); inp.value = ''; }; });
+    }
+    /** 위치 한 번 (최대 7초 · 거부·실패하면 위치 없이) */
+    function where() {
+      return new Promise(function (res) {
+        if (!navigator.geolocation) return res(null);
+        var done = false, fin = function (v) { if (!done) { done = true; res(v); } };
+        setTimeout(function () { fin(null); }, 7000);
+        try { navigator.geolocation.getCurrentPosition(function (p) { fin({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy }); }, function () { fin(null); }, { enableHighAccuracy: true, timeout: 6500, maximumAge: 60000 }); } catch (e) { fin(null); }
+      });
+    }
+    function press(kind, stop) {
+      var k = kind + stop; if (busy[k]) return; busy[k] = 1; draw();
+      where().then(function (pos) { return api('drv.event', Object.assign({ kind: kind, stop: stop, fc: kind === 'arr' ? data.stops[stop].fc : '' }, pos || {})); })
+        .then(function (r) { ev = r.events || []; delete busy[k]; draw(); })
+        .catch(function (e) { delete busy[k]; draw(); alert('기록하지 못했어요: ' + e.message + '\n다시 눌러 주세요.'); });
+    }
+    function undo(kind, stop) {
+      api('drv.event', { kind: kind, stop: stop, undo: true }).then(function (r) { ev = r.events || []; draw(); }).catch(function (e) { alert('되돌리지 못했어요: ' + e.message); });
+    }
+    function shrink(file) {
+      return new Promise(function (resolve, reject) {
+        var url = URL.createObjectURL(file), img = new Image();
+        img.onload = function () {
+          var max = 1600, w = img.naturalWidth, h = img.naturalHeight, k = Math.min(1, max / Math.max(w, h)), c = document.createElement('canvas');
+          c.width = Math.round(w * k); c.height = Math.round(h * k); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); URL.revokeObjectURL(url);
+          resolve(c.toDataURL('image/jpeg', 0.75).split(',')[1]);
+        };
+        img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('사진을 읽지 못했어요. 다시 찍어 주세요.')); };
+        img.src = url;
+      });
+    }
+    function upload(fc, tk, file) {
+      var k = (tk || '') + '|' + fc; busy[k] = 1; draw();
+      shrink(file).then(function (b64) { return api('drv.upload', { fc: fc, tk: tk || '', data: b64 }); })
+        .then(function (r) { data = r; delete busy[k]; draw(); })
+        .catch(function (e) { delete busy[k]; draw(); alert('올리지 못했어요: ' + e.message + '\n다시 눌러 주세요.'); });
+    }
+    if (!T) { app.innerHTML = '<p class="err">링크가 잘못됐어요. 받은 문자의 링크를 다시 눌러 주세요.</p>'; return; }
+    Promise.all([api('drv.get'), api('drv.events').catch(function () { return { events: [] }; })])
+      .then(function (r) { data = r[0]; ev = r[1].events || []; draw(); })
+      .catch(function (e) { app.innerHTML = '<p class="err">' + esc(e.message) + '</p>'; });
+  })();
+  </script>
+</body>
+</html>

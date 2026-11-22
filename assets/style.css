@@ -1702,6 +1702,9 @@ body.cal-dragging * { cursor: grabbing !important; }
 .alr-pop button { display: block; width: 100%; text-align: left; white-space: normal; line-height: 1.4; }
 .alr-k { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--panel-2); color: var(--ink-2); }
 .alr-k.k-un, .alr-k.k-nocar { background: color-mix(in srgb, var(--orange) 22%, transparent); }
+.ap-ev { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin: 0 0 10px; background: var(--panel-2); font-size: 14px; }
+.ap-ev ul { margin: 4px 0 0; padding-left: 18px; }
+.ap-ev a { text-decoration: none; }
 .alr-k.k-urg { background: color-mix(in srgb, var(--orange) 26%, transparent); }
 .alr-k.k-urg.l-late { background: var(--red); color: #fff; }
 .alr-pop .alr-late b, .alr-pop .alr-late .small { color: var(--red); }

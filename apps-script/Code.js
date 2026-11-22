@@ -2217,6 +2217,7 @@ function dispMulti_(keys, fn) {
 }
 /* 배차 탭 (업체마다): [{ name, suf(저장 키 꼬리), prefix(문자 머리말), hidden }] — 예전 인천·평택·부산은 키 꼬리 그대로 이름만 바꿔요 */
 function dispTabsDefault_(cust) {
+  if (cust === '애플') return [{ name: '애플', suf: '', prefix: '애플' }];
   if (cust === '삼다수') return [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }];
   return [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }];
 }

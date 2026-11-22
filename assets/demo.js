@@ -308,7 +308,7 @@
     return { rows: rows, rates: rates, map: dm, tons: ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤'] };
   }
   function dKey(car, dr, ph) { var c = String(car || '').replace(/\s/g, ''); return c ? 'c:' + c : 'd:' + String(dr || '').replace(/\s/g, '') + '|' + String(ph || '').replace(/[^0-9]/g, ''); }
-  function demoTabs(cust) { return (store.dispTabs || {})[cust] || (cust === '삼다수' ? [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }] : null) || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
+  function demoTabs(cust) { return (store.dispTabs || {})[cust] || (cust === '애플' ? [{ name: '애플', suf: '', prefix: '애플' }] : cust === '삼다수' ? [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }] : null) || [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }]; }
   /** 권한에 따라 빼고 보내기 (서버 dispScrub_와 같음) */
   function demoScrub(out, me) {
     out = JSON.parse(JSON.stringify(out)); var cost = me.perms.indexOf('analysis') !== -1 || me.role === 'partner', one = function (r) { if (!cost) (r.trucks || []).forEach(function (t) { delete t.retCost; delete t.wait; delete t.support; }); (r.trucks || []).forEach(function (t) { if (me.perms.indexOf('analysis') !== -1) { t.rev = t.rev == null ? null : t.rev; t.cost = t.cost == null ? null : t.cost; } else { delete t.rev; delete t.cost; } }); if (me.role === 'partner') { (r.orders || []).forEach(function (o) { o.noteIn = ''; }); (r.trucks || []).forEach(function (t) { t.join = ''; }); } };
@@ -375,13 +375,24 @@
       return { token: token, user: { id: u.id, name: u.name, role: u.role, mustChange: u.mustChange, perms: permsOf(u), dispTabs: u.dispTabs || [] }, settings: pubSettings() };
     }
     if (req.action === 'drv.get' || req.action === 'drv.upload') return demoDrv(req);
+    if (req.action === 'drv.events' || req.action === 'drv.event') { // 출발·도착 버튼 (서버 019 drv_events · 같은 동작)
+      var etr = wk('dispTrk').filter(function (t) { return t.token && t.token === req.t; })[0]; if (!etr) fail('링크를 찾을 수 없어요. 배차 담당자에게 문의하세요.');
+      if (req.action === 'drv.event') {
+        if (req.kind !== 'dep' && req.kind !== 'arr') fail('잘못된 요청이에요.');
+        var est = Math.max(0, Math.floor(Number(req.stop) || 0)), mine = wk('drvEv').filter(function (x) { return x.token === etr.token && x.kind === req.kind && x.stop === est && !x.undone; });
+        if (req.undo) { if (mine.length) mine[mine.length - 1].undone = 1; }
+        else if (!mine.length) wk('drvEv').push({ id: Date.now(), token: etr.token, cust: etr.cust, date: etr.date, no: etr.no, kind: req.kind, stop: est, fc: String(req.fc || ''), at: today(), lat: req.lat == null ? null : Number(req.lat), lng: req.lng == null ? null : Number(req.lng) });
+        save();
+      }
+      return { events: wk('drvEv').filter(function (x) { return x.token === etr.token && !x.undone; }).map(function (x) { return { id: x.id, no: x.no, kind: x.kind, stop: x.stop, fc: x.fc, at: x.at, lat: x.lat, lng: x.lng }; }) };
+    }
     if (req.action === 'drv.photo') { var dd = demoDrv({ action: 'drv.get', t: req.t }); if (!(dd.place && (dd.place.photos || []).some(function (x) { return x.id === req.id; }))) fail('사진을 찾을 수 없어요.'); var pd = (store.phData || {})[req.id]; if (!pd) fail('사진을 찾을 수 없어요.'); return { data: pd, mime: 'image/jpeg' }; }
     var me = session(req.token);
     curMe = me;
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'alerts.list', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'alerts.list', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'dispatch.events', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
       if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
@@ -589,6 +600,7 @@
         (req.rows || []).forEach(function (x, i) { if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date)) fail('날짜 형식은 YYYY-MM-DD 입니다: ' + x.date); if (dh[dkn(x.key)]) { dres.skipped++; return; } dh[dkn(x.key)] = 1; dmax[x.date] = (dmax[x.date] || 0) + 1; dres.dates[x.date] = (dres.dates[x.date] || 0) + 1; dres.added++;
           wk('dispOrd').push({ id: calId('D') + i, cust: req.cust, date: x.date, key: x.key, d: x.d, truck: '', seq: dmax[x.date], by: me.name, at: dnow }); });
         save(); return dres;
+      case 'dispatch.events': return { events: wk('drvEv').filter(function (x) { return x.cust === req.cust && x.date === req.date && !x.undone; }).map(function (x) { return { id: x.id, no: x.no, kind: x.kind, stop: x.stop, fc: x.fc, at: x.at, lat: x.lat, lng: x.lng }; }) };
       case 'dispatch.stamp':
         var dst = store.dstamp || {}, dso = {}; (req.keys || []).forEach(function (k) { dso[k] = dst[k + '|' + req.date] || 0; }); return { stamps: dso };
       case 'dispatch.save':

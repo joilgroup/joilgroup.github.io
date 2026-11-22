@@ -11,7 +11,7 @@
   var CFG = window.JOIL_CONFIG || {};
   var SB_ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
     'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.history', 'admin.audit', 'dispatch.search', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
-    'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
+    'dispatch.events', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
     'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   var SB_ROUTE = (function () {
     if (DEMO || !CFG.SB_FN) return '';
@@ -7624,7 +7624,7 @@
   /** 문자 머리말: 탭의 머리말(없으면 탭 이름 '-' 앞부분) + [출발센터] */
   function dispPrefix(D, from) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0], pre = (t && t[2]) || String(D.tab || '').split('-')[0] || dispState().cust.replace(/^쿠팡/, ''); return pre + '[' + String(from || '').replace(/물류센터|센터|물류/g, '') + ']'; }
   /** 기사 링크 주소: config.js의 DRIVER_URL(회사명이 안 드러나는 별도 주소)이 있으면 그것, 없으면 이 사이트의 drv.html */
-  function driverUrl(tok) { var base = (window.JOIL_CONFIG && window.JOIL_CONFIG.DRIVER_URL) || (location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '') + 'drv.html'); return base.replace(/#.*$/, '') + '#' + tok; }
+  function driverUrl(tok) { var C = custDef(); if (C.driverUrl) return C.driverUrl(tok); var base = (window.JOIL_CONFIG && window.JOIL_CONFIG.DRIVER_URL) || (location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '') + 'drv.html'); return base.replace(/#.*$/, '') + '#' + tok; }
   function truckOrders(D, no) { return D.orders.filter(function (o) { return o.truck === no; }).sort(function (a, b) { return a.seq - b.seq; }); }
   /** 호차의 착지 (센터명 기준, 하차 순서대로) */
   function truckStops(D, no) {

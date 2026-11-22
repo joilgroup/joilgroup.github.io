@@ -18,9 +18,9 @@ var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'supp
 var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'];
 var DISP_RATE_TONS = ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤'];
 var PLACE_PHOTO_MAX = 2;
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'dispatch.notes', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'];
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'dispatch.notes', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save', 'dispatch.events'];
 /** 이 서버가 맡는 액션 (화면 갈림길 SB_ACTIONS 와 같은 목록 · 나머지는 아직 Apps Script) */
-export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'drv.get', 'drv.upload', 'drv.photo',
+export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'drv.get', 'drv.upload', 'drv.photo', 'drv.events', 'drv.event', 'dispatch.events',
   'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
@@ -255,6 +255,7 @@ export function makeServer(sql, opts) {
     return out;
   }
   function dispTabsDefault(cust) {
+    if (cust === '애플') return [{ name: '애플', suf: '', prefix: '애플' }];
     if (cust === '삼다수') return [{ name: '삼다수-대우', suf: '', prefix: '삼다수' }, { name: '삼다수-경인항', suf: '/경인항', prefix: '삼다수' }, { name: '삼다수-인천항', suf: '/인천항', prefix: '삼다수' }, { name: '삼다수-진해', suf: '/진해', prefix: '삼다수' }, { name: '삼다수-삼천포', suf: '/삼천포', prefix: '삼다수' }];
     return [{ name: '부자재-인천', suf: '', prefix: '부자재' }, { name: '부자재-평택', suf: '/평택', prefix: '부자재' }, { name: '부자재-부산', suf: '/부산', prefix: '부자재' }];
   }
@@ -725,6 +726,23 @@ export function makeServer(sql, opts) {
     var b = grp[0];
     return { notes: notes, date: tr.date, no: b.no, cust: co, car: b.car, driver: b.driver, from: from || '', place: place ? pl(place) : null, more: more.map(pl), stops: stops, receipts: rc };
   }
+  /* ── 출발·도착 버튼 (019 · 애플 기사 화면 go.html): 시각 + 그때 위치 한 번 · 되돌리기 ── */
+  function evRow(r) { return { id: Number(r.id), no: Number(r.no), kind: r.kind, stop: Number(r.stop), fc: r.fc, at: r.at_txt, lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng) }; }
+  var EV_SEL = "id, no, kind, stop, fc, lat, lng, to_char(at at time zone 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') at_txt";
+  async function drvEvents(t) { var tr = await drvFind(t); return { events: (await Q(sql, 'select ' + EV_SEL + ' from drv_events where token = $1 and undone_at is null order by at, id', [tr.token])).map(evRow) }; }
+  async function drvEvent(req) {
+    var tr = await drvFind(req.t), kind = String(req.kind || ''), stop = Math.max(0, Math.floor(Number(req.stop) || 0));
+    if (kind !== 'dep' && kind !== 'arr') throw err('잘못된 요청이에요.');
+    if (tr.date < ymd(new Date(Date.now() - 2 * 86400000))) throw err('지난 배차라 기록할 수 없어요. 배차 담당자에게 알려 주세요.');
+    if (req.undo) { await Q(sql, 'update drv_events set undone_at = now() where id = (select id from drv_events where token = $1 and kind = $2 and stop = $3 and undone_at is null order by at desc, id desc limit 1)', [tr.token, kind, stop]); return drvEvents(req.t); }
+    var num = function (v, lo, hi) { v = Number(v); return v === v && v >= lo && v <= hi && req.lat != null ? v : null; };
+    var la = num(req.lat, 33, 39), lo = num(req.lng, 124, 132); if (la == null || lo == null) la = lo = null; // 한국 밖 좌표·한쪽만 있으면 위치 없이
+    var have = (await Q(sql, 'select 1 from drv_events where token = $1 and kind = $2 and stop = $3 and undone_at is null', [tr.token, kind, stop])).length;
+    if (!have) await Q(sql, 'insert into drv_events (token, cust, date, no, kind, stop, fc, lat, lng, acc) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [tr.token, tr.cust, tr.date, tr.no, kind, stop, String(req.fc || '').slice(0, 60), la, lo, la == null ? null : num(req.acc, 0, 100000)]); // 두 번 눌러도 한 번만
+    return drvEvents(req.t);
+  }
+  /** 배차 화면: 그 날짜·탭의 출발·도착 기록 (위치 좌표는 지도 보기용) */
+  async function dispEvents(cust, date) { cust = dispCust(cust); date = dispDate(date); return { events: (await Q(sql, 'select ' + EV_SEL + ' from drv_events where cust = $1 and date = $2 and undone_at is null order by no, at, id', [cust, date])).map(evRow) }; }
   async function drvUpload(req) {
     var tr0 = await drvFind(req.t), fc = String(req.fc || ''), tr = null, orders = [];
     if (tr0.date < ymd(new Date(Date.now() - 60 * 86400000))) throw err('배차일로부터 60일이 지나 사진을 올릴 수 없어요. 배차 담당자에게 보내 주세요.');
@@ -756,6 +774,8 @@ export function makeServer(sql, opts) {
     if (action === 'drv.get') return drvGet(req.t);
     if (action === 'drv.upload') return drvUpload(req);
     if (action === 'drv.photo') return drvPhoto(req);
+    if (action === 'drv.events') return drvEvents(req.t);
+    if (action === 'drv.event') return drvEvent(req);
     var session = await requireSession(req.token), cx = ctxStore.getStore(); if (cx) cx.who = session.name || session.id;
     if (session.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(action) === -1) throw err('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (session.role === 'partner') return partnerHandle(session, action, req);
@@ -785,6 +805,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.import': var imr = await dispImport(session, req); for (var d of Object.keys(imr.dates || {})) await dispTouch(req.cust, d); return imr;
       case 'dispatch.save': return dispScrub(await dispSave(session, req), session);
       case 'dispatch.stamp': return { stamps: await dispStamps(req.keys, req.date) };
+      case 'dispatch.events': return dispEvents(req.cust, req.date);
       case 'dispatch.deleteOrders': return dispTouched(req, await dispDeleteOrders(session, req));
       case 'dispatch.note': return dispTouched(req, await dispNote(req));
       case 'dispatch.copyOrders': var cpr = await dispCopyOrders(session, req); await dispTouch(req.cust, req.toDate); return dispTouched(req, cpr);
@@ -853,6 +874,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.dayAll': (req.keys || []).forEach(ok); return dispScrub(await dispMulti(req.keys, function (k) { return dispDay(k, req.date); }), session);
       case 'dispatch.save': ok(req.cust); return dispScrub(await dispSave(session, req), session);
       case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: await dispStamps(req.keys, req.date) };
+      case 'dispatch.events': return dispEvents(ok(req.cust), req.date);
       case 'dispatch.geo': return { coords: await dispGeo(req.addrs) };
       case 'dispatch.must': if (partnerCusts(session).indexOf(dispCust(req.cust)) === -1) throw err('볼 수 없는 업체예요.'); return { list: await dispMust(req.cust) };
       case 'dispatch.notes': if (partnerCusts(session).indexOf(dispCust(req.cust)) === -1) throw err('볼 수 없는 업체예요.'); return { list: (await dispNotes(req.cust)).filter(function (x) { return x.ptn || x.drv; }) };
