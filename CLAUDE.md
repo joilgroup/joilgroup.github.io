@@ -7,7 +7,7 @@
 - 항상 **한국어**로 답해요. 쉬운 말로, 결과 위주로 짧게.
 - **큰 작업(새 기능, 엑셀·보고서·PPT, 긴 코드·스크립트) 전에는 애매한 점을 먼저 묻고 진행 허락을 받아요.** 선택지가 있으면 AskUserQuestion으로 추천안을 첫 번째에 두고 물어요.
 - 작업이 끝나면: 무엇이 바뀌었는지 → 어떻게 확인했는지(못 한 것은 못 했다고) → **Code.js 재배포가 필요한지**를 꼭 알려요.
-- 사용자가 직접 하는 것: Apps Script에 `apps-script/Code.js` 붙여넣고 새 버전 배포, 기사 사이트 저장소에 `driver-site/index.html` 올리기.
+- 사용자가 직접 하는 것: Apps Script에 `apps-script/Code.js` 붙여넣고 새 버전 배포. 기사 사이트(`truck-stopinfo/truck-stopinfo.github.io`, main 브랜치에 `index.html`·`go.html`)는 세션에 그 저장소를 붙이면(add_repo, push) 우리가 `driver-site/`를 복사해 직접 올릴 수 있어요 — 회사명(조일·JOIL)이 들어가지 않게 확인.
 
 ## 구조
 - `index.html` + `assets/app.js`(화면 전부, 바닐라 JS 하나의 IIFE) + `assets/style.css`
