@@ -6,6 +6,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { makePort, portActions } from './port.js';
+import { makeUrgent } from './urgent.js';
 var TZ_MS = 9 * 3600000; // 한국 시간 (서머타임 없음)
 var SESSION_SECONDS = 6 * 60 * 60, KEEP_DAYS = 30, LOGIN_MAX_FAIL = 5, HASH_ROUNDS = 300;
 var PERMS = ['quote', 'analysis', 'search', 'track'];
@@ -24,7 +25,7 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
   'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search',
-  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage'].concat(portActions());
+  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage', 'admin.routes', 'admin.routeRefetch'].concat(portActions());
 /** 진짜 표로 옮긴 영역 (012): 액션 앞부분 → 시트 이름. props 'MOVED_시트'가 있을 때만 이 서버가 맡아요(없으면 gas.js 가 시트 그대로) */
 export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당', 'work.': '업무기록' };
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
@@ -834,6 +835,8 @@ export function makeServer(sql, opts) {
       case 'admin.resetPassword': return resetPassword(req.id);
       case 'admin.audit': return auditList(session, req);
       case 'admin.usage': return adminUsage();
+      case 'admin.routes': return urgent.routeList(); // 긴급 알림 이동시간 표 (018)
+      case 'admin.routeRefetch': return urgent.routeRefetch(req.from, req.to);
     }
     throw err('알 수 없는 요청입니다: ' + action);
   }
@@ -1097,5 +1100,6 @@ export function makeServer(sql, opts) {
     out.ms = Date.now() - t0; if (out.ms > 3000) console.log('느린 요청 ' + (req && req.action) + ' ' + out.ms + 'ms');
     return out;
   }
-  return { port: port, call: call, handle: handle, requireSession: requireSession, pub: pub, gas: gas, _t: { hash: hash, sha256hex: sha256hex, dispCnKey: dispCnKey, rateTon: rateTon } };
+  var urgent = makeUrgent({ sql: sql, geocode: function (a) { return port.geo(a); }, kakao: function (u) { return port.kakao(u); } });
+  return { port: port, urgent: urgent, call: call, handle: handle, requireSession: requireSession, pub: pub, gas: gas, _t: { hash: hash, sha256hex: sha256hex, dispCnKey: dispCnKey, rateTon: rateTon } };
 }

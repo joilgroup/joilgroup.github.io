@@ -443,16 +443,31 @@
     ALR.t = setInterval(function () { alertsLoad(true); }, 180000);
     document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') alertsLoad(); });
   }
-  var ALR_KIND = { un: '미배정', nocar: '차량정보', rcpt: '인수증' };
+  var ALR_KIND = { urg: '긴급', un: '미배정', nocar: '차량정보', rcpt: '인수증' };
   function alertsOpen(btn) {
     var old = $('.alr-pop'); if (old) { old.remove(); return; }
     var r = btn.getBoundingClientRect(), pop = document.createElement('div'); pop.className = 'nav-pop alr-pop';
     var tabName = function (key) { var co = key.replace(/\/.*$/, ''), st = dispState(), t = (st.tabList && st.tabList._cust === co ? st.tabList : []).filter(function (x) { return co + x.suf === key; })[0]; return t ? t.name : key; };
     pop.innerHTML = '<div class="alr-head"><b>할 일 알림</b><span class="small muted">5분마다 자동 확인</span></div>' + (ALR.list.length ? ALR.list.map(function (a, i) {
-      return '<button type="button" data-ai="' + i + '"><span class="alr-k k-' + esc(a.kind) + '">' + esc(ALR_KIND[a.kind] || a.kind) + '</span> <b>' + esc(a.date.slice(5)) + ' ' + esc(tabName(a.cust)) + '</b><br><span class="small">' + esc(a.msg) + '</span></button>'; }).join('') : '<p class="muted small" style="margin:8px 12px">지금은 알림이 없어요.</p>');
+      return '<button type="button" data-ai="' + i + '"' + (a.lvl === 'late' ? ' class="alr-late"' : '') + '><span class="alr-k k-' + esc(a.kind) + (a.lvl ? ' l-' + esc(a.lvl) : '') + '">' + esc(a.kind === 'urg' && a.lvl === 'late' ? '지남' : ALR_KIND[a.kind] || a.kind) + '</span> <b>' + esc(a.date.slice(5)) + ' ' + esc(tabName(a.cust)) + '</b><br><span class="small">' + esc(a.msg) + '</span></button>'; }).join('') : '<p class="muted small" style="margin:8px 12px">지금은 알림이 없어요.</p>') +
+      (state.user.role === 'admin' ? '<div class="alr-foot"><span class="small muted">출발 마감 = 하차 끝 − 이동시간(카카오 × 1.2, 하차 30분)</span> <a href="#" id="alrRt">이동시간 표</a></div>' : '');
     pop.style.top = (r.bottom + 4) + 'px'; pop.style.left = Math.max(8, Math.min(r.left - 220, window.innerWidth - 330)) + 'px';
     document.body.appendChild(pop);
     $$('[data-ai]', pop).forEach(function (b) { b.onclick = function () { var a = ALR.list[Number(b.dataset.ai)]; pop.remove(); dispGoKey(a.cust, a.date); }; });
+    var rt = $('#alrRt', pop); if (rt) rt.onclick = function (e) { e.preventDefault(); pop.parentNode.removeChild(pop); openRouteTimes(); };
+  }
+  /** 관리자: 긴급 알림에 쓰는 이동시간 표 (상차지↔하차지 조합마다 한 번 조회해 저장) · 다시 조회 */
+  function openRouteTimes() {
+    modal({ title: '이동시간 표 (긴급 배차 알림)', wide: true, body: '<p class="muted small">카카오 길찾기(승용차) 결과를 조합마다 한 번만 조회해 저장해요. 알림 계산은 × 1.2. 길이 바뀌었으면 [다시 조회].</p><input class="input" id="rtQ" placeholder="주소 찾기"><div id="rtL" class="muted small" style="margin-top:8px">불러오는 중…</div>', onMount: function (m) {
+    var rows = [], draw = function () {
+      var q = ($('#rtQ', m).value || '').trim(), l = rows.filter(function (r) { return !q || (r.from + ' ' + r.to).indexOf(q) !== -1; });
+      setHtmlKeep($('#rtL', m), l.length ? '<div class="table-wrap"><table class="data"><thead><tr><th class="left">출발</th><th class="left">도착</th><th>길찾기</th><th>알림 계산</th><th>km</th><th>조회일</th><th></th></tr></thead><tbody>' + l.map(function (r) { var i = rows.indexOf(r);
+        return '<tr><td class="left small">' + esc(r.from) + '</td><td class="left small">' + esc(r.to) + '</td><td class="num">' + esc(r.min) + '분</td><td class="num"><b>' + esc(r.adj) + '분</b></td><td class="num">' + esc(r.km) + '</td><td class="small">' + esc(r.at) + '</td><td><button class="btn sm" data-rf="' + i + '">다시 조회</button></td></tr>'; }).join('') + '</tbody></table></div>' : '<p class="muted small">아직 저장된 조합이 없어요. 긴급 알림을 계산하면서 쌓여요.</p>');
+      $$('[data-rf]', m).forEach(function (b) { b.onclick = function () { var r = rows[Number(b.dataset.rf)]; busy(b, true, '조회 중'); api('admin.routeRefetch', { from: r.from, to: r.to }).then(function (x) { rows = x.routes || []; draw(); toast('다시 조회했어요.'); }).catch(function (err) { busy(b, false); toast(err.message, 'err'); }); }; });
+    };
+    $('#rtQ', m).oninput = draw;
+    api('admin.routes', {}).then(function (x) { rows = x.routes || []; draw(); }).catch(function (err) { $('#rtL', m).textContent = err.message; });
+    } });
   }
   /** 업체 키(업체/탭)·날짜의 배차 화면으로 */
   function dispGoKey(key, date) {

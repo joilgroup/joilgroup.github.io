@@ -85,8 +85,10 @@
 - **진짜 표로 정리(012~)**: 옮긴 영역은 core.js `MOVED`(액션 앞부분 → 시트) + props `MOVED_시트`가 있을 때만 core.js 가 맡고, gas.js `MOVED_VIEWS`가 그 시트를 새 표에서 읽어 줘요. 지금 옮긴 것: 공지·문의 기록·업무 담당표(012)·업무 기록(013). 이 영역은 **Code.js 가 아니라 core.js 를 고쳐요**.
 - Code.js 맨 끝 "서버 이전": 시험 복사·비교·무료 자동 백업(꺼짐)·`SB_AUTH`(꺼짐)·내부 액션 `int.*`(새 서버가 사진·좌표를 구글에 맡김).
 
-## 자동 알림 🔔 (011)
-- DB 예약 작업 `joil-alerts`(5분) → `joil.alerts` → 화면 `alertsInit`가 RPC `joil_alerts`로 3분마다. 규칙은 SQL `joil.alerts_scan` 한 곳. 데모는 demo.js `alerts.list`. 금액·메일 없음.
+## 자동 알림 🔔 (011 → 018 긴급 배차)
+- DB 예약 작업 `joil-alerts`(5분) → `joil.alerts_scan`이 pg_net으로 함수 `sys.urgent`(props `SELF_URL`·`GAS_SECRET`, 5~23시만) → `urgent.js`가 `joil.alerts`(kind `urg`, `lvl` soon/late) → 화면 `alertsInit`가 RPC `joil_alerts`로 3분마다. 데모는 demo.js `alerts.list`(이동 72분 고정, `window.__demoNow`). 금액·메일 없음.
+- **배차 알림은 긴급만**(2026-11-22 사용자 결정 · 예전 미배정·차량정보·인수증 알림은 내림): 오늘, 배차전이거나 차량정보 빈 호차(회차·합차 연결 제외). 상차 마감(상차지 상차가능시간 끝) · 출발 마감(하차지마다 하차 끝 − 경로 순서대로 누적 이동시간, 앞 하차 30분, 가장 이른 것) 중 이른 쪽, 1시간 전부터 '임박', 지나면 빨간 '지남'.
+- 시간 글자 읽기 `windows`·`dayEnd`: 낮 구간(18시 전에 시작) 중 가장 늦은 끝, 하차불가·점심 구간 빼기, 오전/오후·`-`·`까지` · 못 읽으면 조용히 뺌. 이동시간 = 카카오 길찾기(승용차) × 1.2, 주소 조합마다 한 번 `joil.route_times`에 저장(관리자: 알림 창 → 이동시간 표 → 다시 조회 `admin.routes`·`admin.routeRefetch`).
 
 ## 손익 대시보드
 - 배차시트 '손익'(`drawDispProfit`, 분석 권한만): 달마다 `dispatch.monthAll` → 월별 기록과 **같은 함수** `dispMonthCalc`(그 달 단가) → 기간 안 호차만 합침. 월별 기록 계산을 고치면 손익도 같이 바뀌어요. 센터별은 번들 비율로 나눔.

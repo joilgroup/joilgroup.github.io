@@ -52,10 +52,11 @@ async function route(req: any) {
   const t0 = Date.now();
   try {
     let out: any;
-    if (action === 'sys.run' || action === 'sys.hashes') { // 구글 쪽 예약 작업·비교 (비밀값으로만)
+    if (action === 'sys.run' || action === 'sys.hashes' || action === 'sys.urgent') { // 구글 쪽 예약 작업·비교 (비밀값으로만)
       if (!(await secretOk(req.secret))) throw new Error('권한이 없어요.');
       // 월요일 주간 요약 메일은 새 서버(port.js)가 · 나머지 예약 작업은 그대로 Code.js
-      if (action === 'sys.run' && String(req.fn) === 'sendWeeklySummary') { try { out = { result: await (server as any).port.weeklySend(null, null) }; } catch (e) { console.error(e); out = { result: null }; } }
+      if (action === 'sys.urgent') { out = { n: await (server as any).urgent.scan(req.at ? Number(req.at) : undefined) }; } // 긴급 배차 알림 (018 · 5분마다 DB 예약 작업이 부름)
+      else if (action === 'sys.run' && String(req.fn) === 'sendWeeklySummary') { try { out = { result: await (server as any).port.weeklySend(null, null) }; } catch (e) { console.error(e); out = { result: null }; } }
       else if (action === 'sys.run') out = { result: await gas.call(null, null, String(req.fn || ''), []) ?? null };
       else {
         const hashes: Record<string, unknown> = {};

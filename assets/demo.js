@@ -650,13 +650,23 @@
           x.fcs.forEach(function (fc) { var c = scm[fc] = scm[fc] || { fc: fc, n: 0, last: '', first: x.date }; c.n++; if (x.date > c.last) c.last = x.date; if (x.date < c.first) c.first = x.date; }); });
         var sbn = function (a, b) { return b.n - a.n || (a.last < b.last ? 1 : -1); };
         return { list: slist, drivers: Object.keys(sdm).map(function (k) { return sdm[k]; }).sort(sbn), centers: Object.keys(scm).map(function (k) { return scm[k]; }).sort(sbn), more: false };
-      case 'alerts.list': // 서버는 DB 예약 작업(011) · 데모는 부를 때 바로 계산 (오늘 미배정 오더 · 차량정보 빈 호차)
-        var ad = today().slice(0, 10), al = {}, aput = function (k, c, d, msg) { al[k + '|' + c + '|' + d] = { kind: k, cust: c, date: d, msg: msg, n: 1, nos: '', at: '' }; }, aun = {};
-        wk('dispOrd').forEach(function (o) { if (o.date === ad && (o.truck === '' || o.truck == null) && (me.role !== 'partner')) aun[o.cust] = (aun[o.cust] || 0) + 1; });
-        Object.keys(aun).forEach(function (c) { aput('un', c, ad, '호차 미배정 오더 ' + aun[c] + '줄'); });
-        var anc = {}; wk('dispTrk').forEach(function (t) { if (t.date === ad && !String(t.car || '').trim() && !t.status && wk('dispOrd').some(function (o) { return o.cust === t.cust && o.date === ad && o.truck === t.no; }) && (me.role !== 'partner' || (me.dispTabs || []).indexOf(t.cust) !== -1)) (anc[t.cust] = anc[t.cust] || []).push(t.no); });
-        Object.keys(anc).forEach(function (c) { aput('nocar', c, ad, '차량정보 빈 호차 ' + anc[c].length + '대 (' + anc[c].join('·') + '호차)'); });
-        return { list: Object.keys(al).map(function (k) { return al[k]; }) };
+      case 'alerts.list': // 서버는 함수(urgent.js · 5분마다) · 데모는 부를 때 바로 계산: 오늘 차가 안 잡힌 호차의 상차 마감·출발 마감 (데모 이동시간 = 구간마다 1시간 × 1.2 · 앞 하차 30분)
+        var ad = today().slice(0, 10), al = [], anow = window.__demoNow != null ? window.__demoNow : new Date().getHours() * 60 + new Date().getMinutes();
+        var aend = function (t) { var e = null; String(t || '').replace(/\([^)]*\)/g, '').split(/\/|,/).forEach(function (seg) { if (/불가|점심/.test(seg)) return; var m = /(\d{1,2})(?::(\d{2}))?\s*시?\s*~\s*(\d{1,2})(?::(\d{2}))?/.exec(seg); if (!m || +m[1] * 60 >= 1080) return; var v = +m[3] * 60 + (+m[4] || 0); if (v <= +m[1] * 60) v += 1440; if (e == null || v > e) e = v; }); return e; };
+        var afm = function (v) { v = Math.max(0, Math.round(v)); return Math.floor(v / 60) + (v % 60 ? ':' + pad(v % 60) : '시'); };
+        wk('dispTrk').forEach(function (t) {
+          if (t.date !== ad || t.status === '회차' || !(!t.status || t.status === '배차전' || !String(t.car || '').trim())) return;
+          if (me.role === 'partner' && (me.dispTabs || []).indexOf(t.cust) === -1) return;
+          var rows = wk('dispOrd').filter(function (o) { return o.cust === t.cust && o.date === ad && o.truck === t.no; }).sort(function (a, b) { return a.seq - b.seq; }); if (!rows.length) return;
+          var pl = wk('places').filter(function (x) { return x.name === rows[0].d.from; })[0], load = pl ? aend(pl.time) : null, cum = 0, dep = null, last = null;
+          rows.forEach(function (o) { if (o.d.addr && o.d.addr === last) return; cum += (last ? 30 : 0) + 72; last = o.d.addr; var e = aend(o.d.hours); if (e != null && (!dep || e - cum < dep.at)) dep = { at: e - cum, fc: o.d.fc, end: e }; });
+          var dl = load != null && (!dep || load <= dep.at) ? { load: 1, at: load } : dep; if (!dl || anow < dl.at - 60) return;
+          var late = anow > dl.at, msg = t.no + '호차 ' + (dl.load ? (late ? '상차 마감 지남 (' + afm(dl.at) + ')' : '상차 마감 ' + afm(dl.at) + ' 임박') : (late ? '출발 마감 지남 (' + afm(dl.at) + ' · ' : afm(dl.at) + ' 전 출발해야 함 (') + dl.fc + ' ' + afm(dl.end) + '까지 하차)');
+          al.push({ kind: 'urg', cust: t.cust, date: ad, n: 1, nos: String(t.no), msg: msg, lvl: late ? 'late' : 'soon', at: '' });
+        });
+        return { list: al };
+      case 'admin.routes': return { routes: [{ from: '가상 평택시 1', to: '가상 화성시 1', min: 50, adj: 60, km: 40, at: today() }], x: 1.2 };
+      case 'admin.routeRefetch': return { routes: [{ from: req.from, to: req.to, min: 50, adj: 60, km: 40, at: today() }], x: 1.2 };
       case 'dispatch.history':
         var hrefs = (req.ids || []).concat(req.tk ? [req.tk] : []), hcost = me.perms.indexOf('analysis') !== -1;
         return { list: wk('audit').filter(function (x) { return x.cust === req.cust && x.date === req.date && (x.tbl === 'truck' || x.tbl === 'order') && (!hrefs.length || hrefs.indexOf(x.ref) !== -1); }).map(function (x) { var c = Object.assign({}, x.chg); if (!hcost) ['rev', 'cost', 'ret_cost', 'wait', 'support'].forEach(function (k) { delete c[k]; }); return Object.assign({}, x, { chg: c }); }).filter(function (x) { return Object.keys(x.chg).length; }) };

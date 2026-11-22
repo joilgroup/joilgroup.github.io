@@ -1900,5 +1900,5 @@ export function makePort(o) {
     else if ((t[0] === 'admin' || t[0] === 'admin1') && session.role !== 'admin') throw err('관리자만 사용할 수 있습니다.');
     return t[1](session, req);
   }
-  return { weeklySend: weeklySend, unpackAll: unpackAll, ACTIONS: Object.keys(TABLE), has: function (a) { return Object.prototype.hasOwnProperty.call(TABLE, a); }, handle: handle, _t: { readAll: readAll, rowsOf: rowsOf, edit: edit } };
+  return { weeklySend: weeklySend, unpackAll: unpackAll, geo: geocodeMany, kakao: fetchAllKakao, ACTIONS: Object.keys(TABLE), has: function (a) { return Object.prototype.hasOwnProperty.call(TABLE, a); }, handle: handle, _t: { readAll: readAll, rowsOf: rowsOf, edit: edit } };
 }
