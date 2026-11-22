@@ -15,14 +15,14 @@ function enc(v) { return v instanceof Date ? { $d: v.toISOString() } : v; }
 var STEPS = require('./sb-port.steps.js');
 (async function () {
   // 새 서버의 가짜 구글 쪽(int.drive): 목(M.drive)과 같은 규칙으로 파일 ID F0, F1 …
-  var fdrive = { n: 0, f: 0, files: {} };
+  var fdrive = { n: 0, f: 0, files: {}, mails: [] };
   var gasFake = async function (url, o) {
     var b = JSON.parse(o.body), a = b.arg || {}, r;
     if (b.action !== 'int.drive') throw new Error('모르는 일 ' + b.action);
     if (b.op === 'mkdir') r = { id: 'D' + (fdrive.n++) }; else if (b.op === 'fmeta') r = { id: a.id, name: '폴더' };
     else if (b.op === 'create') { var id = 'F' + (fdrive.f++); fdrive.files[id] = a; r = { id: id, name: a.name, size: Buffer.from(a.data, 'base64').length }; }
     else if (b.op === 'get') { var f = fdrive.files[a.id]; if (!f) return { text: async function () { return JSON.stringify({ ok: false, error: '파일 없음' }); } }; r = { data: f.data, mime: f.mime, name: f.name }; }
-    else if (b.op === 'trash') { delete fdrive.files[a.id]; r = {}; } else throw new Error('모르는 op ' + b.op);
+    else if (b.op === 'trash') { delete fdrive.files[a.id]; r = {}; } else if (b.op === 'mail') { fdrive.mails.push(a); r = {}; } else throw new Error('모르는 op ' + b.op);
     return { text: async function () { return JSON.stringify({ ok: true, result: r }); } };
   };
   var S = await L.boot({ fetch: gasFake, zip: function (files) { return Uint8Array.from(Buffer.from(JSON.stringify(Object.keys(files)))); }, netFetch: async function () { throw new Error('시험: 바깥 인터넷 없음'); } }); if (!S) { console.log('PASS (건너뜀) 시험용 Postgres 가 없어요'); return; }
@@ -50,5 +50,7 @@ var STEPS = require('./sb-port.steps.js');
       ok('같은 응답 ' + (++step) + ' ' + (label || '') + ' ' + who + ' ' + action + (a.ok ? '' : ' (오류: ' + a.error + ')'), na === nb, diff(na, nb)); return [a, b];
     };
     for (var x of STEPS.steps) await both(x[0], x[1], x[2], x[3]);
+    var ma = JSON.stringify(M.drive.mails), mb = JSON.stringify(fdrive.mails); if (ma !== mb) console.log(diff(ma, mb));
+    ok('주간 요약 메일: 받는 사람·제목·본문 같음 (금액 없음)', M.drive.mails.length > 0 && ma === mb && !/\d,\d{3}원/.test(mb), [M.drive.mails.length, fdrive.mails.length]);
   } finally { await S.stop(); }
 })().catch(function (e) { ok('실행 오류', false, e.stack || String(e)); });

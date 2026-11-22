@@ -130,6 +130,12 @@ module.exports = {
     ['stf', 'docs.list', {}, '다시'],
     ['stf', 'docs.delete', function (c) { var f = function (l) { return { id: l.docs[0].id }; }; return [f(c.last.a), f(c.last.b)]; }, '지우기'],
     ['stf', 'docs.delete', { id: 'nope' }, '없는 서류'],
-    ['stf', 'docs.list', {}, '마지막']
+    ['stf', 'docs.list', {}, '마지막'],
+    // 주간 요약 (사이트 · 메일)
+    ['stf', 'weekly.get'], ['adm', 'weekly.get', { week: '2026-11-25' }, '지정 주'], ['nq', 'weekly.get', {}, '견적 권한 없음 → 견적 빼고'], ['stf', 'weekly.get', { week: '11/25' }, '날짜 틀림'],
+    ['stf', 'weekly.send', {}, '관리자만'],
+    ['adm', 'weekly.send', { onlyMe: true }, '나에게 (메일 없음)'],
+    ['adm', 'staff.save', { staff: [{ name: '김직원', email: 'a@b.cd', weekly: true }, { name: '관리', account: 'a', email: 'adm@b.cd' }] }],
+    ['adm', 'weekly.send', { onlyMe: true }, '나에게'], ['adm', 'weekly.send', { week: '2026-11-23' }, '받기 체크한 직원 모두']
   ]
 };

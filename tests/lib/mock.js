@@ -51,12 +51,13 @@ var ctx = { console: console, JSON: JSON, Math: Math, Date: Date,
     newBlob: function (bytes, mime, name) { return mockBlob(bytes, mime, name); },
     zip: function (blobs, name) { return mockBlob(Array.from(Buffer.from(JSON.stringify(blobs.map(function (b) { return b.getName(); })))), 'application/zip', name); } },
   Logger: { log: function () {} },
+  MailApp: { sendEmail: function (o) { drive.mails.push(o); }, getRemainingDailyQuota: function () { return 100; } },
   // 가짜 구글 드라이브 (파일 ID = F0, F1 … · 새 서버 시험의 가짜 int.drive 와 같은 순서)
   DriveApp: { createFolder: function (n) { return mockFolder('D' + (drive.n++)); }, getFolderById: function (id) { return mockFolder(id); }, getFileById: function (id) { var f = drive.files[id]; if (!f) throw new Error('파일 없음'); return { getId: function () { return id; }, getBlob: function () { return mockBlob(f.bytes, f.mime, f.name); }, setTrashed: function () { delete drive.files[id]; } }; } },
   ContentService: { MimeType: { JSON: 1 }, createTextOutput: function (s) { return { s: s, setMimeType: function () { return this; } }; } },
   Session: { getScriptTimeZone: function () { return 'Asia/Seoul'; } } };
 vm.createContext(ctx); vm.runInContext(fs.readFileSync(SRC, 'utf8'), ctx);
-var drive = { n: 0, f: 0, files: {} };
+var drive = { n: 0, f: 0, files: {}, mails: [] };
 function mockBlob(bytes, mime, name) { var b = { bytes: bytes, mime: mime, name: name, getBytes: function () { return b.bytes; }, getName: function () { return b.name; }, setName: function (n) { b.name = n; return b; }, getContentType: function () { return b.mime; } }; return b; }
 function mockFolder(id) { return { getId: function () { return id; }, getName: function () { return '폴더'; }, createFile: function (blob) { var fid = 'F' + (drive.f++); drive.files[fid] = { bytes: blob.bytes, mime: blob.mime, name: blob.name }; return { getId: function () { return fid; } }; } }; }
 var SESS = { adm: { id: 'a', name: '관리', role: 'admin', perms: ['quote', 'analysis'] }, stf: { id: 's', name: '직원', role: 'staff', perms: ['quote'] }, ptn: { id: 'p', name: '협력A', role: 'partner', perms: [], dispTabs: ['쿠팡부자재/평택'] } };

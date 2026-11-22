@@ -915,6 +915,138 @@ export function makePort(o) {
     return {};
   }
 
+  /* ───────────── 주간 업무 요약 (사이트 + 메일 · Code.js weekly_ · weeklyHtml_ · weeklySend_) ───────────── */
+  function addD(st, n) { var d = new Date(Date.UTC(+st.slice(0, 4), +st.slice(5, 7) - 1, +st.slice(8, 10)) + n * 86400000); return d.toISOString().slice(0, 10); }
+  function dowD(st) { return new Date(Date.UTC(+st.slice(0, 4), +st.slice(5, 7) - 1, +st.slice(8, 10))).getUTCDay(); }
+  function holiMap(cal) { var m = {}; (cal.holidays || []).forEach(function (h) { (m[h.date] = m[h.date] || []).push({ name: h.name, off: h.off }); }); (cal.companyHolidays || []).forEach(function (h) { (m[h.date] = m[h.date] || []).push({ name: h.name, off: true }); }); return m; }
+  function isOffD(st, holi) { var w = dowD(st); return w === 0 || w === 6 || (holi[st] || []).some(function (h) { return h.off; }); }
+  function taskOccD(t, from, to, holi, today) {
+    if (!t.active) return [];
+    var r = t.rule || {}, bases = [], lo = addD(from, -10), hi = addD(to, 10), x;
+    if (r.type === 'once') bases = [r.date];
+    else if (r.type === 'daily') { if (today >= from && today <= to && (r.workdays === false || !isOffD(today, holi))) bases = [today]; }
+    else if (r.type === 'weekly') { for (x = lo; x <= hi; x = addD(x, 1)) if (dowD(x) === Number(r.dow)) bases.push(x); }
+    else for (x = lo.slice(0, 7) + '-01'; x <= hi; x = addD(x.slice(0, 7) + '-28', 7).slice(0, 7) + '-01') {
+      var y = +x.slice(0, 4), m = +x.slice(5, 7), n = new Date(Date.UTC(y, m, 0)).getUTCDate(), ym = x.slice(0, 7);
+      if (r.type === 'monthEnd') bases.push(ym + '-' + ('0' + n).slice(-2));
+      else if (r.type === 'monthDay') bases.push(ym + '-' + ('0' + Math.min(r.day, n)).slice(-2));
+      else if (r.type === 'yearly' && m === Number(r.month)) bases.push(ym + '-' + ('0' + Math.min(r.day, n)).slice(-2));
+    }
+    return bases.filter(function (b) { return b && (!t.start || b >= t.start); }).map(function (b) {
+      var date = b;
+      if (r.type !== 'weekly' && r.type !== 'daily' && t.adjust !== 'none') { var k = 0; while (isOffD(date, holi) && k++ < 15) date = addD(date, t.adjust === 'next' ? 1 : -1); }
+      return { task: t, base: b, date: date };
+    }).filter(function (ob) { return ob.date >= from && ob.date <= to; });
+  }
+  function dutyEntD(cal, from, to, holi) {
+    var out = [], real = {}, ovr = {};
+    cal.leaves.forEach(function (l) { if (l.kind === '당직') real[l.name + '|' + l.start] = 1; });
+    (cal.dutyOverrides || []).forEach(function (x) { ovr[x.ruleId + '|' + x.week] = x; });
+    (cal.dutyRules || []).forEach(function (r) {
+      if (!r.active || !r.members.length) return;
+      var w = mondayOf(from); if (w < r.start) w = r.start;
+      for (; w <= to; w = addD(w, 7)) {
+        var n = Math.round((Date.parse(w) - Date.parse(r.start)) / 604800000), m = r.members[((n % r.members.length) + r.members.length) % r.members.length];
+        var ov = ovr[r.id + '|' + w]; if (ov && ov.cancel) continue;
+        var who = ov && ov.name ? ov.name : m.name, h = ov && ov.hours != null ? ov.hours : r.hours;
+        if (r.mode === 'week') { if (!real[who + '|' + w]) out.push({ kind: '당직', label: r.name, name: who, start: w, end: addD(w, 6), hours: h }); }
+        else for (var k = 0; k < 7; k++) {
+          var day = addD(w, k), hol = (holi[day] || []).some(function (z) { return z.off; });
+          if ((r.days.indexOf(dowD(day)) !== -1 || (r.holidays && hol)) && !real[who + '|' + day]) out.push({ kind: '당직', label: r.name, name: who, start: day, end: day, hours: h });
+        }
+      }
+    });
+    return out.filter(function (l) { return l.end >= from && l.start <= to; });
+  }
+  var OT_KINDS = ['야간근무', '휴일근무', '당직'];
+  function otDate(l) { return l.kind === '당직' ? l.end : l.start; }
+  async function ownerCover(cal, from, to) {
+    var off = {};
+    cal.leaves.forEach(function (l) { if (/근무|당직/.test(l.kind) || l.end < from || l.start > to) return; (off[l.name] = off[l.name] || []).push(l); });
+    return (await o.ownersList()).owners.filter(function (x) { return x.main && off[x.main]; }).map(function (x) { var l = off[x.main][0]; return { task: x.task, cust: x.cust, main: x.main, sub: x.sub, kind: l.kind, start: l.start, end: l.end }; });
+  }
+  async function weekly(week, session) {
+    var today = ymdNow(), w = mondayOf(week ? checkDate(week, '주') : today), we = addD(w, 6), lw = addD(w, -7), lwe = addD(w, -1);
+    var cal = await calAll(session || { id: '', role: '' }), holi = holiMap(cal), quote = !session || (session.perms || []).indexOf('quote') !== -1;
+    var res = { week: w, weekEnd: we, lastWeek: lw, today: today, holidays: [], ot: [], duty: [], leaves: [], tasks: [], overdue: 0, reqs: null, contracts: [], docs: [], notices: [] };
+    for (var d = w; d <= we; d = addD(d, 1)) (holi[d] || []).forEach(function (h) { if (h.off) res.holidays.push({ date: d, name: h.name }); });
+    var by = {};
+    cal.leaves.concat(dutyEntD(cal, addD(lw, -7), lwe, holi)).forEach(function (l) {
+      if (OT_KINDS.indexOf(l.kind) === -1) return; var k = otDate(l); if (k < lw || k > lwe) return;
+      var x = by[l.name] || (by[l.name] = { name: l.name, '야간근무': 0, '휴일근무': 0, '당직': 0, total: 0 });
+      x[l.kind] += Number(l.hours) || 0; x.total += Number(l.hours) || 0;
+    });
+    res.ot = Object.keys(by).sort().map(function (k) { return by[k]; });
+    var dmap = {};
+    cal.leaves.filter(function (l) { return l.kind === '당직'; }).concat(dutyEntD(cal, w, we, holi)).forEach(function (l) {
+      if (l.end < w || l.start > we) return; var lab = l.label || (l.memo && l.memo.length <= 10 ? l.memo : '당직'), k = lab + '|' + l.name;
+      var x = dmap[k] || (dmap[k] = { label: lab, name: l.name, days: [] }); x.days.push(l.start < w ? w : l.start); x.end = l.end > we ? we : l.end;
+    });
+    res.duty = Object.keys(dmap).map(function (k) { var x = dmap[k]; x.days.sort(); return { label: x.label, name: x.name, from: x.days[0], to: x.end }; }).sort(function (a, b) { return a.label.localeCompare(b.label); });
+    res.leaves = cal.leaves.filter(function (l) { return l.kind !== '당직' && l.end >= w && l.start <= we; }).map(function (l) { return { name: l.name, kind: l.kind, start: l.start, end: l.end, hours: l.hours }; }).sort(function (a, b) { return a.start < b.start ? -1 : 1; });
+    var done = {}; cal.done.forEach(function (x) { done[x.taskId + '|' + x.date] = 1; });
+    cal.tasks.forEach(function (t) {
+      taskOccD(t, w, we, holi, today).forEach(function (x) { if (!done[t.id + '|' + x.base]) res.tasks.push({ date: x.date, cust: t.cust, title: t.title, who: t.assignee || '팀 전체' }); });
+      taskOccD(t, addD(today, -90), addD(w < today ? today : w, -1), holi, today).forEach(function (x) { if (!done[t.id + '|' + x.base] && x.date < today) res.overdue++; });
+    });
+    res.tasks.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    if (quote) {
+      var rq = { received: 0, submitted: 0, won: 0, lost: 0, open: 0, due: [] };
+      (await rowsOf(SHEET_REQS, REQ_HEADER)).forEach(function (r) {
+        var ob = reqRowToObj(r, false), log = parseJson(r[15], []);
+        if (ob.received >= lw && ob.received <= lwe) rq.received++;
+        if (ob.submitted >= lw && ob.submitted <= lwe) rq.submitted++;
+        log.forEach(function (x) { var dd = String(x.at).slice(0, 10); if (dd >= lw && dd <= lwe) { if (/→ 수주$/.test(x.text)) rq.won++; if (/→ 미수주$/.test(x.text)) rq.lost++; } });
+        if (ob.status === '접수' || ob.status === '검토중') { rq.open++; if (ob.due && ob.due <= we) rq.due.push({ date: ob.due, cust: ob.cust, title: ob.title, late: ob.due < today }); }
+      });
+      rq.due.sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+      res.reqs = rq;
+      var lim = addD(today, 30);
+      (await custsList()).custs.forEach(function (c) { if (c.end && c.end <= lim && c.end >= addD(today, -7)) res.contracts.push({ name: c.name, end: c.end }); });
+      (await docsList()).docs.forEach(function (x) { if (x.expires && x.expires <= lim && x.expires >= addD(today, -7)) res.docs.push({ name: (x.biz ? x.biz + ' ' : '') + x.name, end: x.expires }); });
+      res.contracts.sort(function (a, b) { return a.end < b.end ? -1 : 1; }); res.docs.sort(function (a, b) { return a.end < b.end ? -1 : 1; });
+    }
+    res.cover = await ownerCover(cal, w, we);
+    var since = addD(today, -14);
+    res.notices = (await o.noticesList()).filter(function (n) { return n.pinned || n.at.slice(0, 10) >= since; }).slice(0, 8).map(function (n) { return { title: n.title, body: n.body.slice(0, 300), pinned: n.pinned, owner: n.owner, at: n.at.slice(0, 10) }; });
+    return res;
+  }
+  function md(st) { return (+st.slice(5, 7)) + '/' + (+st.slice(8, 10)); }
+  function weeklyHtml(x) {
+    var H = function (v) { return String(v == null ? '' : v).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+    var WDN = ['일', '월', '화', '수', '목', '금', '토'], wd = function (v) { return md(v) + '(' + WDN[dowD(v)] + ')'; };
+    var sec = function (t, inner) { return '<h3 style="font-size:15px;margin:22px 0 8px;color:#1E1C19;border-left:4px solid #F07A22;padding-left:8px">' + t + '</h3>' + inner; };
+    var tbl = function (head, rows) { return rows.length ? '<table style="border-collapse:collapse;width:100%;font-size:13px">' + '<tr>' + head.map(function (h) { return '<th style="text-align:left;background:#F4EEE3;padding:6px 8px;border:1px solid #DCD2C1">' + h + '</th>'; }).join('') + '</tr>' + rows.map(function (r) { return '<tr>' + r.map(function (c) { return '<td style="padding:6px 8px;border:1px solid #DCD2C1">' + c + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>' : '<p style="color:#7A7265;font-size:13px;margin:0">없음</p>'; };
+    var h = '<div style="font-family:\'Malgun Gothic\',sans-serif;max-width:680px;color:#1E1C19">' +
+      '<div style="height:6px;background:linear-gradient(90deg,#E0472E 0 20%,#F07A22 20% 40%,#F4BE2E 40% 60%,#4FA864 60% 80%,#2A9DB0 80%)"></div>' +
+      '<h2 style="margin:14px 0 2px">JOIL 주간 업무 요약</h2><p style="color:#7A7265;margin:0 0 6px">' + wd(x.week) + ' ~ ' + wd(x.weekEnd) + (x.holidays.length ? ' · 공휴일: ' + x.holidays.map(function (d) { return H(md(d.date) + ' ' + d.name); }).join(', ') : '') + '</p>';
+    if (x.notices.length) h += sec('📢 공지', x.notices.map(function (n) { return '<div style="background:#FBF8F2;border:1px solid #DCD2C1;border-radius:8px;padding:8px 10px;margin-bottom:6px"><b>' + (n.pinned ? '📌 ' : '') + H(n.title) + '</b> <span style="color:#7A7265;font-size:12px">' + H(n.owner) + ' · ' + H(n.at) + '</span>' + (n.body ? '<div style="font-size:13px;white-space:pre-wrap;margin-top:4px">' + H(n.body) + '</div>' : '') + '</div>'; }).join(''));
+    h += sec('🛡 이번 주 당직', tbl(['구분', '담당', '기간'], x.duty.map(function (d) { return [H(d.label), '<b>' + H(d.name) + '</b>', d.from === d.to ? wd(d.from) : wd(d.from) + ' ~ ' + wd(d.to)]; })));
+    if (x.cover && x.cover.length) h += sec('🔁 휴가로 대신 맡는 업무', tbl(['업무', '주담당 (휴가)', '대신', '기간'], x.cover.map(function (c) { return [H(c.task) + (c.cust ? ' <span style="color:#7A7265">' + H(c.cust) + '</span>' : ''), H(c.main) + ' · ' + H(c.kind), '<b>' + H(c.sub || '미정') + '</b>', c.start === c.end ? wd(c.start) : wd(c.start) + ' ~ ' + wd(c.end)]; })));
+    h += sec('🌴 이번 주 휴가·근무', tbl(['이름', '종류', '날짜'], x.leaves.map(function (l) { return [H(l.name), H(l.kind) + (l.hours ? ' ' + l.hours + 'h' : ''), l.start === l.end ? wd(l.start) : wd(l.start) + ' ~ ' + wd(l.end)]; })));
+    h += sec('✅ 이번 주 할 일' + (x.overdue ? ' <span style="color:#E0472E;font-size:13px">(밀린 할 일 ' + x.overdue + '건)</span>' : ''), tbl(['기한', '할 일', '담당'], x.tasks.map(function (t) { return [wd(t.date), (t.cust ? '[' + H(t.cust) + '] ' : '') + H(t.title), H(t.who)]; })));
+    if (x.reqs) {
+      h += sec('📨 견적', '<p style="font-size:13px;margin:0 0 8px">지난주 접수 <b>' + x.reqs.received + '</b> · 제출 <b>' + x.reqs.submitted + '</b> · 수주 <b>' + x.reqs.won + '</b> · 미수주 <b>' + x.reqs.lost + '</b> · 지금 진행 중 <b>' + x.reqs.open + '</b>건</p>' +
+        tbl(['회신 기한', '거래처', '제목'], x.reqs.due.map(function (r) { return [(r.late ? '<b style="color:#E0472E">' + wd(r.date) + ' 지남</b>' : wd(r.date)), H(r.cust), H(r.title)]; })));
+      if (x.contracts.length || x.docs.length) h += sec('⏰ 만료 임박 (30일)', tbl(['구분', '이름', '만료일'], x.contracts.map(function (c) { return ['계약', H(c.name), wd(c.end)]; }).concat(x.docs.map(function (c) { return ['서류', H(c.name), wd(c.end)]; }))));
+    }
+    h += sec('⏱ 지난주 추가근무', tbl(['이름', '야간근무', '휴일근무', '당직', '합계'], x.ot.map(function (ob) { return [H(ob.name), ob['야간근무'] || '–', ob['휴일근무'] || '–', ob['당직'] || '–', '<b>' + ob.total + '시간</b>']; })));
+    return h + '<p style="color:#7A7265;font-size:12px;margin-top:24px">JOIL · 조일그룹 견적·실적 시스템에서 자동으로 보낸 메일이에요. 받지 않으려면 관리자에게 말씀해 주세요.</p></div>';
+  }
+  /** 주간 요약 메일 (금액 없음 — 견적은 건수만) · 메일은 구글 쪽(int.drive mail)이 보내요 */
+  async function weeklySend(week, onlyMe) {
+    var x = await weekly(week, null), staff = await calStaff(), to;
+    if (onlyMe) {
+      var me = staff.filter(function (s2) { return s2.email && (s2.account === onlyMe.id || s2.name === onlyMe.name); })[0];
+      if (!me) throw err('직원 목록에서 내 이름(또는 계정)에 메일 주소를 먼저 넣으세요.');
+      to = [me.email];
+    } else to = staff.filter(function (s2) { return s2.active && s2.weekly && s2.email; }).map(function (s2) { return s2.email; });
+    if (!to.length) throw err('"주간 요약 받기"를 체크한 직원이 없어요.');
+    var subj = '[JOIL] 주간 업무 요약 ' + md(x.week) + '~' + md(x.weekEnd), html = weeklyHtml(x);
+    for (var e of to) await drive('mail', { to: e, subject: subj, htmlBody: html, name: 'JOIL 조일그룹' });
+    return { sent: to.length, to: to };
+  }
+
   /* ───────────── 요청 나누기 (Code.js handle_ 의 순서·권한 그대로) ───────────── */
   // 권한: quote = 견적 메뉴 권한(Code.js QUOTE_ACTIONS) · admin = 관리자만 · '' = 로그인만
   var TABLE = {
@@ -967,6 +1099,8 @@ export function makePort(o) {
     'docs.get': ['quote', function (s, q) { return docsGet(q.id); }],
     'docs.zip': ['quote', function (s, q) { return docsZip(q.ids); }],
     'docs.delete': ['quote', function (s, q) { return docsDelete(s, q.id); }],
+    'weekly.get': ['', async function (s, q) { return { weekly: await weekly(q.week, s) }; }],
+    'weekly.send': ['admin1', function (s, q) { return weeklySend(q.week, q.onlyMe ? s : null); }],
     'cal.companyHolidays': ['admin1', async function (s, q) { await saveCompanyHolidays(q.list); return calAll(s); }]
   };
   async function handle(action, session, req) {
@@ -976,5 +1110,5 @@ export function makePort(o) {
     else if ((t[0] === 'admin' || t[0] === 'admin1') && session.role !== 'admin') throw err('관리자만 사용할 수 있습니다.');
     return t[1](session, req);
   }
-  return { ACTIONS: Object.keys(TABLE), has: function (a) { return Object.prototype.hasOwnProperty.call(TABLE, a); }, handle: handle, _t: { readAll: readAll, rowsOf: rowsOf, edit: edit } };
+  return { weeklySend: weeklySend, ACTIONS: Object.keys(TABLE), has: function (a) { return Object.prototype.hasOwnProperty.call(TABLE, a); }, handle: handle, _t: { readAll: readAll, rowsOf: rowsOf, edit: edit } };
 }
