@@ -39,7 +39,8 @@ T.run(async function () {
   await g.click('[data-undo]'); await g.waitForSelector('[data-ev="dep"]');
   ok('되돌리기', (await api(p, 'dispatch.events', { cust: '애플', date: D })).events.length === 0);
   await g.click('[data-ev="dep"]'); await g.waitForSelector('.big.done');
-  await o.ctx.clearPermissions(); // 위치 거부
+  // 위치 거부: 권한 지우기만으론 브라우저가 1분 안에 받은 위치(maximumAge)를 돌려줄 때가 있어 시각·타이밍마다 갈렸어요 → 거부 응답을 직접
+  await g.evaluate(function () { navigator.geolocation.getCurrentPosition = function (ok, no) { setTimeout(function () { no({ code: 1, message: 'denied' }); }, 10); }; });
   await g.click('[data-ev="arr"][data-stop="0"]'); await g.waitForSelector('#st0 .big.done', { timeout: 10000 });
   ev = await api(p, 'dispatch.events', { cust: '애플', date: D });
   var a0 = ev.events.filter(function (x) { return x.kind === 'arr'; })[0];

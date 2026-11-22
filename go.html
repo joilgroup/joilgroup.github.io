@@ -48,7 +48,7 @@
   (function () {
     'use strict';
     var CFG = window.JOIL_CONFIG || {}, API_URL = CFG.API_URL || '';
-    if (API_URL && CFG.SB_FN && (CFG.SB_ROUTE === 'dispatch' || CFG.SB_ROUTE === 'all')) API_URL = CFG.SB_FN;
+    if (API_URL && CFG.SB_FN && (CFG.SB_ROUTE === 'dispatch' || CFG.SB_ROUTE === 'all')) API_URL = CFG.SB_FN + (CFG.SB_FN.indexOf('?') === -1 ? '?forceFunctionRegion=ap-northeast-1' : ''); // DB 와 같은 도쿄에서
     var T = String(location.hash || '').replace(/^#\/?/, '');
     var app = document.getElementById('app'), data = null, ev = [], busy = {};
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }

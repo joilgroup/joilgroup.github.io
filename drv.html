@@ -58,7 +58,7 @@
   (function () {
     'use strict';
     var CFG = window.JOIL_CONFIG || {}, API_URL = CFG.API_URL || '';
-    if (API_URL && CFG.SB_FN && (CFG.SB_ROUTE === 'dispatch' || CFG.SB_ROUTE === 'all')) API_URL = CFG.SB_FN; // 서버 이전 뒤: 기사 링크도 Supabase 함수로 (docs/서버이전.md)
+    if (API_URL && CFG.SB_FN && (CFG.SB_ROUTE === 'dispatch' || CFG.SB_ROUTE === 'all')) API_URL = CFG.SB_FN + (CFG.SB_FN.indexOf('?') === -1 ? '?forceFunctionRegion=ap-northeast-1' : ''); // 서버 이전 뒤: 기사 링크도 Supabase 함수로 · DB 와 같은 도쿄에서 돌게(서울이면 DB 왕복으로 0.5초 더)
     var T = String(location.hash || '').replace(/^#\/?/, '');
     var app = document.getElementById('app'), data = null, busy = {};
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }

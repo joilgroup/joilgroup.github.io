@@ -44,7 +44,7 @@
   <script>
   (function () {
     'use strict';
-    var API_URL = 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/info';
+    var API_URL = 'https://etvpifkfyrxvvpqqrsza.supabase.co/functions/v1/info?forceFunctionRegion=ap-northeast-1'; // 함수를 DB 와 같은 도쿄에서 (서울에서 돌면 DB 왕복으로 0.5초 더)
     var T = String(location.hash || '').replace(/^#\/?/, '');
     var app = document.getElementById('app'), data = null, ev = [], busy = {};
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
