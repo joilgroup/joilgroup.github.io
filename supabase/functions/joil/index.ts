@@ -10,7 +10,7 @@ import { SRC } from './gas_src.js';
 
 const schema = Deno.env.get('JOIL_SCHEMA') || 'joil';
 const sql = postgres(Deno.env.get('SUPABASE_DB_URL')!, { max: 3, prepare: false, idle_timeout: 20, connection: { search_path: schema + ', extensions, public', application_name: 'joil-fn' }, onnotice: () => {} });
-const server = makeServer(sql);
+const server = makeServer(sql, { zip: (files: Record<string, Uint8Array>) => zipSync(files) });
 // 구글 쪽 Code.js 부르기 (드라이브·메일 대행): 주소·비밀값은 시험 복사 때 props 에 저장돼요
 async function gasFetch(action: string, payload: Record<string, unknown>) {
   const p: Record<string, string> = {};

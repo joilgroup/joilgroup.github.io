@@ -44,10 +44,21 @@ var ctx = { console: console, JSON: JSON, Math: Math, Date: Date,
   Utilities: { DigestAlgorithm: { SHA_256: 1 }, Charset: { UTF_8: 1 },
     computeDigest: function (alg, str) { return Array.from(require('crypto').createHash('sha256').update(String(str)).digest()).map(function (b) { return b > 127 ? b - 256 : b; }); },
     formatDate: function (d, tz, f) { return f.replace('yyyy', d.getFullYear()).replace('MM', p2(d.getMonth() + 1)).replace('dd', p2(d.getDate())).replace('HH', p2(d.getHours())).replace('mm', p2(d.getMinutes())).replace('ss', p2(d.getSeconds())); },
-    getUuid: function () { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function () { return (Math.random() * 16 | 0).toString(16); }); } },
+    getUuid: function () { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function () { return (Math.random() * 16 | 0).toString(16); }); },
+    // 파일(드라이브) 흉내에 필요한 것: 바이트 = -128~127 숫자 배열
+    base64Decode: function (s) { return Array.from(Buffer.from(String(s), 'base64')).map(function (b) { return b > 127 ? b - 256 : b; }); },
+    base64Encode: function (b) { return Buffer.from(typeof b === 'string' ? Buffer.from(b) : Uint8Array.from(b, function (x) { return x & 255; })).toString('base64'); },
+    newBlob: function (bytes, mime, name) { return mockBlob(bytes, mime, name); },
+    zip: function (blobs, name) { return mockBlob(Array.from(Buffer.from(JSON.stringify(blobs.map(function (b) { return b.getName(); })))), 'application/zip', name); } },
+  Logger: { log: function () {} },
+  // 가짜 구글 드라이브 (파일 ID = F0, F1 … · 새 서버 시험의 가짜 int.drive 와 같은 순서)
+  DriveApp: { createFolder: function (n) { return mockFolder('D' + (drive.n++)); }, getFolderById: function (id) { return mockFolder(id); }, getFileById: function (id) { var f = drive.files[id]; if (!f) throw new Error('파일 없음'); return { getId: function () { return id; }, getBlob: function () { return mockBlob(f.bytes, f.mime, f.name); }, setTrashed: function () { delete drive.files[id]; } }; } },
   ContentService: { MimeType: { JSON: 1 }, createTextOutput: function (s) { return { s: s, setMimeType: function () { return this; } }; } },
   Session: { getScriptTimeZone: function () { return 'Asia/Seoul'; } } };
 vm.createContext(ctx); vm.runInContext(fs.readFileSync(SRC, 'utf8'), ctx);
+var drive = { n: 0, f: 0, files: {} };
+function mockBlob(bytes, mime, name) { var b = { bytes: bytes, mime: mime, name: name, getBytes: function () { return b.bytes; }, getName: function () { return b.name; }, setName: function (n) { b.name = n; return b; }, getContentType: function () { return b.mime; } }; return b; }
+function mockFolder(id) { return { getId: function () { return id; }, getName: function () { return '폴더'; }, createFile: function (blob) { var fid = 'F' + (drive.f++); drive.files[fid] = { bytes: blob.bytes, mime: blob.mime, name: blob.name }; return { getId: function () { return fid; } }; } }; }
 var SESS = { adm: { id: 'a', name: '관리', role: 'admin', perms: ['quote', 'analysis'] }, stf: { id: 's', name: '직원', role: 'staff', perms: ['quote'] }, ptn: { id: 'p', name: '협력A', role: 'partner', perms: [], dispTabs: ['쿠팡부자재/평택'] } };
 ctx.__realRequireSession = ctx.requireSession_;
 ctx.requireSession_ = function (t) { var s = SESS[t]; if (!s) throw new Error('no sess'); return JSON.parse(JSON.stringify(s)); };
@@ -56,4 +67,4 @@ function call(tok, action, req) { req = Object.assign({ action: action, token: t
 var fails = 0;
 function ok(name, cond, info) { if (!cond) fails++; console.log((cond ? 'PASS ' : 'FAIL ') + name + (info !== undefined && !cond ? ' :: ' + (typeof info === 'string' ? info : JSON.stringify(info)) : '')); }
 process.on('exit', function () { if (errors.length) { console.log('FAIL 시트 줄 너비 오류 :: ' + errors.join(' / ')); fails++; } if (fails) process.exitCode = 1; });
-module.exports = { SESS: SESS, call: call, sheets: sheets, props: props, cache: cache, errors: errors, ctx: ctx, Sheet: Sheet, ok: ok };
+module.exports = { drive: drive, SESS: SESS, call: call, sheets: sheets, props: props, cache: cache, errors: errors, ctx: ctx, Sheet: Sheet, ok: ok };

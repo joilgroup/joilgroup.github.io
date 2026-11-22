@@ -631,6 +631,290 @@ export function makePort(o) {
     return { result: res, cal: await calAll(session) };
   }
 
+  /* ───────────── 견적모음 (읽기 도구 · 견적 접수가 상태를 맞출 때) ───────────── */
+  var SHEET_QUOTES = '견적모음';
+  var QUOTE_HEADER = ['견적ID', '저장일', '아이디', '이름', '견적명', '거래처', '메모', '상태', '종류', '건수', '상차지', '하차지', '원본기록ID', '조회일', '수정일', '실적연결', '조정', '조정기록'];
+  function parseLink(v) { try { return v ? JSON.parse(String(v)) : null; } catch (e) { return null; } }
+  function quoteRowToObj(r) {
+    return { id: String(r[0]), savedAt: fmtV(r[1]), userId: String(r[2]), userName: String(r[3]), name: String(r[4]), client: String(r[5]), memo: String(r[6]), status: String(r[7]), type: String(r[8]), count: r[9], from: String(r[10]), to: String(r[11]),
+      recordId: String(r[12]), queriedAt: fmtV(r[13]), updatedAt: fmtV(r[14]), link: parseLink(r[15]), hasAdj: !!r[16] };
+  }
+  /** Code.js quotesSheet_: 제목 줄 끝 칸이 다르면 제목을 다시 써요 */
+  async function quotesHeader(W) { var h = (await Q(W.tx, 'select sheet_getrow($1, 1) v', [SHEET_QUOTES]))[0].v; if (!h || String(dec(h[QUOTE_HEADER.length - 1] == null ? '' : h[QUOTE_HEADER.length - 1])) !== QUOTE_HEADER[QUOTE_HEADER.length - 1]) await W.putRows(SHEET_QUOTES, 1, [QUOTE_HEADER]); }
+  async function findQuote(id, db) { var f = await findRow(SHEET_QUOTES, QUOTE_HEADER, id, db); return f ? { row: f.row, data: quoteRowToObj(f.raw), raw: f.raw } : null; }
+
+  /* ───────────── 견적 접수함 (Code.js reqsList_ … reqsImport_) ───────────── */
+  var SHEET_REQS = '견적접수', REQ_HEADER = ['ID', '사업자', '거래처', '제목', '본문', '받은날', '회신기한', '상태', '제출일', '제출요약', '연결견적ID', '담당', '등록자', '등록일시', '수정일시', '기록', '이전접수ID', '연결구분', '상대담당'];
+  var SHEET_REQ_FILES = '접수파일', REQ_FILE_HEADER = ['파일ID', '접수ID', '종류', '파일명', '형식', '크기', '올린사람', '올린일시', '단계ID'];
+  var REQ_STATUS = ['접수', '검토중', '제출', '수주', '미수주', '보류'];
+  var SHEET_REQ_STEPS = '견적진행', REQ_STEP_HEADER = ['ID', '접수ID', '날짜', '종류', '내용', '제출금액', '협력사', '매입금액', '작성자', '작성일시', '수정일시'];
+  var REQ_STEP_KINDS = ['요청 받음', '수정 요청', '할인 요청', '협력사 견적', '회신', '제출', '수주', '미수주', '메모'];
+  var REQ_LINK_TYPES = ['수정 요청', '재계약', '관련 건'];
+  var REQ_TO_QUOTE_STATUS = { '접수': '작성', '검토중': '작성', '보류': '작성', '제출': '제출', '수주': '수주', '미수주': '미수주' };
+  function canCost(session) { return !!session && (session.role === 'admin' || (session.perms || []).indexOf('analysis') !== -1); }
+  /** Code.js headerSheet_: 제목 칸이 모자라면 늘려요 */
+  async function headerFix(W, name, header) { var h = ((await Q(W.tx, 'select sheet_getrow($1, 1) v', [name]))[0].v || []); var n = 0; h.forEach(function (x, i) { if (x !== '' && x != null) n = i + 1; }); if (h.length && n < header.length) await W.putRows(name, 1, [header]); }
+  function reqStepRow(r) { return { id: String(r[0]), reqId: String(r[1]), date: textDate(r[2]), kind: String(r[3]), text: String(r[4] || ''), amount: r[5] === '' ? null : Number(r[5]), partner: String(r[6] || ''), cost: r[7] === '' ? null : Number(r[7]), by: String(r[8] || ''), at: fmtV(r[9]) }; }
+  async function reqSteps(reqId, session) {
+    var see = canCost(session);
+    return (await rowsOf(SHEET_REQ_STEPS, REQ_STEP_HEADER)).filter(function (r) { return String(r[1]) === String(reqId); }).map(reqStepRow).map(function (x) { if (!see) { delete x.cost; x.costHidden = true; } return x; })
+      .sort(function (a, b) { return (a.date || '9999') < (b.date || '9999') ? -1 : (a.date || '9999') > (b.date || '9999') ? 1 : a.at < b.at ? -1 : 1; });
+  }
+  function reqRowToObj(r, withBody) {
+    var ob = { id: String(r[0]), biz: String(r[1]), cust: String(r[2]), title: String(r[3]), received: textDate(r[5]), due: textDate(r[6]), status: String(r[7]) || '접수',
+      submitted: textDate(r[8]), summary: String(r[9] || ''), quoteId: String(r[10] || ''), owner: String(r[11] || ''), by: String(r[12]), at: fmtV(r[13]), updated: fmtV(r[14]),
+      prevId: String(r[16] || ''), linkType: String(r[17] || ''), contact: String(r[18] || '') };
+    if (withBody) { ob.body = String(r[4] || ''); ob.log = parseJson(r[15], []); } else ob.snippet = String(r[4] || '').replace(/\s+/g, ' ').slice(0, 120);
+    return ob;
+  }
+  /** 시트의 '2번 줄부터 끝까지' (빈 줄 포함 · Code.js getRange(2,1,last-1,n).getValues() 와 같게) */
+  async function bodyRows(name, width, db) { var all = await readAll(name, db); return all.slice(1).map(function (r, i) { var v = []; for (var j = 0; j < width; j++) v.push(readValue(r[j] == null ? '' : r[j])); v._r = i + 2; return v; }); }
+  async function findReq(id, db) { if (!id) return null; var hit = (await bodyRows(SHEET_REQS, REQ_HEADER.length, db)).filter(function (r) { return display(r[0]) === String(id); })[0]; return hit ? { row: hit._r, raw: hit } : null; }
+  async function reqFiles(reqId, db) {
+    return (await bodyRows(SHEET_REQ_FILES, REQ_FILE_HEADER.length, db)).filter(function (r) { return String(r[1]) === String(reqId); }).map(function (r) {
+      return { id: String(r[0]), kind: String(r[2]), fileName: String(r[3]), mime: String(r[4]), size: Number(r[5]) || 0, by: String(r[6]), at: fmtV(r[7]), stepId: String(r[8] || '') };
+    });
+  }
+  async function reqsList() {
+    var counts = {}, st = {};
+    (await bodyRows(SHEET_REQ_FILES, REQ_FILE_HEADER.length)).forEach(function (r) { var k = String(r[1]); var c = counts[k] || (counts[k] = { in: 0, out: 0 }); if (String(r[2]) === '제출') c.out++; else c.in++; });
+    (await rowsOf(SHEET_REQ_STEPS, REQ_STEP_HEADER)).forEach(function (r) { var k = String(r[1]), c = st[k] || (st[k] = { n: 0, submit: 0, discount: 0, revise: 0, partner: 0, last: '' }); c.n++;
+      var kd = String(r[3]); if (kd === '제출') c.submit++; else if (kd === '할인 요청') c.discount++; else if (kd === '수정 요청') c.revise++; else if (kd === '협력사 견적') c.partner++; var d = textDate(r[2]); if (d > c.last) c.last = d; });
+    var list = (await bodyRows(SHEET_REQS, REQ_HEADER.length)).filter(function (r) { return r[0]; }).map(function (r) {
+      var ob = reqRowToObj(r, false); ob.files = counts[ob.id] || { in: 0, out: 0 }; ob.steps = st[ob.id] || { n: 0, submit: 0, discount: 0, revise: 0, partner: 0, last: '' }; return ob;
+    });
+    return { reqs: list.reverse() };
+  }
+  async function reqsGet(id, session) {
+    var f = await findReq(id); if (!f) throw err('접수 건을 찾을 수 없습니다.');
+    var ob = reqRowToObj(f.raw, true);
+    ob.files = await reqFiles(ob.id);
+    ob.steps = await reqSteps(ob.id, session); ob.canCost = canCost(session);
+    if (ob.prevId) { var pv = await findReq(ob.prevId); ob.prev = pv ? { id: ob.prevId, title: String(pv.raw[3]), cust: String(pv.raw[2]), received: textDate(pv.raw[5]), status: String(pv.raw[7]) } : null; }
+    ob.next = (await bodyRows(SHEET_REQS, REQ_HEADER.length)).filter(function (r) { return String(r[16]) === ob.id; }).map(function (r) { return { id: String(r[0]), title: String(r[3]), linkType: String(r[17] || ''), received: textDate(r[5]), status: String(r[7]) }; });
+    if (ob.quoteId) { var q = await findQuote(ob.quoteId); ob.quote = q ? { id: q.data.id, name: q.data.name, status: q.data.status, userName: q.data.userName } : null; }
+    return { req: ob };
+  }
+  function checkReq(r) {
+    r = r || {};
+    var d = function (v) { v = String(v || '').trim(); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw err('날짜 형식은 YYYY-MM-DD 입니다: ' + v); return v; };
+    var cust = String(r.cust || '').trim(); if (!cust) throw err('거래처를 입력하세요.');
+    var title = String(r.title || '').trim(); if (!title) throw err('제목을 입력하세요.');
+    return { biz: String(r.biz || '').slice(0, 30), cust: cust.slice(0, 100), title: title.slice(0, 200), body: String(r.body || '').slice(0, 40000), received: d(r.received), due: d(r.due),
+      status: REQ_STATUS.indexOf(r.status) !== -1 ? r.status : '접수', submitted: d(r.submitted), summary: String(r.summary || '').slice(0, 3000), quoteId: String(r.quoteId || '').slice(0, 40), owner: String(r.owner || '').slice(0, 50),
+      prevId: String(r.prevId || '').slice(0, 40), linkType: REQ_LINK_TYPES.indexOf(r.linkType) !== -1 ? r.linkType : (r.prevId ? '관련 건' : ''), contact: String(r.contact || '').slice(0, 100) };
+  }
+  async function reqAddLog(W, id, session, text) {
+    var found = await findReq(id, W.tx); if (!found) return;
+    var log = parseJson(found.raw[15], []); log.push({ at: nowTxt(), by: session.name, text: text }); if (log.length > 200) log = log.slice(-200);
+    await W.set(SHEET_REQS, found.row, 15, [nowTxt(), JSON.stringify(log)]);
+  }
+  async function reqQuoteStatus(W, qid, st) { if (!qid) return; var q = await findQuote(qid, W.tx); if (q) { await quotesHeader(W); await W.set(SHEET_QUOTES, q.row, 8, [REQ_TO_QUOTE_STATUS[st]]); } }
+  var REQ_SHEETS = [SHEET_REQS, SHEET_REQ_FILES, SHEET_REQ_STEPS, SHEET_QUOTES];
+  async function reqsSave(session, req) {
+    var f = checkReq(req.req), now = nowTxt(), who = session.name, id;
+    if (f.quoteId && !(await findQuote(f.quoteId))) throw err('연결할 견적모음 건을 찾을 수 없습니다.');
+    if (f.prevId && (f.prevId === req.id || !(await findReq(f.prevId)))) throw err('연결할 이전 견적을 찾을 수 없습니다.');
+    var row = [f.biz, f.cust, f.title, f.body, "'" + f.received, "'" + f.due, f.status, "'" + f.submitted, f.summary, f.quoteId, f.owner];
+    var tail = [f.prevId, f.prevId ? f.linkType : '', f.contact];
+    await edit(REQ_SHEETS, async function (W) {
+      await headerFix(W, SHEET_REQS, REQ_HEADER);
+      var log;
+      if (req.id) {
+        var found = await findReq(req.id, W.tx); if (!found) throw err('접수 건을 찾을 수 없습니다.');
+        var old = reqRowToObj(found.raw, true); id = old.id; log = old.log || [];
+        if (old.status !== f.status) log.push({ at: now, by: who, text: '상태 ' + old.status + ' → ' + f.status });
+        if (old.quoteId !== f.quoteId) log.push({ at: now, by: who, text: f.quoteId ? '견적모음 연결' : '견적모음 연결 해제' });
+        if (old.submitted !== f.submitted && f.submitted) log.push({ at: now, by: who, text: '제출일 ' + f.submitted });
+        if (old.summary !== f.summary && f.summary) log.push({ at: now, by: who, text: '제출 단가 요약 수정' });
+        if (old.prevId !== f.prevId) log.push({ at: now, by: who, text: f.prevId ? '이전 견적 연결 (' + f.linkType + ')' : '이전 견적 연결 해제' });
+        if (log.length > 200) log = log.slice(-200);
+        await W.set(SHEET_REQS, found.row, 2, row);
+        await W.set(SHEET_REQS, found.row, 15, [now, JSON.stringify(log)].concat(tail));
+      } else {
+        id = newId('Q');
+        log = [{ at: now, by: who, text: '접수 등록' + (f.received ? ' (받은 날 ' + f.received + ')' : '') + (f.prevId ? ' · 이전 견적 연결 (' + f.linkType + ')' : '') }];
+        await W.append(SHEET_REQS, REQ_HEADER, [id].concat(row).concat([session.name + ' (' + session.id + ')', now, now, JSON.stringify(log)]).concat(tail));
+      }
+      await reqQuoteStatus(W, f.quoteId, f.status);
+    });
+    return reqsGet(id, session);
+  }
+  async function reqsUpload(session, req) {
+    var reqId = String(req.id || ''); if (!(await findReq(req.id))) throw err('접수 건을 찾을 수 없습니다.');
+    var kind = req.kind === '제출' ? '제출' : '받은', stepId = String(req.stepId || '');
+    if (stepId) { var sf = await findRow(SHEET_REQ_STEPS, REQ_STEP_HEADER, stepId); if (!sf || String(sf.raw[1]) !== reqId) throw err('단계를 찾을 수 없습니다.'); kind = String(sf.raw[3]) === '제출' ? '제출' : '받은'; }
+    var data = String(req.data || ''), size = b64len(data); if (!size) throw err('파일이 비어 있습니다.');
+    if (size > DOC_MAX_BYTES) throw err('파일은 20MB까지 올릴 수 있습니다.');
+    var fileName = String(req.fileName || '파일').replace(/[\\/:*?"<>|]/g, '_').slice(0, 150), mime = String(req.mime || 'application/octet-stream');
+    var file = await drive('create', { folder: await docsFolder(), name: fileName, mime: mime, data: data });
+    await edit(REQ_SHEETS, async function (W) {
+      await headerFix(W, SHEET_REQ_FILES, REQ_FILE_HEADER);
+      await W.append(SHEET_REQ_FILES, REQ_FILE_HEADER, [file.id, reqId, kind, fileName, mime, size, session.name, nowTxt(), stepId]);
+      await reqAddLog(W, reqId, session, (kind === '제출' ? '제출 파일' : '받은 파일') + ' 추가: ' + fileName);
+    });
+    return reqsGet(reqId, session);
+  }
+  async function findReqFile(fileId, db) {
+    if (!fileId) return null;
+    var hit = (await bodyRows(SHEET_REQ_FILES, REQ_FILE_HEADER.length, db)).filter(function (r) { return display(r[0]) === String(fileId); })[0];
+    return hit ? { row: hit._r, id: String(hit[0]), reqId: String(hit[1]), kind: String(hit[2]), fileName: String(hit[3]), mime: String(hit[4]) } : null;
+  }
+  async function reqsFile(fileId) { var f = await findReqFile(fileId); if (!f) throw err('파일을 찾을 수 없습니다.'); var r = await drive('get', { id: f.id }); return { data: r.data, fileName: f.fileName, mime: f.mime }; }
+  async function reqsFileDelete(session, fileId) {
+    var f0 = await findReqFile(fileId); if (!f0) throw err('파일을 찾을 수 없습니다.');
+    try { await drive('trash', { id: f0.id, on: true }); } catch (e) { /* 이미 없음 */ }
+    await edit(REQ_SHEETS, async function (W) { var f = await findReqFile(fileId, W.tx); if (f) await W.del(SHEET_REQ_FILES, f.row); await reqAddLog(W, f0.reqId, session, '파일 삭제: ' + f0.fileName); });
+    return reqsGet(f0.reqId, session);
+  }
+  async function reqsZip(id) {
+    var files = await reqFiles(id); if (!files.length) throw err('파일이 없습니다.');
+    var used = {}, out = {};
+    for (var f of files) {
+      var nm = (f.kind === '제출' ? '제출_' : '받은_') + f.fileName, k = 2, base = nm.replace(/(\.[^.]+)?$/, ''), ext = (nm.match(/\.[^.]+$/) || [''])[0];
+      while (used[nm]) nm = base + '(' + (k++) + ')' + ext; used[nm] = true;
+      out[nm] = Uint8Array.from(atob((await drive('get', { id: f.id })).data), function (ch) { return ch.charCodeAt(0); });
+    }
+    var z = o.zip(out), bin = ''; for (var i = 0; i < z.length; i += 0x8000) bin += String.fromCharCode.apply(null, z.subarray(i, i + 0x8000));
+    return { data: btoa(bin) };
+  }
+  async function reqsDelete(session, id) {
+    var f0 = await findReq(id); if (!f0) throw err('접수 건을 찾을 수 없습니다.');
+    if (session.role !== 'admin' && String(f0.raw[12]).indexOf('(' + session.id + ')') === -1) throw err('등록한 사람이나 관리자만 삭제할 수 있습니다.');
+    for (var x of await reqFiles(id)) { try { await drive('trash', { id: x.id, on: true }); } catch (e) { /* 무시 */ } }
+    await edit(REQ_SHEETS, async function (W) {
+      var fr = await bodyRows(SHEET_REQ_FILES, 2, W.tx); for (var i = fr.length - 1; i >= 0; i--) if (String(fr[i][1]) === String(id)) await W.del(SHEET_REQ_FILES, fr[i]._r);
+      var sr = await bodyRows(SHEET_REQ_STEPS, 2, W.tx); for (var j = sr.length - 1; j >= 0; j--) if (String(sr[j][1]) === String(id)) await W.del(SHEET_REQ_STEPS, sr[j]._r);
+      var f = await findReq(id, W.tx); await W.del(SHEET_REQS, f.row);
+    });
+    return {};
+  }
+  function reqStepClean(x) {
+    x = x || {};
+    var date = String(x.date || '').trim(); if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw err('날짜 형식은 YYYY-MM-DD 입니다: ' + date);
+    var kind = REQ_STEP_KINDS.indexOf(x.kind) !== -1 ? x.kind : '메모';
+    var num = function (v, nm) { if (v === '' || v == null) return ''; var n = Number(String(v).replace(/[,\s원]/g, '')); if (!isFinite(n) || n < 0) throw err(nm + ' 금액을 확인하세요.'); return n; };
+    return { date: date, kind: kind, text: String(x.text || '').slice(0, 20000), amount: num(x.amount, '제출'), partner: String(x.partner || '').trim().slice(0, 60), cost: num(x.cost, '매입') };
+  }
+  async function reqApplyStep(W, reqId, v, session) {
+    var f = await findReq(reqId, W.tx); if (!f) return;
+    var st = String(f.raw[7]) || '접수', sub = textDate(f.raw[8]), ns = st, nsub = sub;
+    if (v.kind === '제출') { if (['접수', '검토중', '보류'].indexOf(st) !== -1) ns = '제출'; if (v.date && v.date > sub) nsub = v.date; }
+    else if (v.kind === '수주' || v.kind === '미수주') ns = v.kind;
+    else if ((v.kind === '수정 요청' || v.kind === '할인 요청') && st === '제출') ns = '검토중';
+    if (ns === st && nsub === sub) return;
+    await W.set(SHEET_REQS, f.row, 8, [ns, "'" + nsub]);
+    if (ns !== st) await reqAddLog(W, reqId, session, '상태 ' + st + ' → ' + ns + ' (' + v.kind + ' 단계)');
+    var qid = String(f.raw[10] || ''); if (qid && ns !== st) await reqQuoteStatus(W, qid, ns);
+  }
+  async function reqStepSave(session, req) {
+    var reqId = String(req.reqId || ''); if (!(await findReq(reqId))) throw err('접수 건을 찾을 수 없습니다.');
+    var v = reqStepClean(req.step), see = canCost(session), now = nowTxt();
+    await edit(REQ_SHEETS, async function (W) {
+      if (req.id) {
+        var f = await W.findRow(SHEET_REQ_STEPS, REQ_STEP_HEADER, req.id); if (!f || String(f.raw[1]) !== reqId) throw err('단계를 찾을 수 없습니다.');
+        var cost = see ? v.cost : f.raw[7]; // 분석 권한이 없으면 매입 금액은 그대로 둠
+        await W.set(SHEET_REQ_STEPS, f.row, 3, ["'" + v.date, v.kind, v.text, v.amount, v.partner, cost]);
+        await W.set(SHEET_REQ_STEPS, f.row, 11, [now]);
+        await reqAddLog(W, reqId, session, '진행 기록 수정: ' + v.kind);
+      } else {
+        await W.append(SHEET_REQ_STEPS, REQ_STEP_HEADER, [newId('P'), reqId, "'" + v.date, v.kind, v.text, v.amount, v.partner, see ? v.cost : '', session.name, now, now]);
+        await reqAddLog(W, reqId, session, '진행 기록 추가: ' + v.kind + (v.date ? ' (' + v.date + ')' : ''));
+      }
+      await reqApplyStep(W, reqId, v, session);
+    });
+    return reqsGet(reqId, session);
+  }
+  async function reqStepDelete(session, id) {
+    var f0 = await findRow(SHEET_REQ_STEPS, REQ_STEP_HEADER, id); if (!f0) throw err('단계를 찾을 수 없습니다.');
+    var reqId = String(f0.raw[1]);
+    await edit(REQ_SHEETS, async function (W) {
+      for (var x of (await reqFiles(reqId, W.tx)).filter(function (y) { return y.stepId === id; })) { var ff = await findReqFile(x.id, W.tx); if (ff) await W.set(SHEET_REQ_FILES, ff.row, 9, ['']); } // 파일은 남기고 단계 연결만 해제
+      var f = await W.findRow(SHEET_REQ_STEPS, REQ_STEP_HEADER, id); await W.del(SHEET_REQ_STEPS, f.row);
+      await reqAddLog(W, reqId, session, '진행 기록 삭제: ' + String(f0.raw[3]));
+    });
+    return reqsGet(reqId, session);
+  }
+  async function reqsImport(session, req) {
+    var items = (req.items || []).slice(0, 500), see = canCost(session), now = nowTxt(), res = { added: 0, skipped: 0, steps: 0 };
+    await edit(REQ_SHEETS, async function (W) {
+      await headerFix(W, SHEET_REQS, REQ_HEADER);
+      var have = {}, byKey = {}, rows = [], steps = [];
+      (await bodyRows(SHEET_REQS, REQ_HEADER.length, W.tx)).forEach(function (r) { have[String(r[3]).trim() + '|' + textDate(r[5])] = String(r[0]); });
+      items.forEach(function (it, i) {
+        var f; try { f = checkReq({ cust: it.cust || '(거래처 미정)', title: it.title, body: it.body, received: it.received, due: it.due, status: it.status, contact: it.contact, owner: it.owner }); } catch (e) { throw err((i + 1) + '번째 견적: ' + e.message); }
+        var k = f.title + '|' + f.received;
+        if (have[k]) { res.skipped++; if (it.key) byKey[it.key] = have[k]; return; }
+        var id = newId('Q') + i; have[k] = id; if (it.key) byKey[it.key] = id;
+        var prev = it.prev ? (byKey[it.prev] || '') : '';
+        var log = [{ at: now, by: session.name, text: '가져오기로 등록' + (req.source ? ' (' + String(req.source).slice(0, 30) + ')' : '') }];
+        rows.push([id, f.biz, f.cust, f.title, f.body, "'" + f.received, "'" + f.due, f.status, "'" + f.submitted, f.summary, '', f.owner, session.name + ' (' + session.id + ')', now, now, JSON.stringify(log), prev, prev ? (REQ_LINK_TYPES.indexOf(it.prevType) !== -1 ? it.prevType : '관련 건') : '', f.contact]);
+        (it.steps || []).slice(0, 100).forEach(function (x, j) {
+          var v; try { v = reqStepClean(x); } catch (e) { throw err((i + 1) + '번째 견적 ' + (j + 1) + '번째 단계: ' + e.message); }
+          steps.push([newId('P') + i + '_' + j, id, "'" + v.date, v.kind, v.text, v.amount, v.partner, see ? v.cost : '', session.name, now, now]);
+          if (v.kind === '제출' && v.date) { var rr = rows[rows.length - 1]; if (v.date > String(rr[8]).replace(/^'/, '')) rr[8] = "'" + v.date; }
+        });
+        res.added++;
+      });
+      if (rows.length) { var n = await W.lastRow(SHEET_REQS); if (n < 1) { await W.putRows(SHEET_REQS, 1, [REQ_HEADER]); n = 1; } await W.putRows(SHEET_REQS, n + 1, rows); }
+      if (steps.length) { var n2 = await W.lastRow(SHEET_REQ_STEPS); if (n2 < 1) { await W.putRows(SHEET_REQ_STEPS, 1, [REQ_STEP_HEADER]); n2 = 1; } await W.putRows(SHEET_REQ_STEPS, n2 + 1, steps); }
+      res.steps = steps.length;
+    });
+    return res;
+  }
+
+  /* ───────────── 서류함 (구글 드라이브 · Code.js docsList_ … docsDelete_) ───────────── */
+  var SHEET_DOCS = '서류목록', DOCS_HEADER = ['파일ID', '사업자', '분류', '서류명', '파일명', '형식', '크기', '발급일', '만료일', '메모', '올린사람', '올린일시', '수정일시'];
+  function docRowToObj(r) {
+    return { id: String(r[0]), biz: String(r[1]), cat: String(r[2]), name: String(r[3]), fileName: String(r[4]), mime: String(r[5]), size: Number(r[6]) || 0,
+      issued: textDate(r[7]), expires: textDate(r[8]), memo: String(r[9] || ''), by: String(r[10] || ''), at: fmtV(r[11]), updated: fmtV(r[12]) };
+  }
+  async function docsList() { return { docs: (await bodyRows(SHEET_DOCS, DOCS_HEADER.length)).filter(function (r) { return r[0]; }).map(docRowToObj) }; }
+  async function findDoc(id, db) { if (!id) return null; var hit = (await bodyRows(SHEET_DOCS, DOCS_HEADER.length, db)).filter(function (r) { return display(r[0]) === String(id); })[0]; return hit ? { row: hit._r, data: docRowToObj(hit) } : null; }
+  function checkDocMeta(m) {
+    var name = String(m.name || '').trim(); if (!name) throw err('서류명을 입력하세요.');
+    var d = function (v) { v = String(v || '').trim(); if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw err('날짜 형식은 YYYY-MM-DD 입니다: ' + v); return v; };
+    return { name: name.slice(0, 100), biz: String(m.biz || '').slice(0, 30), cat: String(m.cat || '기타').slice(0, 30), issued: d(m.issued), expires: d(m.expires), memo: String(m.memo || '').slice(0, 500) };
+  }
+  async function docsUpload(session, req) {
+    var m = checkDocMeta(req), data = String(req.data || ''), size = b64len(data);
+    if (!size) throw err('파일이 비어 있습니다.');
+    if (size > DOC_MAX_BYTES) throw err('파일은 20MB까지 올릴 수 있습니다.');
+    var fileName = String(req.fileName || m.name).replace(/[\\/:*?"<>|]/g, '_').slice(0, 150), mime = String(req.mime || 'application/octet-stream');
+    var file = await drive('create', { folder: await docsFolder(), name: fileName, mime: mime, data: data }), now = nowTxt();
+    await edit([SHEET_DOCS], function (W) { return W.append(SHEET_DOCS, DOCS_HEADER, [file.id, m.biz, m.cat, m.name, fileName, mime, size, "'" + m.issued, "'" + m.expires, m.memo, session.name + ' (' + session.id + ')', now, now]); });
+    return { doc: (await findDoc(file.id)).data };
+  }
+  async function docsUpdate(session, id, patch) {
+    var found = await findDoc(id); if (!found) throw err('서류를 찾을 수 없습니다.');
+    var m = checkDocMeta(Object.assign({}, found.data, patch || {}));
+    await edit([SHEET_DOCS], async function (W) {
+      var f = await findDoc(id, W.tx);
+      await W.set(SHEET_DOCS, f.row, 2, [m.biz, m.cat, m.name]); await W.set(SHEET_DOCS, f.row, 8, ["'" + m.issued, "'" + m.expires, m.memo]); await W.set(SHEET_DOCS, f.row, 13, [nowTxt() + ' · ' + session.name]);
+    });
+    return { doc: (await findDoc(id)).data };
+  }
+  async function docsGet(id) { var found = await findDoc(id); if (!found) throw err('서류를 찾을 수 없습니다.'); return { doc: found.data, data: (await drive('get', { id: found.data.id })).data }; }
+  async function docsZip(ids) {
+    ids = (ids || []).slice(0, 50); if (!ids.length) throw err('서류를 고르세요.');
+    var used = {}, out = {};
+    for (var id of ids) {
+      var found = await findDoc(id); if (!found) continue;
+      var bytes = Uint8Array.from(atob((await drive('get', { id: found.data.id })).data), function (ch) { return ch.charCodeAt(0); });
+      var ext = (found.data.fileName.match(/\.[^.]+$/) || [''])[0], base = ((found.data.biz ? found.data.biz + '_' : '') + found.data.name).replace(/[\\/:*?"<>|]/g, '_'), nm = base + ext, k = 2;
+      while (used[nm]) nm = base + '(' + (k++) + ')' + ext; used[nm] = true; out[nm] = bytes;
+    }
+    var z = o.zip(out), bin = ''; for (var i = 0; i < z.length; i += 0x8000) bin += String.fromCharCode.apply(null, z.subarray(i, i + 0x8000));
+    return { data: btoa(bin) };
+  }
+  async function docsDelete(session, id) {
+    var found = await findDoc(id); if (!found) throw err('서류를 찾을 수 없습니다.');
+    try { await drive('trash', { id: found.data.id, on: true }); } catch (e) { /* 이미 없음 */ }
+    await edit([SHEET_DOCS], async function (W) { var f = await findDoc(id, W.tx); if (f) await W.del(SHEET_DOCS, f.row); });
+    console.log('서류 삭제: ' + found.data.name + ' by ' + session.id);
+    return {};
+  }
+
   /* ───────────── 요청 나누기 (Code.js handle_ 의 순서·권한 그대로) ───────────── */
   // 권한: quote = 견적 메뉴 권한(Code.js QUOTE_ACTIONS) · admin = 관리자만 · '' = 로그인만
   var TABLE = {
@@ -666,6 +950,23 @@ export function makePort(o) {
     'cal.import': ['admin1', function (s, q) { return calImport(s, q); }],
     'cal.grantsSave': ['admin1', function (s, q) { return grantsSave(s, q); }],
     'cal.refreshHolidays': ['admin1', async function (s, q) { return { result: await refreshHolidays(), cal: await calAll(s) }; }],
+    'reqs.list': ['quote', function (s, q) { return reqsList(); }],
+    'reqs.get': ['quote', function (s, q) { return reqsGet(q.id, s); }],
+    'reqs.save': ['quote', function (s, q) { return reqsSave(s, q); }],
+    'reqs.stepSave': ['quote', function (s, q) { return reqStepSave(s, q); }],
+    'reqs.stepDelete': ['quote', function (s, q) { return reqStepDelete(s, q.id); }],
+    'reqs.import': ['quote', function (s, q) { return reqsImport(s, q); }],
+    'reqs.upload': ['quote', function (s, q) { return reqsUpload(s, q); }],
+    'reqs.file': ['quote', function (s, q) { return reqsFile(q.fileId); }],
+    'reqs.fileDelete': ['quote', function (s, q) { return reqsFileDelete(s, q.fileId); }],
+    'reqs.zip': ['quote', function (s, q) { return reqsZip(q.id); }],
+    'reqs.delete': ['quote', function (s, q) { return reqsDelete(s, q.id); }],
+    'docs.list': ['quote', function (s, q) { return docsList(); }],
+    'docs.upload': ['quote', function (s, q) { return docsUpload(s, q); }],
+    'docs.update': ['quote', function (s, q) { return docsUpdate(s, q.id, q.patch); }],
+    'docs.get': ['quote', function (s, q) { return docsGet(q.id); }],
+    'docs.zip': ['quote', function (s, q) { return docsZip(q.ids); }],
+    'docs.delete': ['quote', function (s, q) { return docsDelete(s, q.id); }],
     'cal.companyHolidays': ['admin1', async function (s, q) { await saveCompanyHolidays(q.list); return calAll(s); }]
   };
   async function handle(action, session, req) {
