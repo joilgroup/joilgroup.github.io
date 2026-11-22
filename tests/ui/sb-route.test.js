@@ -3,9 +3,9 @@
 var T = require('../lib/browser.js'), ok = T.ok;
 var GAS = 'https://script.google.com/macros/s/FAKE/exec', FN = 'https://sbtest.supabase.co/functions/v1/joil', REST = 'https://sbtest.supabase.co';
 var D = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
-async function run(route) {
+async function run(route, pre) {
   var cfg = "window.JOIL_CONFIG={API_URL:'" + GAS + "',SB_FN:'" + FN + "',SB_REST:'" + REST + "',SB_ANON:'anon-test'" + (route ? ",SB_ROUTE:'" + route + "'" : '') + "};";
-  var o = await T.open({ login: false, config: cfg }), p = o.page, hits = [];
+  var o = await T.open({ login: false, config: cfg, init: pre ? function (v) { try { localStorage.setItem('joil-sb-route', v); } catch (e) {} } : undefined, initArg: pre }), p = o.page, hits = [];
   var user = { id: 'admin', name: '관리자', role: 'admin', mustChange: false, perms: ['quote', 'analysis', 'search', 'track', 'admin'], dispTabs: [] };
   var reply = function (a) {
     if (a === 'login') return { token: 'tok-' + Date.now(), user: user, settings: { tons: ['5톤'] } };
@@ -36,6 +36,9 @@ T.run(async function () {
 
   var h2 = await run('all');
   ok('전체 갈림길: 로그인·배차·다른 메뉴 모두 Supabase 함수로', h2.indexOf('fn login') !== -1 && h2.some(function (x) { return /^fn (notice|info|cal|work|weekly)\./.test(x); }) && !h2.some(function (x) { return /^gas /.test(x); }), h2);
+
+  var h3 = await run('all', 'dispatch'); // 전환 전에 #sb-on 으로 시험하던 기기: 예전 '배차만' 설정이 남아 있어도
+  ok('전체 전환 뒤 예전 기기 설정(배차만)은 지우고 모두 Supabase 로', h3.indexOf('fn login') !== -1 && !h3.some(function (x) { return /^gas /.test(x); }), h3);
 
   var o = await T.open({}), p = o.page; // 데모: 관리자 → API 키에서 Supabase 연결 뒤 '서버 이전 준비' 칸
   await T.api(p, 'admin.saveTrackKeys', { url: 'https://demo.supabase.co', key: 'x' });

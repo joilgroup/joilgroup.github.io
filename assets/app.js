@@ -11,11 +11,11 @@
   var CFG = window.JOIL_CONFIG || {};
   var SB_ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
     'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.history', 'admin.audit', 'dispatch.search', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
-    'dispatch.events', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
+    'dispatch.events', 'admin.routes', 'admin.routeRefetch', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
     'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   var SB_ROUTE = (function () {
     if (DEMO || !CFG.SB_FN) return '';
-    try { var h = location.hash; if (h === '#sb-on' || h === '#sb-off' || h === '#sb-all') { localStorage.setItem('joil-sb-route', h === '#sb-all' ? 'all' : h === '#sb-on' ? 'dispatch' : 'off'); history.replaceState(null, '', location.pathname + location.search); } var v = localStorage.getItem('joil-sb-route'); if (v) return v === 'off' ? '' : v; } catch (e) { /* 저장소 막힘 */ }
+    try { var h = location.hash; if (h === '#sb-on' || h === '#sb-off' || h === '#sb-all') { localStorage.setItem('joil-sb-route', h === '#sb-all' ? 'all' : h === '#sb-on' ? 'dispatch' : 'off'); history.replaceState(null, '', location.pathname + location.search); } var v = localStorage.getItem('joil-sb-route'); if (v === 'dispatch' && CFG.SB_ROUTE === 'all') { localStorage.removeItem('joil-sb-route'); v = ''; } if (v) return v === 'off' ? '' : v; } catch (e) { /* 저장소 막힘 */ }
     return CFG.SB_ROUTE || '';
   })();
   /* SB_ROUTE 'all' = 모든 메뉴를 Supabase 로 (구글에만 있는 서버 이전 도구·Supabase 키 저장만 Apps Script) */

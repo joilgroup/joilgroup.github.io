@@ -29,6 +29,8 @@ function deno() { if (fs.existsSync(BIN)) return BIN; cp.spawnSync('npm', ['inst
     ok('Deno 에서 압축 풀기 (스냅샷·분석, 원본 합계와 같음)', ur.snap && ur.snap.ok && ur.snap.rows === 1 && ur.an && ur.an.ok && ur.an.same === 1, ur);
     var au = await post({ action: 'analysis.upload', token: lg.j.token, biz: '명일로지스', month: '2026-09', data: gz([['2026-09-03', '다', 'a', 'b', '1톤', 10, 5]]), count: 1 }), al = await post({ action: 'analysis.load', token: lg.j.token, keys: ['명일로지스|2026-09'] });
     ok('분석 올리기·받기 (Deno 의 gzip)', au.j.ok && au.j.count === 1 && al.j.ok && /^H4sI/.test(al.j.data['명일로지스|2026-09'] || ''), [au.j, al.j.error]);
+    var rt = await post({ action: 'admin.routes', token: lg.j.token }), ev = await post({ action: 'dispatch.events', token: lg.j.token, cust: '애플', date: '2026-11-20' });
+    ok('긴급 알림 이동시간 표 · 출발·도착 기록 (새 액션이 Deno 입구에서도)', rt.j.ok && Array.isArray(rt.j.routes) && ev.j.ok && Array.isArray(ev.j.events), [rt.j, ev.j]);
     var tb = await post({ action: 'dispatch.tabs', token: lg.j.token, cust: '삼다수' });
     ok('배차 탭 (Code.js 와 같은 기본 탭)', tb.j.ok && tb.j.tabs.length === 5 && typeof tb.j.ms === 'number', tb.j);
     var im = await post({ action: 'dispatch.import', token: lg.j.token, cust: '삼다수', rows: [{ date: '2026-11-20', key: 'k1', d: { fc: '인천', bundle: '18' } }] });
