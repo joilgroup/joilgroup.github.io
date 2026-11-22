@@ -18,9 +18,9 @@ var DISP_PATCH_KEYS = DISP_TRK_FIELDS.concat(['status', 'retCost', 'wait', 'supp
 var DISP_EDIT_KEYS = ['bundle', 'kg', 'item', 'fc', 'addr', 'hours', 'dock', 'm1', 'm2', 'm3', 'rsv', 'rsvCode'];
 var DISP_RATE_TONS = ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤'];
 var PLACE_PHOTO_MAX = 2;
-var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'dispatch.notes', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save', 'dispatch.events'];
+var PARTNER_ACTIONS = ['me', 'logout', 'changePassword', 'publicSettings', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.must', 'dispatch.notes', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save', 'dispatch.events', 'dispatch.times'];
 /** 이 서버가 맡는 액션 (화면 갈림길 SB_ACTIONS 와 같은 목록 · 나머지는 아직 Apps Script) */
-export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'drv.get', 'drv.upload', 'drv.photo', 'drv.events', 'drv.event', 'dispatch.events',
+export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'drv.get', 'drv.upload', 'drv.photo', 'drv.events', 'drv.event', 'dispatch.events', 'dispatch.times',
   'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
@@ -806,6 +806,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.save': return dispScrub(await dispSave(session, req), session);
       case 'dispatch.stamp': return { stamps: await dispStamps(req.keys, req.date) };
       case 'dispatch.events': return dispEvents(req.cust, req.date);
+      case 'dispatch.times': return urgent.times(req.date, req.keys, !!req.fetch); // 호차 칸 걸리는 시간 (긴급 알림과 같은 계산 · fetch 일 때만 카카오)
       case 'dispatch.deleteOrders': return dispTouched(req, await dispDeleteOrders(session, req));
       case 'dispatch.note': return dispTouched(req, await dispNote(req));
       case 'dispatch.copyOrders': var cpr = await dispCopyOrders(session, req); await dispTouch(req.cust, req.toDate); return dispTouched(req, cpr);
@@ -875,6 +876,7 @@ export function makeServer(sql, opts) {
       case 'dispatch.save': ok(req.cust); return dispScrub(await dispSave(session, req), session);
       case 'dispatch.stamp': (req.keys || []).forEach(ok); return { stamps: await dispStamps(req.keys, req.date) };
       case 'dispatch.events': return dispEvents(ok(req.cust), req.date);
+      case 'dispatch.times': (req.keys || []).forEach(ok); return urgent.times(req.date, req.keys, false); // 협력사는 저장된 시간만 보기
       case 'dispatch.geo': return { coords: await dispGeo(req.addrs) };
       case 'dispatch.must': if (partnerCusts(session).indexOf(dispCust(req.cust)) === -1) throw err('볼 수 없는 업체예요.'); return { list: await dispMust(req.cust) };
       case 'dispatch.notes': if (partnerCusts(session).indexOf(dispCust(req.cust)) === -1) throw err('볼 수 없는 업체예요.'); return { list: (await dispNotes(req.cust)).filter(function (x) { return x.ptn || x.drv; }) };

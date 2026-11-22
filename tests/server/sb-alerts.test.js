@@ -69,6 +69,23 @@ var U = null;
     var rr = await S.call(tok.a, 'admin.routeRefetch', { from: rt.routes[0].from, to: rt.routes[0].to });
     ok('관리자: 조합 다시 조회', rr.ok && calls.route === routes + 1, [rr, calls]);
     var rn = await S.call(tok.p, 'admin.routes', {}); ok('협력사는 이동시간 표 못 봄', !rn.ok, rn);
+    // 배차 화면 호차 칸 (dispatch.times): 알림과 같은 계산 · 저장된 길만 읽고, fetch(버튼) 때만 처음 가는 길 조회
+    await S.call(tok.a, 'dispatch.import', { cust: P, rows: [{ date: D0, key: 'a5', d: o('용인1', '가상 용인시 처음가는길', '09:00~17:00') }] });
+    var dp5 = await S.call(tok.a, 'dispatch.day', { cust: P, date: D0 }), id5 = dp5.orders.filter(function (x) { return x.key === 'a5'; })[0].id;
+    await S.call(tok.a, 'dispatch.save', { cust: P, date: D0, orders: [{ id: id5, truck: 4, seq: 1 }], trucks: [{ no: 4, car: '' }] });
+    var c0 = calls.route, tm = await S.call(tok.a, 'dispatch.times', { keys: [P], date: D0 }), tOf = function (r, no) { return r.times.filter(function (x) { return x.no === no; })[0]; };
+    var x1 = tOf(tm, 1);
+    ok('호차 칸 시간: 알림과 같은 계산 (30분 + 하차 30분 + 2시간 = 3시간 · 경유 1 · 12시 전 출발)', tm.ok && x1 && x1.min === 180 && x1.vias === 1 && x1.dl.kind === 'dep' && x1.dl.at === 720 && x1.dl.stop === '이천1', tm);
+    ok('호차 칸 시간: 열 때는 카카오 조회 없음 · 처음 가는 길은 모름', calls.route === c0 && tOf(tm, 4).min == null && tm.fetched === 0, [tm, calls]);
+    ok('호차 칸 시간: 금액 없음', JSON.stringify(tm).indexOf('250000') === -1);
+    var tp = await S.call(tok.p, 'dispatch.times', { keys: [P], date: D0, fetch: 1 });
+    ok('협력사: 배정 탭은 보기만 (fetch 보내도 조회 안 함)', tp.ok && tOf(tp, 1).min === 180 && calls.route === c0, [tp, calls]);
+    var tq = await S.call(tok.p, 'dispatch.times', { keys: ['쿠팡부자재/인천'], date: D0 }); ok('협력사: 다른 탭은 막힘', !tq.ok, tq);
+    var tx = await S.call(tok.x, 'dispatch.times', { keys: [P], date: D0 }); ok('배차 권한 없는 직원은 막힘', !tx.ok, tx);
+    var tf = await S.call(tok.a, 'dispatch.times', { keys: [P], date: D0, fetch: 1 });
+    ok('[시간 계산하기]: 처음 가는 길만 조회해 저장', tf.ok && tf.fetched === 1 && calls.route === c0 + 1 && tOf(tf, 4).min != null && tOf(tf, 4).dl, [tf, calls]);
+    var tg = await S.call(tok.a, 'dispatch.times', { keys: [P], date: D0 });
+    ok('다음에 열면 조회 없이 바로', tOf(tg, 4).min === tOf(tf, 4).min && calls.route === c0 + 1, calls);
     var anon = await S.sql.begin(async function (tx) { await tx.unsafe('set local role anon'); return tx.unsafe('select joil.alerts_scan()'); }).catch(function (e) { return e.message; });
     ok('공개 키로 확인 작업·알림 표 직접 못 씀', typeof anon === 'string' && /permission denied/.test(anon), anon);
   } finally { await S.stop(); }

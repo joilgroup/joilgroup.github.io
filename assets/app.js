@@ -11,7 +11,7 @@
   var CFG = window.JOIL_CONFIG || {};
   var SB_ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings', 'admin.listUsers', 'admin.createUser', 'admin.updateUser', 'admin.resetPassword',
     'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.history', 'admin.audit', 'dispatch.search', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
-    'dispatch.events', 'admin.routes', 'admin.routeRefetch', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
+    'dispatch.events', 'dispatch.times', 'admin.routes', 'admin.routeRefetch', 'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
     'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk'];
   var SB_ROUTE = (function () {
     if (DEMO || !CFG.SB_FN) return '';
@@ -8606,6 +8606,34 @@
         };
       } });
   }
+  /** 호차 칸 걸리는 시간: 서버가 긴급 배차 알림과 같은 계산(urgent.js · 길찾기 × 1.2 + 앞 하차 30분)으로 돌려줘요(dispatch.times).
+      저장된 조합은 화면을 열면 바로 · 처음 가는 조합은 [시간 계산하기]를 눌러야 카카오로 조회 (무료 한도) */
+  function dispHm(m) { m = Math.max(0, Math.round(m)); var h = Math.floor(m / 60), r = m % 60; return (h ? h + '시간' : '') + (h && r ? ' ' : '') + (r || !h ? r + '분' : ''); }
+  function dispClock(m) { m = Math.max(0, Math.round(m)); var h = Math.floor(m / 60), r = m % 60; return (h >= 24 ? '익일 ' + (h - 24) : h) + (r ? ':' + pad2(r) : '시'); }
+  function dispTimeHtml(key, no) {
+    var st = dispState(), T = st.times && st.times.date === st.date ? st.times.map : null, x = T && T[key + '|' + no]; if (!x) return '';
+    if (x.min == null) return '<span class="muted" title="상차지·하차지 주소로 길을 아직 못 찾았어요">시간 모름</span>';
+    var dl = x.dl, tip = '상차지 → 마지막 하차지 (카카오 길찾기 × 1.2' + (x.vias ? ' + 경유 하차지마다 30분' : '') + ')';
+    if (dl) tip += '\n' + (dl.kind === 'load' ? '상차 마감 ' + dispClock(dl.at) + ' (상차지 상차 가능시간)' : '출발 마감 ' + dispClock(dl.at) + ' (' + dl.stop + ' ' + dispClock(dl.stopEnd) + '까지 하차)');
+    return '<span title="' + esc(tip) + '">이동 ' + esc(dispHm(x.min)) + (x.vias ? ' · 경유 ' + x.vias : '') + (dl ? '<br><b class="tt-dl">' + esc(dl.kind === 'load' ? '상차 ' + dispClock(dl.at) + '까지' : dispClock(dl.at) + ' 전 출발') + '</b>' : '') + '</span>';
+  }
+  function dispTimesPaint() { $$('.tt-time[data-ttm]').forEach(function (el) { var k = el.dataset.ttm, i = k.lastIndexOf('|'); el.innerHTML = dispTimeHtml(k.slice(0, i), k.slice(i + 1)); }); }
+  function dispTimeTabs(st) { return DISP_TABS.map(function (t) { return st.tabs && st.tabs[t[0]]; }).filter(function (X) { return X && dispTrucks(X).length; }); }
+  function dispTimesLoad(fetch) {
+    var st = dispState(), date = st.date, keys = dispTimeTabs(st).map(function (X) { return X.key; }); if (!keys.length || custDef(st).truckTable) return Promise.resolve(null);
+    return api('dispatch.times', { keys: keys, date: date, fetch: fetch ? 1 : 0 }).then(function (r) {
+      if (st.date !== date) return r; var m = {}; (r.times || []).forEach(function (x) { m[x.cust + '|' + x.no] = x; });
+      st.times = { date: date, map: m }; dispTimesPaint(); return r;
+    });
+  }
+  // 호차·착지·주소·시간이 바뀌었을 때만 저장된 시간을 다시 읽어요 (저장이 끝난 뒤 · 서버가 예전이면 조용히 없음)
+  var dispTimesTimer = null;
+  function dispTimesAuto() {
+    var st = dispState(); if (!st.tabs || custDef(st).truckTable) return;
+    var sig = st.date + '#' + dispTimeTabs(st).map(function (X) { return X.key + ':' + X.orders.filter(function (o) { return o.truck !== '' && o.truck != null; }).map(function (o) { return o.truck + '/' + o.id + '/' + o.d.from + '/' + o.d.addr + '/' + o.d.hours; }).join(',') + ':' + X.trucks.map(function (t) { return t.no + (t.status || '') + (t.join || ''); }).join(','); }).join(';');
+    if (sig === st.timesSig) return; st.timesSig = sig;
+    clearTimeout(dispTimesTimer); dispTimesTimer = setTimeout(function () { Promise.resolve(dispSaving).then(function () { return dispTimesLoad(false); }).catch(function () { st.timesSig = null; }); }, 1500);
+  }
   /** 호차 표 (지금 쓰는 구글시트처럼): 착지마다 한 줄, 같은 호차의 차량정보·상태·문자·운송비·호차는 칸을 합쳐 한 번만 */
   function dispKind(D) { var t = DISP_TABS.filter(function (x) { return x[0] === D.tab; })[0]; return (t && t[2]) || String(D.tab || '').split('-')[0]; }
   function truckTableHtml(D, ns) {
@@ -8691,12 +8719,12 @@
           '<td class="tt-st"' + rs + '>' + statusSelect(D, no, t) + '</td>' +
           '<td class="tt-act"' + rs + '>' + (blk ? '<div class="tt-blkw">⛔ 블랙 기사</div>' : '') + '<button class="btn btn-sm btn-primary" data-copy="' + esc(key) + '">문자 복사</button>' +
             '<div class="tt-links"><button data-preview="' + esc(key) + '">문자보기</button><button data-link="' + esc(key) + '"' + (t.token ? '' : ' disabled title="저장되면 생겨요"') + '>기사 링크</button><button data-map="' + esc(key) + '">지도</button><button data-xl="' + esc(key) + '" title="차량정보~톤수 5칸을 엑셀 한 줄로 복사">복사</button><button class="tt-more" data-more="' + esc(key) + '" title="더 보기 (줄에서 마우스 오른쪽 클릭해도 돼요)">⋯</button>' +
-            '<span class="tt-hide"><button data-xlrow="' + esc(key) + '">엑셀로 복사</button>' + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-tdate="' + esc(key) + '">날짜 변경</button><button data-thist="' + esc(key) + '">변경 이력</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') && !(ji && !ji.base) ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') +
+            '<span class="tt-hide"><button data-xlrow="' + esc(key) + '">엑셀로 복사</button>' + (code ? '<button data-code="' + esc(code) + '">마감 코드 복사 (' + esc(code) + ')</button>' : '') + (isPartner() ? '' : '<button data-tedit="' + esc(key) + '">오더수정</button><button data-tmove="' + esc(key) + '">오더변경</button><button data-tdate="' + esc(key) + '">날짜 변경</button><button data-thist="' + esc(key) + '">변경 이력</button>') + '<button data-ask="' + esc(key) + '">문의하기</button>' + (can('analysis') && !(ji && !ji.base) ? '<button data-fare="' + esc(key) + '">운임 수정</button>' : '') +
               (isPartner() ? '' : (!ji || (ji.base && ji.g) ? '<button data-join="' + esc(key) + '">다른 탭 호차와 합차</button>' : '') + (ji ? '<button data-unjoin="' + esc(key) + '">합차 풀기</button>' : '')) + '</span>' +
             (t.status === '회차' && !isPartner() ? '<button data-recopy="' + esc(key) + '" title="이 호차의 오더를 다시 배차하도록 복사">오더 복사</button>' : '') +
             (rec && !rec.ok && !isPartner() ? '<button data-rec="' + esc(key) + '" title="' + esc('추천 순서: ' + rec.order.map(function (j, k) { return (k + 1) + ' ' + rec.stops[j].fc; }).join(' → ') + ' (직선거리 ' + Math.round(rec.cur) + 'km → ' + Math.round(rec.len) + 'km)') + '">추천 순서로</button>' : '') + '</div></td>' +
           (showCost ? '<td class="tt-cost"' + rs + '>' + truckCostCell(D, no, t, cost) + '</td>' : '') +
-          '<td class="tt-no"' + rs + '><span class="tt-tab">' + esc(D.tab) + '</span><b>' + no + '호차</b>' + (ji ? '<small class="tt-join" title="' + esc(ji.base ? '기준 호차 · 문자·기사 링크·운송비가 여기로 합쳐져요' : '문자·기사 링크·운송비는 기준 호차와 하나예요') + '">합차' + (ji.base ? '(기준)' : '') + ' · ' + esc(ji.others.map(joinName).join(', ')) + '</small>' : '') + (code ? '<button class="tt-code" data-code="' + esc(code) + '" title="마감 코드 · 누르면 복사">' + esc(code) + '</button>' : '') + (stops.length ? '<small class="tt-rc' + (nGot === stops.length ? ' ok' : '') + '">인수증 ' + nGot + '/' + stops.length + '</small>' : '') + '</td>') +
+          '<td class="tt-no"' + rs + ' title="' + esc([D.tab, code ? '마감 코드 ' + code + ' (⋯ 메뉴에서 복사)' : '', stops.length ? '인수증 ' + nGot + '/' + stops.length : ''].filter(Boolean).join('\n')) + '"><b>' + no + '호차</b>' + (ji ? '<small class="tt-join" title="' + esc(ji.base ? '기준 호차 · 문자·기사 링크·운송비가 여기로 합쳐져요' : '문자·기사 링크·운송비는 기준 호차와 하나예요') + '">합차' + (ji.base ? '(기준)' : '') + ' · ' + esc(ji.others.map(joinName).join(', ')) + '</small>' : '') + '<small class="tt-time" data-ttm="' + esc(D.key + '|' + no) + '">' + dispTimeHtml(D.key, no) + '</small></td>') +
         '</tr>';
     }).join('') + '</tbody>';
   }
@@ -8777,13 +8805,21 @@
               '<td class="num"' + (dispPkg(o.d.bundle) ? ' title="' + esc(o.d.bundle) + '"' : '') + '>' + won(dispOrderB(o)) + '</td><td class="num">' + dispKgText(dispNum(o.d.kg), dispPkg(o.d.bundle)) + '</td><td class="left small"><div class="clip dp-addr" title="' + esc(o.d.addr) + '">' + esc(o.d.addr) + '</div>' + (C.addrFlag ? C.addrFlag(o) : '') + geoFlag(o) + '</td><td class="left small"><div class="clip dp-hrs" title="' + esc(o.d.hours) + '">' + esc(o.d.hours) + '</div></td>') + '<td class="left dp-note">' + dispCnHtml(o.d.fc) + (isPartner() ? (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<button type="button" class="dp-nb' + (o.noteIn || o.noteDrv ? ' on' : '') + '" data-note="' + esc(o.id) + '" title="공지 쓰기">' + (o.noteIn || o.noteDrv ? (o.noteIn ? '<span class="nt in">🔒 ' + esc(o.noteIn) + '</span>' : '') + (o.noteDrv ? '<span class="nt drv">📢 ' + esc(o.noteDrv) + '</span>' : '') : '<span class="muted">＋ 공지</span>') + '</button>') + '</td></tr>';
           }).join('') + '</tbody></table></div>' + (isPartner() ? '' : '<p class="hint" style="margin:6px 0 0">같이 갈 오더를 체크하고 "새 호차로 묶기"를 누르거나, 호차 칸에 번호를 넣으세요. 다른 지역도 같은 호차면 하차지1·2로 나뉘어요. 줄을 끌어서 하차 순서를 바꿀 수 있어요.</p>')
           : '<p class="muted" style="margin:0">' + esc(st.date) + ' ' + esc(st.tab) + ' 오더가 없어요. 위 "① 오더 붙여넣기"에 붙여넣으세요.</p>') + '</div>' +
-      (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="eyebrow">' + (C.noOrderTable ? 'Trucks · ② 배차 표 (한 줄 = 차 한 대)' : 'Trucks · ③ 호차별 문자') + '</div>' +
+      (allTrucks.length ? '<div class="card" style="margin-top:16px"><div class="row-between" style="flex-wrap:wrap;gap:8px"><div class="eyebrow">' + (C.noOrderTable ? 'Trucks · ② 배차 표 (한 줄 = 차 한 대)' : 'Trucks · ③ 호차별 문자') + '</div>' + (isPartner() || C.truckTable ? '' : '<button type="button" class="btn btn-sm" id="dpTimes" title="오더를 다 짠 뒤 누르세요 · 이 날짜 모든 탭 호차의 걸리는 시간·출발 마감 (긴급 알림과 같은 계산 · 처음 가는 길만 새로 찾아요)">⏱ 시간 계산하기</button>') + '</div>' +
         allTrucks.map(function (t) {
           // 합차로 묶인 호차는 기준 호차 줄에 합쳐 보여서 여기선 한 줄 안내만 (같은 오더가 두 번 보이지 않게)
           var X = st.tabs[t[0]], all = dispTrucks(X), lk = all.filter(function (n) { var j = joinInfo(X, n); return j && !j.base && j.g; }), ns = all.filter(function (n) { return lk.indexOf(n) === -1; });
           var jl = lk.length ? '<div class="dp-joined muted small">🔗 합차로 다른 탭 호차에 합쳐진 호차: ' + lk.map(function (n) { var j = joinInfo(X, n), b = j.others.filter(function (o) { return o.base; })[0]; return '<b>' + n + '호차</b>(' + esc(truckStops(X, n).map(function (s) { return s.fc; }).join(', ')) + ') → ' + esc(b ? joinName(b) : ''); }).join(' · ') + '</div>' : '';
           return '<div class="dp-tgrp"><div class="row-between" style="flex-wrap:wrap;gap:8px"><h3 style="margin:0">' + esc(t[0]) + ' <span class="muted small">' + ns.length + '대' + (lk.length ? ' · 합차 ' + lk.length + '대' : '') + '</span></h3><button class="btn btn-sm" data-xlall="' + esc(t[0]) + '" title="구글 시트·엑셀에 붙여넣기용 (착지마다 한 줄)">엑셀로 복사</button></div>' + jl + (ns.length ? truckTableHtml(X, ns) : '') + '</div>'; }).join('') + '</div>' : '') + dispTodoHtml() + '<div class="dp-tail"></div>';
     var go = function (d) { dispSaveNow(); st.date = d; st.tabs = null; st.useCache = true; renderDispatch(); };
+    var tmb = $('#dpTimes'); if (tmb) tmb.onclick = function () {
+      tmb.disabled = true; tmb.textContent = '계산 중…';
+      Promise.resolve(dispSaveNow()).then(function () { return dispTimesLoad(true); }).then(function (r) {
+        var l = (r && r.times) || [], unk = l.filter(function (x) { return x.min == null; }).length;
+        toast('걸리는 시간을 계산했어요 (' + l.length + '대' + (r && r.fetched ? ' · 새 길 ' + r.fetched + '개' : '') + (unk ? ' · 시간 모름 ' + unk + '대' : '') + ').');
+      }).catch(function (e) { toast('시간을 계산하지 못했어요: ' + (e && e.message || e), 'err'); }).then(function () { if (document.body.contains(tmb)) { tmb.disabled = false; tmb.textContent = '⏱ 시간 계산하기'; } });
+    };
+    dispTimesAuto();
     $('#dpPrev').onclick = function () { go(dAdd(st.date, -1)); };
     $('#dpFind').onclick = function () { openDispFind(function (d, tab) { dispSaveNow(); st.date = d; if (tab) st.tab = tab; st.tabs = null; renderDispatch(); }); };
     $('#dpNext').onclick = function () { go(dAdd(st.date, 1)); };

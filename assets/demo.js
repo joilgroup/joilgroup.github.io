@@ -114,6 +114,8 @@
   /* 업무 매뉴얼 · 문의 기록 · 업무 담당표 (데모: localStorage, 첨부는 메모리) */
   var manFiles = {};
   function wk(k) { store[k] = store[k] || []; return store[k]; }
+  /** 시간 글자 → 낮 구간 중 가장 늦은 끝(분) · 서버 urgent.js dayEnd 를 줄인 것 (알림·호차 칸 시간이 같이 써요) */
+  function demoDayEnd(t) { var e = null; String(t || '').replace(/\([^)]*\)/g, '').split(/\/|,/).forEach(function (seg) { if (/불가|점심/.test(seg)) return; var m = /(\d{1,2})(?::(\d{2}))?\s*시?\s*~\s*(\d{1,2})(?::(\d{2}))?/.exec(seg); if (!m || +m[1] * 60 >= 1080) return; var v = +m[3] * 60 + (+m[4] || 0); if (v <= +m[1] * 60) v += 1440; if (e == null || v > e) e = v; }); return e; }
   /* 업무 기록 (서버 workOp_ 와 같은 규칙) */
   function nowSec() { var d = new Date(); return today() + ':' + pad(d.getSeconds()); }
   function ymdNow() { return today().slice(0, 10); }
@@ -392,7 +394,7 @@
     var s = store.settings;
     if (me.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(req.action) === -1) fail('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (me.role === 'partner') {
-      if (['me', 'logout', 'changePassword', 'publicSettings', 'alerts.list', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'dispatch.events', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
+      if (['me', 'logout', 'changePassword', 'publicSettings', 'alerts.list', 'dispatch.search', 'dispatch.tabs', 'dispatch.day', 'dispatch.dayAll', 'dispatch.save', 'dispatch.stamp', 'dispatch.geo', 'dispatch.receipt', 'dispatch.rates', 'dispatch.notes', 'dispatch.must', 'dispatch.events', 'dispatch.times', 'loading.list', 'loading.photo', 'drivers.list', 'drivers.save'].indexOf(req.action) === -1) fail('협력사 계정은 배차시트만 쓸 수 있어요.');
       var pcs = me.dispTabs.map(function (k) { return String(k).replace(/\/.*$/, ''); });
       if (req.action === 'loading.list' && !req._nb) { var plr = handle(Object.assign({}, req, { _nb: 1 })); plr.places = plr.places.filter(function (x) { return pcs.indexOf(x.cust) !== -1; }); return plr; }
       if (req.action === 'dispatch.rates' && !req._nb) { var prr = demoRates(pcs); wk('dests').forEach(function (x) { if (pcs.indexOf(dCust(x.cust)) !== -1 && x.rateTo && x.name && !(x.name in prr.map)) prr.map[x.name] = x.rateTo; }); return prr; } // 하차지명 → 단가표 도착만
@@ -664,7 +666,7 @@
         return { list: slist, drivers: Object.keys(sdm).map(function (k) { return sdm[k]; }).sort(sbn), centers: Object.keys(scm).map(function (k) { return scm[k]; }).sort(sbn), more: false };
       case 'alerts.list': // 서버는 함수(urgent.js · 5분마다) · 데모는 부를 때 바로 계산: 오늘 차가 안 잡힌 호차의 상차 마감·출발 마감 (데모 이동시간 = 구간마다 1시간 × 1.2 · 앞 하차 30분)
         var ad = today().slice(0, 10), al = [], anow = window.__demoNow != null ? window.__demoNow : new Date().getHours() * 60 + new Date().getMinutes();
-        var aend = function (t) { var e = null; String(t || '').replace(/\([^)]*\)/g, '').split(/\/|,/).forEach(function (seg) { if (/불가|점심/.test(seg)) return; var m = /(\d{1,2})(?::(\d{2}))?\s*시?\s*~\s*(\d{1,2})(?::(\d{2}))?/.exec(seg); if (!m || +m[1] * 60 >= 1080) return; var v = +m[3] * 60 + (+m[4] || 0); if (v <= +m[1] * 60) v += 1440; if (e == null || v > e) e = v; }); return e; };
+        var aend = demoDayEnd;
         var afm = function (v) { v = Math.max(0, Math.round(v)); return Math.floor(v / 60) + (v % 60 ? ':' + pad(v % 60) : '시'); };
         wk('dispTrk').forEach(function (t) {
           if (t.date !== ad || t.status === '회차' || !(!t.status || t.status === '배차전' || !String(t.car || '').trim())) return;
@@ -677,6 +679,22 @@
           al.push({ kind: 'urg', cust: t.cust, date: ad, n: 1, nos: String(t.no), msg: msg, lvl: late ? 'late' : 'soon', at: '' });
         });
         return { list: al };
+      case 'dispatch.times': // 호차 칸 걸리는 시간 (서버 urgent.js times 와 같은 모양) · 데모 이동시간 = 구간마다 1시간 × 1.2 · 앞 하차 30분 · 처음 가는 조합은 fetch(버튼) 때만 '조회'
+        if (me.role === 'partner') { (req.keys || []).forEach(function (k) { if ((me.dispTabs || []).indexOf(k) === -1) fail('볼 수 없는 탭이에요.'); }); req.fetch = 0; }
+        var rk = store.routeKnown = store.routeKnown || {}, tf = 0, tl = [];
+        (req.keys || []).forEach(function (key) {
+          var tskip = {}; wk('dispTrk').forEach(function (t) { if (t.cust === key && t.date === req.date && (t.join || t.status === '회차')) tskip[t.no] = 1; });
+          var tns = []; wk('dispOrd').forEach(function (o) { if (o.cust === key && o.date === req.date && o.truck !== '' && o.truck != null && tns.indexOf(Number(o.truck)) === -1 && !tskip[o.truck]) tns.push(Number(o.truck)); });
+          tns.forEach(function (no) {
+            var rows = wk('dispOrd').filter(function (o) { return o.cust === key && o.date === req.date && Number(o.truck) === no; }).sort(function (a, b) { return a.seq - b.seq; });
+            var pl = wk('places').filter(function (x) { return x.name === rows[0].d.from; })[0], load = pl ? demoDayEnd(pl.time) : null, prev = pl ? pl.addr : '', cum = 0, dep = null, unk = 0, n = 0;
+            rows.forEach(function (o) { var a = o.d.addr || ''; if (a && a === prev && n) return; var pk = prev + '\n' + a; if (!prev || !a) unk++; else if (!rk[pk] && req.fetch) { rk[pk] = 1; tf++; } if (prev && a && !rk[pk]) unk++; cum += (n ? 30 : 0) + 72; n++; prev = a; var e = demoDayEnd(o.d.hours); if (!unk && e != null && (!dep || e - cum < dep.at)) dep = { kind: 'dep', at: e - cum, stop: o.d.fc, stopEnd: e }; });
+            var dl = load != null && (!dep || load <= dep.at) ? { kind: 'load', at: load } : dep;
+            tl.push({ cust: key, no: no, min: unk ? null : cum, vias: Math.max(0, n - 1), unk: unk, dl: dl });
+          });
+        });
+        if (tf) save();
+        return { times: tl, fetched: tf };
       case 'admin.routes': return { routes: [{ from: '가상 평택시 1', to: '가상 화성시 1', min: 50, adj: 60, km: 40, at: today() }], x: 1.2 };
       case 'admin.routeRefetch': return { routes: [{ from: req.from, to: req.to, min: 50, adj: 60, km: 40, at: today() }], x: 1.2 };
       case 'dispatch.history':

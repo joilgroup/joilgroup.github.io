@@ -69,13 +69,10 @@ export function makeUrgent(o) {
   var sql = o.sql, Q = function (t, p) { return sql.unsafe(t, p || []); };
   function kst(ms) { var d = new Date((ms || Date.now()) + 9 * 3600e3); return { date: d.toISOString().slice(0, 10), min: d.getUTCHours() * 60 + d.getUTCMinutes() }; }
   /** 조합마다 걸리는 시간(초) · 없는 조합은 카카오로 조회해 저장 */
-  async function legs(pairs) {
-    var want = {}; pairs.forEach(function (p) { if (p[0] && p[1] && p[0] !== p[1]) want[p[0] + '\n' + p[1]] = p; });
-    var keys = Object.keys(want), got = {}; if (!keys.length) return got;
-    (await Q('select okey, dkey, sec from route_times where (okey, dkey) in (select * from unnest($1::text[], $2::text[]))', [keys.map(function (k) { return want[k][0]; }), keys.map(function (k) { return want[k][1]; })]))
-      .forEach(function (r) { got[r.okey + '\n' + r.dkey] = r.sec; });
-    var miss = keys.filter(function (k) { return !(k in got); }); if (!miss.length) return got;
-    await fetchRoutes(miss.map(function (k) { return want[k]; }), got);
+  async function legs(pairs, got) {
+    got = got || await stored(pairs);
+    var miss = {}; pairs.forEach(function (p) { var k = p[0] + '\n' + p[1]; if (p[0] && p[1] && p[0] !== p[1] && !(k in got)) miss[k] = p; });
+    var ks = Object.keys(miss); if (ks.length) await fetchRoutes(ks.map(function (k) { return miss[k]; }), got);
     return got;
   }
   async function fetchRoutes(pairs, got) {
@@ -91,42 +88,58 @@ export function makeUrgent(o) {
     }
     return ok.length;
   }
+  /** 호차마다 상차지·하차지(경로 순서, 같은 주소는 하나로)·상차 마감 · trucks [{cust, no}] · 알림과 배차 화면(dispatch.times)이 같이 써요 */
+  async function plan(date, trucks, keys) {
+    var items = [], pairs = []; if (!trucks.length) return { items: items, pairs: pairs };
+    var orders = keys ? await Q('select cust, truck, seq, data from disp_orders where date = $1 and truck is not null and cust = any($2::text[]) order by cust, truck, seq, ord', [date, keys])
+      : await Q('select cust, truck, seq, data from disp_orders where date = $1 and truck is not null order by cust, truck, seq, ord', [date]);
+    var places = await Q('select name, addr, time, rate_from, cust from loading_places'), dests = await Q('select code, name, addr, hours, cust from dest_book');
+    var co = function (key) { return String(key).replace(/\/.*$/, ''); }, mine = function (rowCust, c) { return (rowCust || '쿠팡부자재') === c; };
+    var findPlace = function (name, c) {
+      var n = nameKey(name), ln = loose(name); if (!n) return null;
+      var pick = function (f) { var l = places.filter(f); return l.filter(function (p) { return mine(p.cust, c); })[0] || l[0] || null; };
+      return pick(function (p) { return nameKey(p.name) === n; }) || pick(function (p) { return loose(p.name) === ln; }) || pick(function (p) { return p.rate_from && loose(p.rate_from) === ln; });
+    };
+    var findDest = function (d, c) { var l = dests.filter(function (x) { return mine(x.cust, c); }), code = String(d.code || '').trim().toUpperCase(), nm = destKey(d.fc);
+      return (code && l.filter(function (x) { return String(x.code || '').toUpperCase() === code; })[0]) || (nm && l.filter(function (x) { return destKey(x.name) === nm; })[0]) || null; };
+    trucks.forEach(function (t) {
+      var c = co(t.cust), rows = orders.filter(function (x) { return x.cust === t.cust && Number(x.truck) === Number(t.no); }); if (!rows.length) return;
+      var d0 = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data || {}, pl = findPlace(d0.from, c);
+      var stops = [];
+      rows.forEach(function (r) {
+        var d = typeof r.data === 'string' ? JSON.parse(r.data) : r.data || {}, de = findDest(d, c), addr = addrKey(d.addr) || addrKey(de && de.addr), last = stops[stops.length - 1];
+        var end = dayEnd(d.hours); if (end == null && !String(d.hours || '').trim() && de) end = dayEnd(de.hours);
+        if (last && last.addr === addr) { if (end != null && (last.end == null || end < last.end)) { last.end = end; last.name = d.fc || last.name; } return; }
+        stops.push({ name: d.fc || '-', addr: addr, end: end });
+      });
+      var from = addrKey(pl && pl.addr), it = { t: t, loadEnd: pl ? dayEnd(pl.time) : null, stops: stops, from: from };
+      var prev = from; stops.forEach(function (s) { pairs.push([prev, s.addr]); prev = s.addr; });
+      items.push(it);
+    });
+    return { items: items, pairs: pairs };
+  }
+  /** 구간마다 걸리는 시간(초) · 모르면 null */
+  function legsOf(it, got) { var prev = it.from; return it.stops.map(function (s) { var v = !prev || !s.addr ? null : prev === s.addr ? 0 : got[prev + '\n' + s.addr]; prev = s.addr; return v == null ? null : v; }); }
+  /** 저장된 조합만 읽기 (카카오 조회 없음) */
+  async function stored(pairs) {
+    var want = {}; pairs.forEach(function (p) { if (p[0] && p[1] && p[0] !== p[1]) want[p[0] + '\n' + p[1]] = p; });
+    var keys = Object.keys(want), got = {}; if (!keys.length) return got;
+    (await Q('select okey, dkey, sec from route_times where (okey, dkey) in (select * from unnest($1::text[], $2::text[]))', [keys.map(function (k) { return want[k][0]; }), keys.map(function (k) { return want[k][1]; })]))
+      .forEach(function (r) { got[r.okey + '\n' + r.dkey] = r.sec; });
+    return got;
+  }
   /** 5분마다 (pg_cron → pg_net → sys.urgent) · 돌려주는 값 = 올린 알림 수 */
   async function scan(nowMs) {
     var k = kst(nowMs), today = k.date;
     var trucks = await Q("select cust, date, no, car, status from disp_trucks where date = $1 and join_tk = '' and status not in ('회차') and (status in ('', '배차전') or btrim(car) = '')", [today]);
     var seen = [], items = [];
     if (trucks.length) {
-      var orders = await Q('select cust, truck, seq, data from disp_orders where date = $1 and truck is not null order by cust, truck, seq, ord', [today]);
-      var places = await Q('select name, addr, time, rate_from, cust from loading_places'), dests = await Q('select code, name, addr, hours, cust from dest_book');
-      var co = function (key) { return String(key).replace(/\/.*$/, ''); }, mine = function (rowCust, c) { return (rowCust || '쿠팡부자재') === c; };
-      var findPlace = function (name, c) {
-        var n = nameKey(name), ln = loose(name); if (!n) return null;
-        var pick = function (f) { var l = places.filter(f); return l.filter(function (p) { return mine(p.cust, c); })[0] || l[0] || null; };
-        return pick(function (p) { return nameKey(p.name) === n; }) || pick(function (p) { return loose(p.name) === ln; }) || pick(function (p) { return p.rate_from && loose(p.rate_from) === ln; });
-      };
-      var findDest = function (d, c) { var l = dests.filter(function (x) { return mine(x.cust, c); }), code = String(d.code || '').trim().toUpperCase(), nm = destKey(d.fc);
-        return (code && l.filter(function (x) { return String(x.code || '').toUpperCase() === code; })[0]) || (nm && l.filter(function (x) { return destKey(x.name) === nm; })[0]) || null; };
-      var pairs = [];
-      trucks.forEach(function (t) {
-        var c = co(t.cust), rows = orders.filter(function (x) { return x.cust === t.cust && x.truck === t.no; }); if (!rows.length) return;
-        var d0 = typeof rows[0].data === 'string' ? JSON.parse(rows[0].data) : rows[0].data || {}, pl = findPlace(d0.from, c);
-        var stops = [];
-        rows.forEach(function (r) {
-          var d = typeof r.data === 'string' ? JSON.parse(r.data) : r.data || {}, de = findDest(d, c), addr = addrKey(d.addr) || addrKey(de && de.addr), last = stops[stops.length - 1];
-          var end = dayEnd(d.hours); if (end == null && !String(d.hours || '').trim() && de) end = dayEnd(de.hours);
-          if (last && last.addr === addr) { if (end != null && (last.end == null || end < last.end)) { last.end = end; last.name = d.fc || last.name; } return; }
-          stops.push({ name: d.fc || '-', addr: addr, end: end });
-        });
-        var from = addrKey(pl && pl.addr), it = { t: t, loadEnd: pl ? dayEnd(pl.time) : null, stops: stops, from: from };
-        if (it.loadEnd == null && !stops.some(function (s) { return s.end != null; })) return;
-        var prev = from; stops.forEach(function (s) { pairs.push([prev, s.addr]); prev = s.addr; });
-        items.push(it);
-      });
+      var pl = await plan(today, trucks);
+      items = pl.items.filter(function (it) { return it.loadEnd != null || it.stops.some(function (s) { return s.end != null; }); });
+      var pairs = []; items.forEach(function (it) { var prev = it.from; it.stops.forEach(function (s) { pairs.push([prev, s.addr]); prev = s.addr; }); });
       var got = await legs(pairs);
       items.forEach(function (it) {
-        var prev = it.from, lg = it.stops.map(function (s) { var v = !prev || !s.addr ? null : prev === s.addr ? 0 : got[prev + '\n' + s.addr]; prev = s.addr; return v == null ? null : v; });
-        var m = message(it.t.no, deadline(it.loadEnd, it.stops, lg), k.min); if (!m) return;
+        var m = message(it.t.no, deadline(it.loadEnd, it.stops, legsOf(it, got)), k.min); if (!m) return;
         var ref = 'urg|' + it.t.cust + '|' + today + '|' + it.t.no; seen.push(ref);
         it.ref = ref; it.m = m;
       });
@@ -134,6 +147,21 @@ export function makeUrgent(o) {
     }
     await Q("update alerts set resolved_at = now() where resolved_at is null and kind = 'urg' and not (ref = any($1::text[]))", [seen]);
     return seen.length;
+  }
+  /** 배차 화면 호차 칸: 그날 호차마다 걸리는 시간(알림과 같은 계산) · fetch 가 아니면 저장된 조합만 읽어요(화면을 열 때 카카오 조회 없음)
+      → { times: [{ cust, no, min(상차지→마지막 하차지, × 1.2 + 앞 하차 30분) | null, vias, unk(모르는 구간 수), dl: {kind, at, stop, stopEnd} | null }], fetched } */
+  async function times(date, keys, fetch) {
+    keys = (keys || []).map(String).filter(Boolean); if (!date || !keys.length) return { times: [], fetched: 0 };
+    var nos = await Q('select distinct cust, truck from disp_orders where date = $1 and cust = any($2::text[]) and truck is not null', [date, keys]);
+    var skip = {}; (await Q("select cust, no from disp_trucks where date = $1 and cust = any($2::text[]) and (join_tk <> '' or status = '회차')", [date, keys])).forEach(function (r) { skip[r.cust + '|' + r.no] = 1; }); // 합차로 연결된 호차·회차는 빼요 (알림과 같게)
+    var trucks = nos.filter(function (r) { return !skip[r.cust + '|' + r.truck]; }).map(function (r) { return { cust: r.cust, no: Number(r.truck) }; });
+    var pl = await plan(date, trucks, keys), got = await stored(pl.pairs), before = Object.keys(got).length;
+    if (fetch) await legs(pl.pairs, got); // 버튼을 눌렀을 때만 처음 가는 조합을 카카오로 조회해 저장
+    return { times: pl.items.map(function (it) {
+      var lg = legsOf(it, got), unk = lg.filter(function (v) { return v == null; }).length, cum = 0;
+      lg.forEach(function (v, i) { cum += (v || 0) / 60 * ROUTE_X + (i ? UNLOAD_MIN : 0); });
+      return { cust: it.t.cust, no: it.t.no, min: unk || !lg.length ? null : Math.round(cum), vias: Math.max(0, it.stops.length - 1), unk: unk, dl: deadline(it.loadEnd, it.stops, lg) };
+    }), fetched: fetch ? Object.keys(got).length - before : 0 };
   }
   /** 관리자: 저장된 이동시간 표 */
   async function routeList() {
@@ -146,5 +174,5 @@ export function makeUrgent(o) {
     var n = await fetchRoutes([[from, to]], null); if (!n) throw new Error('길찾기에 실패했어요. 주소를 확인해 주세요.');
     return routeList();
   }
-  return { scan: scan, routeList: routeList, routeRefetch: routeRefetch };
+  return { scan: scan, times: times, routeList: routeList, routeRefetch: routeRefetch };
 }
