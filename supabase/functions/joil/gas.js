@@ -288,3 +288,6 @@ export function makeGas(opts) {
   }
   return { call: call };
 }
+
+/** 새 서버(port.js)도 Code.js 와 같은 값으로 읽고 쓰게 같이 써요 */
+export { sheetValue, readValue, enc, dec, display, formatDate };

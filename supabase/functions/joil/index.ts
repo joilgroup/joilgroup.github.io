@@ -28,13 +28,16 @@ async function secretOk(s: unknown) { const r = await sql.unsafe("select value f
 // 진짜 표로 옮긴 영역(012~): 옮김 표시(props MOVED_시트)가 있을 때만 core.js, 없으면 예전처럼 gas.js (30초마다 다시 확인)
 let movedAt = 0, moved: Record<string, boolean> = {};
 async function movedFlags() {
-  if (Date.now() - movedAt > 30000) { const m: Record<string, boolean> = {}; (await sql.unsafe("select key from props where key like 'MOVED\\_%'")).forEach((r: any) => { m[String(r.key).slice(6)] = true; }); moved = m; movedAt = Date.now(); }
+  if (Date.now() - movedAt > 30000) { const m: Record<string, boolean> = {}; (await sql.unsafe("select key, value from props where key like 'MOVED\\_%' or key = 'PORT_OFF'")).forEach((r: any) => { if (r.key === 'PORT_OFF') (m as any).__off = String(r.value || '').split(',').map((x: string) => x.trim()); else m[String(r.key).slice(6)] = true; }); moved = m; movedAt = Date.now(); }
   return moved;
 }
 async function route(req: any) {
   const action = String(req.action || '');
   const pre = Object.keys(MOVED).find((p) => action.indexOf(p) === 0);
-  if (pre ? (await movedFlags())[(MOVED as any)[pre]] : ACTIONS.indexOf(action) !== -1) return server.call(req);
+  // 옮긴 영역 꺼짐 스위치: props PORT_OFF = 'custs,cal' 처럼 → 그 영역은 gas.js(Code.js 그대로)로
+  const off = (await movedFlags()).__off as unknown as string[] | undefined;
+  const isOff = !!off && off.some((p) => p && action.indexOf(p + '.') === 0);
+  if (!isOff && (pre ? (await movedFlags())[(MOVED as any)[pre]] : ACTIONS.indexOf(action) !== -1)) return server.call(req);
   const t0 = Date.now();
   try {
     let out: any;

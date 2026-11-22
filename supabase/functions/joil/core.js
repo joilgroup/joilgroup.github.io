@@ -5,6 +5,7 @@
 // 코드 규칙은 Code.js 와 맞춰요: 함수 이름은 Code.js 이름에서 끝의 _ 만 뺌 → 고칠 때 양쪽을 나란히 보기 쉽게.
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { makePort, portActions } from './port.js';
 var TZ_MS = 9 * 3600000; // 한국 시간 (서머타임 없음)
 var SESSION_SECONDS = 6 * 60 * 60, KEEP_DAYS = 30, LOGIN_MAX_FAIL = 5, HASH_ROUNDS = 300;
 var PERMS = ['quote', 'analysis', 'search', 'track'];
@@ -23,7 +24,7 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
   'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search',
-  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage'];
+  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage'].concat(portActions());
 /** 진짜 표로 옮긴 영역 (012): 액션 앞부분 → 시트 이름. props 'MOVED_시트'가 있을 때만 이 서버가 맡아요(없으면 gas.js 가 시트 그대로) */
 export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당', 'work.': '업무기록' };
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
@@ -771,6 +772,7 @@ export function makeServer(sql, opts) {
       case 'work.stamp': return { stamp: await workStamp(workWho(session, req.uid)) };
       case 'work.op': return workOp(session, req);
     }
+    if (port.has(action)) return port.handle(action, session, req); // 옮긴 Code.js 영역 (port.js · 권한 확인도 거기서)
     if (/^dispatch\.|^loading\.|^drivers\.|^dest\.|^inq\.|^owners\./.test(action)) requirePerm(session, 'quote'); // Code.js QUOTE_ACTIONS 안의 배차 액션들 · 문의·업무담당
     switch (action) {
       case 'dispatch.day': return dispScrub(await dispDay(req.cust, req.date), session);
@@ -970,6 +972,7 @@ export function makeServer(sql, opts) {
     return { db: Number(db.b), limit: 500 * 1024 * 1024, tables: tabs.map(function (r) { return { t: r.t, bytes: Number(r.b), rows: Number(r.n) }; }),
       counts: { audit: await cnt('select count(*) n from audit'), alerts: await cnt('select count(*) n from alerts where resolved_at is null'), positions: await cnt('select count(*) n from public.positions'), sessions: await cnt('select count(*) n from sessions where expires_at > now()') } };
   }
+  var port = makePort({ sql: sql, err: err, nowTxt: nowTxt, newId: newId, requirePerm: requirePerm, who: ctxWho, gas: function (a, p) { return gas(a, p); }, listUsers: function () { return listUsers(); } });
   /* ───────────── 업무 기록 (013 · Code.js workList_·workOp_ 와 같은 규칙) ───────────── */
   function workWho(session, uid) {
     uid = String(uid || '');

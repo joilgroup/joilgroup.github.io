@@ -56,4 +56,4 @@ function call(tok, action, req) { req = Object.assign({ action: action, token: t
 var fails = 0;
 function ok(name, cond, info) { if (!cond) fails++; console.log((cond ? 'PASS ' : 'FAIL ') + name + (info !== undefined && !cond ? ' :: ' + (typeof info === 'string' ? info : JSON.stringify(info)) : '')); }
 process.on('exit', function () { if (errors.length) { console.log('FAIL 시트 줄 너비 오류 :: ' + errors.join(' / ')); fails++; } if (fails) process.exitCode = 1; });
-module.exports = { call: call, sheets: sheets, props: props, cache: cache, errors: errors, ctx: ctx, Sheet: Sheet, ok: ok };
+module.exports = { SESS: SESS, call: call, sheets: sheets, props: props, cache: cache, errors: errors, ctx: ctx, Sheet: Sheet, ok: ok };
