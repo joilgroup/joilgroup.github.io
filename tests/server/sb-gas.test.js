@@ -31,6 +31,10 @@ function enc(v) { return v instanceof Date ? { $d: v.toISOString() } : v; }
     }
     var props = Object.keys(M.props).filter(function (k) { return !/^(RT_|DST\|)/.test(k); }).map(function (k) { return { key: k, value: M.props[k] }; });
     await S.sql.unsafe('select public.joil_gas_props_copy($1, true)', [props]);
+    if (process.env.JOIL_TABLES) { // 014: 모든 시트를 칸 있는 표로 옮긴 뒤 같은 비교를 한 번 더 (sb-gas-tables.test.js)
+      var tb = (await S.sql`select joil.sheet_tabulate_all() r`)[0].r, badT = Object.keys(tb).filter(function (k) { return tb[k].bad != null || tb[k].skip; });
+      ok('모든 시트를 표로 (한 칸씩 같음 검사 통과) ' + Object.keys(tb).length + '개', Object.keys(tb).length > 10 && !badT.length, badT.map(function (k) { return k + JSON.stringify(tb[k]); }));
+    }
     var fflate = require(path.join(__dirname, '..', 'sb', 'node_modules', 'fflate'));
     var gasMod = await import(path.join(ROOT, 'supabase', 'functions', 'joil', 'gas.js'));
     var drive = {}, ops = [], mails = []; // 가짜 구글 드라이브·메일 (Code.js int.drive 대신)

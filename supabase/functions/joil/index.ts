@@ -44,7 +44,7 @@ async function route(req: any) {
       else {
         const hashes: Record<string, unknown> = {};
         for (const n of (req.names || []).map(String)) {
-          const rows = (await sql.unsafe('select v from sheet_rows where sheet = $1 order by r', [n])).map((x: any) => x.v);
+          const rows = (await sql.unsafe('select v from sheet_read(array[$1]) order by r', [n])).map((x: any) => x.v);
           hashes[n] = { rows: rows.length, md5: createHash('md5').update(JSON.stringify(rows)).digest('hex') };
         }
         out = { hashes };

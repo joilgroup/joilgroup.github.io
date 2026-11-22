@@ -1,5 +1,5 @@
 // Code.js 를 Supabase 에서 그대로 돌리는 실행기 (배차·계정 밖의 모든 메뉴: 견적·일정·분석·공지·업무·매뉴얼 …).
-// 구글 시트·스크립트 속성·캐시·잠금·UrlFetch·Utilities 를 흉내 내요. 시트 = 표 joil.sheet_rows(시트 이름, 줄 번호, 줄 값 배열).
+// 구글 시트·스크립트 속성·캐시·잠금·UrlFetch·Utilities 를 흉내 내요. 시트 = 시트마다 칸 있는 표 joil.gs_…(014, sheet_read·sheet_write·sheet_cut) · 아직 안 옮긴 시트는 joil.sheet_rows(줄 값 배열).
 // Apps Script 는 '바로 답이 오는'(동기) 함수인데 DB·인터넷은 기다려야 해서(비동기): 필요한 시트·요청을 만나면 적어 두고
 // 그것들을 받아 온 뒤 액션을 처음부터 다시 돌려요(쓰기는 끝까지 모아 두었다가 마지막에 한 번에 저장 → 다시 돌려도 안전).
 // 저장: 읽어 온 시트의 버전이 그사이 바뀌었으면(다른 사람이 저장) 다시 읽어 처음부터 → 두 사람 저장이 서로 덮어쓰지 않아요.
@@ -76,7 +76,7 @@ export function makeGas(opts) {
       names = names.filter(function (n) { return !(n in st.sheets); }); if (!names.length) return;
     }
     var meta = {}; (await Q(db, 'select name, ver from sheet_meta where name = any($1)', [names])).forEach(function (r) { meta[r.name] = Number(r.ver); });
-    var rows = await Q(db, 'select sheet, r, v from sheet_rows where sheet = any($1) order by sheet, r', [names.filter(function (n) { return n in meta; })]);
+    var rows = await Q(db, 'select sheet, r, v from sheet_read($1)', [names.filter(function (n) { return n in meta; })]);
     names.forEach(function (n) { st.sheets[n] = n in meta ? { ver: meta[n], rows: [] } : null; });
     rows.forEach(function (x) { var s = st.sheets[x.sheet]; s.rows[x.r - 1] = (x.v || []).map(dec); });
     names.forEach(function (n) { var s = st.sheets[n]; if (s) for (var i = 0; i < s.rows.length; i++) if (!s.rows[i]) s.rows[i] = []; });
@@ -253,10 +253,10 @@ export function makeGas(opts) {
         var o2 = old.map(function (r) { var t = (r || []).slice(); while (t.length && (t[t.length - 1] === '' || t[t.length - 1] == null)) t.pop(); return t; });
         var ch = [], i;
         for (i = 0; i < rows.length; i++) if (i >= o2.length || !same(rows[i], o2[i])) ch.push(i);
-        if (o2.length > rows.length) await Q(tx, 'delete from sheet_rows where sheet = $1 and r > $2', [n2, rows.length]);
+        if (o2.length > rows.length) await Q(tx, 'select sheet_cut($1, $2)', [n2, rows.length]);
         for (var k = 0; k < ch.length; k += 500) {
           var part = ch.slice(k, k + 500);
-          await Q(tx, 'insert into sheet_rows (sheet, r, v) select $1, x.r, x.v from json_to_recordset($2::text::json) as x(r int, v jsonb) on conflict (sheet, r) do update set v = excluded.v', [n2, JSON.stringify(part.map(function (j) { return { r: j + 1, v: rows[j].map(enc) }; }))]);
+          await Q(tx, 'select sheet_write($1, $2::text::jsonb)', [n2, JSON.stringify(part.map(function (j) { return { r: j + 1, v: rows[j].map(enc) }; }))]);
         }
         await Q(tx, 'update sheet_meta set ver = ver + 1 where name = $1', [n2]);
       }
