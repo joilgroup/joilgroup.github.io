@@ -11,6 +11,13 @@ function deno() { if (fs.existsSync(BIN)) return BIN; cp.spawnSync('npm', ['inst
   try {
     var salt = 's1', core = await import(path.join(__dirname, '..', '..', 'supabase', 'functions', 'joil', 'core.js')), h = core.makeServer(db.sql)._t.hash;
     await db.sql.unsafe("insert into joil.accounts (id, name, role, status, pw_hash, salt, must_change, perms) values ('a', '관리', 'admin', '사용', $1, $2, 'N', null)", [await h('test1234', salt), salt]);
+    // 압축 값 풀기(017)가 Deno 에서 되는지: 압축 원본을 넣고 UNPACK = go 로 띄움 (Deno 엔 Buffer 가 기본으로 없어 한 번 실제 서버에서 실패했음)
+    var gz = function (o) { return require('zlib').gzipSync(Buffer.from(JSON.stringify(o))).toString('base64'); }, AN = [['2026-10-01', '가', 'a', 'b', '1톤', 1000, 500], ['2026-10-02', '나', 'a', 'c', '5톤', 3000, 2000]];
+    var put = function (sheet, rows) { return db.sql.unsafe('select joil.sheet_write($1, $2::text::jsonb)', [sheet, JSON.stringify(rows.map(function (v, i) { return { r: i + 1, v: v }; }))]); };
+    await put('분석데이터', [['키', '순번', '데이터'], ['조일물류|2026-10', 1, gz(AN)]]);
+    await put('분석목록', [['키', '사업자', '월', '건수', '매출합', '매입합'], ['조일물류|2026-10', '조일물류', "'2026-10", 2, 4000, 2500]]);
+    await put('스냅샷', [['ID', '저장시각', '아이디', '데이터'], ['R1', 1, 'a', gz({ meta: { type: '단건' }, items: [{ no: 1 }] })]]);
+    await db.sql.unsafe("insert into joil.props (key, value) values ('UNPACK', 'go')");
     proc = cp.spawn(bin, ['run', '--allow-net', '--allow-env', '--allow-read', '--no-prompt', path.join(__dirname, '..', '..', 'supabase', 'functions', 'joil', 'index.ts')], { env: Object.assign({}, process.env, { SUPABASE_DB_URL: db.url, DENO_DIR: path.join(SB, '.deno'), DENO_NO_UPDATE_CHECK: '1' }), stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     var log = ''; proc.stdout.on('data', function (d) { log += d; }); proc.stderr.on('data', function (d) { log += d; });
     var up = false; for (var i = 0; i < 120 && !up; i++) { await new Promise(function (r) { setTimeout(r, 500); }); up = /Listening/.test(log); }
@@ -18,6 +25,10 @@ function deno() { if (fs.existsSync(BIN)) return BIN; cp.spawnSync('npm', ['inst
     var post = async function (body) { var r = await fetch('http://127.0.0.1:' + port + '/', { method: 'POST', body: JSON.stringify(body) }); return { cors: r.headers.get('access-control-allow-origin'), enc: r.headers.get('content-encoding'), j: await r.json() }; };
     var lg = await post({ action: 'login', id: 'a', password: 'test1234' });
     ok('text/plain 로그인 · CORS 열림', lg.j.ok && lg.j.token && lg.cors === '*', lg);
+    var ur = JSON.parse(((await db.sql.unsafe("select value from joil.props where key = 'UNPACK_RESULT'"))[0] || {}).value || '{}');
+    ok('Deno 에서 압축 풀기 (스냅샷·분석, 원본 합계와 같음)', ur.snap && ur.snap.ok && ur.snap.rows === 1 && ur.an && ur.an.ok && ur.an.same === 1, ur);
+    var au = await post({ action: 'analysis.upload', token: lg.j.token, biz: '명일로지스', month: '2026-09', data: gz([['2026-09-03', '다', 'a', 'b', '1톤', 10, 5]]), count: 1 }), al = await post({ action: 'analysis.load', token: lg.j.token, keys: ['명일로지스|2026-09'] });
+    ok('분석 올리기·받기 (Deno 의 gzip)', au.j.ok && au.j.count === 1 && al.j.ok && /^H4sI/.test(al.j.data['명일로지스|2026-09'] || ''), [au.j, al.j.error]);
     var tb = await post({ action: 'dispatch.tabs', token: lg.j.token, cust: '삼다수' });
     ok('배차 탭 (Code.js 와 같은 기본 탭)', tb.j.ok && tb.j.tabs.length === 5 && typeof tb.j.ms === 'number', tb.j);
     var im = await post({ action: 'dispatch.import', token: lg.j.token, cust: '삼다수', rows: [{ date: '2026-11-20', key: 'k1', d: { fc: '인천', bundle: '18' } }] });

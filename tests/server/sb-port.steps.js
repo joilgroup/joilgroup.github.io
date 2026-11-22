@@ -12,10 +12,35 @@ function prep(M) {
   names.forEach(function (n) { g.d.push([n, GEO[n][0], GEO[n][1], GEO[n][2], n + ' (찾음)', '2026-11-01 09:00:00']); });
   names.forEach(function (a, i) { names.forEach(function (b, j) { if (a === b) return; var k = GEO[a][1].toFixed(6) + ',' + GEO[a][0].toFixed(6) + '>' + GEO[b][1].toFixed(6) + ',' + GEO[b][0].toFixed(6) + '#3'; r.d.push([k, 80 + 37 * i + 11 * j, 5000 + 300 * j, '2026-11-01 09:00:00']); }); });
 }
+// 가짜 인터넷 (양쪽이 같은 걸 받게 · 시각은 한 번만 정함)
+var PUB = new Date(Date.now() - 3600000).toUTCString(), OLD = new Date(Date.now() - 10 * 86400000).toUTCString();
+function rss(kw) {
+  var it = function (t, src, url, d) { return '<item><title><![CDATA[' + t + ' - ' + src + ']]></title><link>https://n.example/' + encodeURIComponent(t) + '</link><pubDate>' + d + '</pubDate><source url="' + url + '">' + src + '</source></item>'; };
+  return '<rss><channel>' + it(kw + ' 관련 소식 &amp; 정리', '가상일보', 'https://ga.example.kr', PUB) + it('공통 기사 제목', 'Newsis', 'https://www.newsis.com', PUB) + it(kw + ' 교통사고 소식', '가상일보', 'https://ga.example.kr', PUB) +
+    it('foreign title', 'Foreign Times', 'https://ft.example.com', PUB) + it(kw + ' 지난 소식', '나쁜신문', 'https://bad.example.kr', OLD) + it(kw + ' 차단 매체', '나쁜신문', 'https://bad.example.kr', PUB) + '</channel></rss>';
+}
+function net(url) {
+  var j = function (o) { return { code: 200, text: JSON.stringify(o) }; }, m;
+  if (/news\.google\.com/.test(url)) return { code: 200, text: rss(decodeURIComponent(/q=([^&]+)/.exec(url)[1]).replace(/"|\s*when:7d/g, '')) };
+  if (/open-meteo/.test(url)) return j([1, 2, 3, 4, 5].map(function (i) { return { current: { temperature_2m: i, weather_code: 3, wind_speed_10m: 2 }, daily: { time: ['2026-11-22', '2026-11-23'], weather_code: [1, 61], temperature_2m_max: [9, 8], temperature_2m_min: [-1, i], precipitation_probability_max: [10, 80], precipitation_sum: [0, 3.5], snowfall_sum: [0, 0], wind_speed_10m_max: [5, 9] } }; }));
+  if ((m = /realtime\/(domestic|worldstock)\/stock\/(.+)$/.exec(url))) { var c = decodeURIComponent(m[2]); if (c === '999999') return { code: 500, text: '' }; return j({ datas: [{ stockName: '가상' + c, closePrice: '71,200', compareToPreviousClosePrice: '300', compareToPreviousPrice: { name: 'FALLING' }, fluctuationsRatio: '0.42', currencyType: { code: 'USD' }, openPrice: '70,000', highPrice: '72,000', lowPrice: '69,000', accumulatedTradingVolume: '1,234', marketStatus: 'OPEN', localTradedAt: '2026-11-21T15:30:00+09:00' }] }); }
+  if (/ac\.stock\.naver/.test(url)) return j({ items: [{ code: '005930', name: '가상전자', typeName: '코스피', nationCode: 'KOR' }, { code: 'AB', name: '이상코드', nationCode: 'KOR' }, { code: 'AAPL', reutersCode: 'AAPL.O', name: '가상애플', typeName: '나스닥', nationName: '미국', nationCode: 'USA' }] });
+  if (/fchart/.test(url)) return { code: 200, text: '<item data="20261120|1|2|3|100|5" /><item data="20261121|1|2|3|101|5" />' };
+  if (/api\.stock\.naver\.com\/chart/.test(url)) return j([{ localDate: '20261120', closePrice: '230.5' }, { localDate: '20261121', closePrice: '231' }]);
+  if (/opinet/.test(url)) return j({ RESULT: { OIL: [{ DATE: '20261120', PRODCD: 'D047', PRICE: '1555.12' }, { DATE: '20261121', PRODCD: 'D047', PRICE: '1561.3' }, { DATE: '20261121', PRODCD: 'B027', PRICE: '1700' }] } });
+  if (/dapi\.kakao\.com\/v2\/local\/search\/address/.test(url)) return j({ documents: [{ x: '126.97', y: '37.56', address_name: '가상 주소 찾음', address: { region_1depth_name: '서울' } }] });
+  return { code: 404, text: '' };
+}
+// 분석 자료 (가짜 · 화면처럼 JSON → gzip → base64)
+var gz = function (o) { return require('zlib').gzipSync(Buffer.from(JSON.stringify(o))).toString('base64'); };
+var AN1 = [['2026-10-01', '가나', '테스트시', '시험도', '5톤', 120000, 90000], ['2026-10-02', '다라', '테스트시', '서울', '1톤', 50000, 41000]];
+var seed = 7, rnd = function () { seed = (seed * 1103515245 + 12345) % 2147483648; return seed; };
+var AN2 = []; for (var i = 0; i < 1500; i++) AN2.push(['2026-09-' + String(1 + i % 28).padStart(2, '0'), '거래처' + (rnd() % 97), 'x' + rnd().toString(36), 'y' + rnd().toString(36), (1 + i % 5) + '톤', 1000 * (rnd() % 300), 1000 * (rnd() % 250)]);
+var AN_BIG = gz(AN2);
 var A = '테스트시 가동 1', B = '시험도 나동 2', C = '서울 가상구 3';
 var rec = function (f) { return function (c) { return [f(c.last.a), f(c.last.b)]; }; };
 module.exports = {
-  prep: prep,
+  prep: prep, net: net,
   seed: [
     ['adm', 'custs.save', { cust: { name: '가나상사', aliases: '가나, GANA', biz: '조일물류', start: '2026-01-01', end: '2026-12-31', memo: '메모' } }],
     ['adm', 'custs.save', { cust: { name: '다라물산', owner: '김' } }],
@@ -186,6 +211,44 @@ module.exports = {
     ['stf', 'quote', { origin: A, dest: B, cust: '가나상사', specials: ['sp1'] }, '업체 특수운임'],
     ['stf', 'rates.saveSpecials', { cust: '다라물산', specials: { sp2: { values: { '1톤': 3000.555 } } } }],
     ['stf', 'rates.delete', { cust: '가나상사' }, '권한 없음'], ['adm', 'rates.delete', { cust: '가나상사' }],
-    ['stf', 'rates.list', {}, '지운 뒤'], ['stf', 'rates.get', { cust: '다라물산' }]
+    ['stf', 'rates.list', {}, '지운 뒤'], ['stf', 'rates.get', { cust: '다라물산' }],
+    // 관리자 · 분석 · 정보 (가짜 인터넷 켬)
+    ['@net'],
+    ['stf', 'admin.getSettings', {}, '관리자만'], ['adm', 'admin.getSettings'],
+    ['adm', 'admin.saveSettings', { settings: { tons: 'x' } }, '형식 틀림'],
+    ['adm', 'admin.saveSettings', function (c) { var f = function () { var st = JSON.parse(JSON.stringify(c.last.a.settings)); st.fuel = { mode: 'auto', manualPrice: 1600 }; st.specials[0].values = { '5톤': 30000, '1톤': -1 }; st.specials.push({ id: 'sp1', name: '중복 id' }); return { settings: st }; }; return [f(), f()]; }, '음수 금액'],
+    ['adm', 'admin.saveSettings', function (c) { return [0, 0].map(function () { var st = JSON.parse(JSON.stringify(c.M.call('adm', 'admin.getSettings', {}).settings)); st.fuel = { mode: 'auto', manualPrice: 1600 }; st.specials[0].values = { '5톤': 30000.555 }; st.quoteFooter = '가상 안내'; return { settings: st }; }); }],
+    ['stf', 'publicSettings'],
+    ['adm', 'admin.saveKeys', { kakao: ' k-test ', opinet: '' }], ['adm', 'admin.saveKeys', { opinet: 'o-test' }],
+    ['adm', 'admin.saveTariff', { tariff: { rows: [[1, 2]] } }, '타리프 틀림'],
+    ['adm', 'admin.saveTariff', function (c) { return [0, 0].map(function () { var t = c.M.ctx.joilDummyTariff(); t.rows[0][0] = 0; t.rows[1][2] = 12345; return { tariff: JSON.parse(JSON.stringify(t)) }; }); }],
+    ['adm', 'admin.getTariff'], ['adm', 'admin.bootstrap'], ['adm', 'admin.getLogs', { limit: 3 }],
+    ['adm', 'admin.cacheInfo'], ['adm', 'admin.testKakao'], ['adm', 'admin.cacheInfo', {}, '카카오 뒤'], ['adm', 'admin.clearCache'], ['adm', 'admin.cacheInfo', {}, '비운 뒤'],
+    ['stf', 'quote', { origin: A, dest: B }, '캐시 비운 뒤 (경로 없음)'],
+    ['adm', 'admin.dieselHistory'], ['adm', 'admin.dieselImport', { rows: [] }, '빈 가져오기'],
+    ['adm', 'admin.dieselImport', { rows: [['2026-11-01', 1500.555], ['bad', 1], ['2026-11-02', '1510'], ['2026-11-03', 20000]] }],
+    ['adm', 'admin.dieselRecordNow'], ['stf', 'dieselPrice', {}, '자동 경유가'], ['stf', 'info.diesel'], ['stf', 'diesel.recent'],
+    ['stf', 'info.weather'], ['stf', 'info.weather', {}, '캐시'],
+    ['stf', 'info.news'], ['adm', 'admin.saveNews', { rules: { include: [' '], watch: [] } }, '키워드 없음'],
+    ['adm', 'admin.saveNews', { rules: { include: ['화물', '화물', ' 운송 '], exclude: ['사고'], watch: ['가상물류'], blockSources: ['나쁜신문'] } }],
+    ['stf', 'info.news', {}, '새 규칙'], ['adm', 'info.news', { force: true }, '새로 받기'],
+    ['stf', 'stock.quotes', { codes: ['005930', 'AAPL.O', '999999', 'bad code!', '000660', '035720', '068270'] }],
+    ['stf', 'stock.search', { q: '' }], ['stf', 'stock.search', { q: '005930' }], ['stf', 'stock.search', { q: '가상' }],
+    ['stf', 'stock.chart', { code: '005930' }], ['stf', 'stock.chart', { code: 'AAPL.O' }], ['stf', 'stock.chart', { code: '!!' }, '코드 틀림'],
+    ['stf', 'analysis.index', {}, '분석 권한 없음'], ['adm', 'analysis.index', {}, '처음'], ['adm', 'analysis.load', { keys: [] }],
+    ['adm', 'analysis.upload', { biz: '없는회사', month: '2026-10', data: gz(AN1) }, '사업자 틀림'], ['adm', 'analysis.upload', { biz: '조일물류', month: '2026-1', data: gz(AN1) }, '월 틀림'],
+    ['adm', 'analysis.upload', { biz: '조일물류', month: '2026-10', data: '' }, '빈 자료'], ['adm', 'analysis.upload', { biz: '조일물류', month: '2026-09', data: gz(AN1) }, '다른 달'],
+    ['adm', 'analysis.upload', { biz: '조일물류', month: '2026-10', data: gz(AN1), count: 3 }, '건수 틀림'],
+    ['adm', 'analysis.upload', { biz: '조일물류', month: '2026-10', data: gz(AN1), count: 2, fileName: '10월.xlsx' }],
+    ['adm', 'analysis.upload', { biz: '명일로지스', month: '2026-09', data: AN_BIG, count: AN2.length, fileName: '9월.xlsx' }, '큰 자료 (여러 칸)'],
+    ['adm', 'analysis.upload', { biz: '조일물류', month: '2026-10', data: gz(AN1.slice(0, 1)), fileName: '10월 다시.xlsx' }, '덮어쓰기'],
+    ['adm', 'analysis.index'], ['adm', 'analysis.load', { keys: ['조일물류|2026-10', '명일로지스|2026-09', '없음|2026-01'] }],
+    ['adm', 'analysis.saveMap', { map: 'x' }, '형식 틀림'], ['adm', 'analysis.saveMap', { map: [{ raw: '가나', display: ' 가나상사 ', hidden: false }, { raw: '다라', hidden: true }, { raw: '' }] }],
+    ['adm', 'analysis.saveMap', { map: [{ raw: '마바', display: '마바상회' }] }, '줄 줄이기'],
+    ['adm', 'analysis.saveRules', { rules: [{ word: '', field: 'cust' }] }, '빈 단어'], ['adm', 'analysis.saveRules', { rules: [{ word: 'x', field: 'nope' }] }, '칸 틀림'],
+    ['adm', 'analysis.saveRules', { rules: [{ word: '가나', field: 'cust', action: 'class' }] }, '분류 이름 없음'],
+    ['adm', 'analysis.saveRules', { rules: [{ word: ' 가나 ', field: 'cust', mode: 'eq', biz: '조일물류', action: 'class', cat: '주요' }, { word: '다라', field: 'any', mode: 'zz', on: false, memo: 'm' }] }],
+    ['adm', 'analysis.index', {}, '규칙·매출처 뒤'], ['adm', 'analysis.accessLog'], ['stf', 'analysis.upload', { biz: '조일물류' }, '관리자만'],
+    ['adm', 'analysis.delete', { key: '' }, '키 없음'], ['adm', 'analysis.delete', { key: '조일물류|2026-10' }], ['adm', 'analysis.index', {}, '지운 뒤'], ['adm', 'analysis.load', { keys: ['조일물류|2026-10', '명일로지스|2026-09'] }, '지운 뒤']
   ]
 };

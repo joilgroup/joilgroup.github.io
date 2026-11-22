@@ -31,12 +31,23 @@ async function movedFlags() {
   if (Date.now() - movedAt > 30000) { const m: Record<string, boolean> = {}; (await sql.unsafe("select key, value from props where key like 'MOVED\\_%' or key = 'PORT_OFF'")).forEach((r: any) => { if (r.key === 'PORT_OFF') (m as any).__off = String(r.value || '').split(',').map((x: string) => x.trim()); else m[String(r.key).slice(6)] = true; }); moved = m; movedAt = Date.now(); }
   return moved;
 }
+// 압축 값 풀어 채우기 (한 번): DB 에서 props UNPACK = 'go' 로 두면 다음 요청 때 여기서 돌고 결과(건수·맞음 여부만, 금액 없음)를 UNPACK_RESULT 에
+let unpackAt = 0;
+async function unpackOnce() {
+  if (Date.now() - unpackAt < 30000) return; unpackAt = Date.now();
+  const go = await sql.unsafe("update props set value = 'running' where key = 'UNPACK' and value = 'go' returning key");
+  if (!go.length) return;
+  let res: any; try { res = await (server as any).port.unpackAll(); } catch (e) { res = { error: String((e as any)?.message || e) }; }
+  await sql.unsafe("insert into props (key, value) values ('UNPACK_RESULT', $1) on conflict (key) do update set value = excluded.value", [JSON.stringify(res)]);
+  await sql.unsafe("update props set value = 'done' where key = 'UNPACK'");
+}
 async function route(req: any) {
   const action = String(req.action || '');
   const pre = Object.keys(MOVED).find((p) => action.indexOf(p) === 0);
   // 옮긴 영역 꺼짐 스위치: props PORT_OFF = 'custs,cal' 처럼 → 그 영역은 gas.js(Code.js 그대로)로
   const off = (await movedFlags()).__off as unknown as string[] | undefined;
-  const isOff = !!off && off.some((p) => p && action.indexOf(p + '.') === 0);
+  const isOff = !!off && off.some((p) => p && (action === p || action.indexOf(p + '.') === 0));
+  await unpackOnce();
   if (!isOff && (pre ? (await movedFlags())[(MOVED as any)[pre]] : ACTIONS.indexOf(action) !== -1)) return server.call(req);
   const t0 = Date.now();
   try {

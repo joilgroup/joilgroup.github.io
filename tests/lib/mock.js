@@ -24,23 +24,24 @@ Sheet.prototype = {
       getValues: function () { var o = []; for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || [], x = []; for (var j = 0; j < nc; j++) { var v = t[c + j - 1]; x.push(v == null ? '' : (typeof v === 'string' ? v.replace(/^'/, '') : v)); } o.push(x); } return o; },
       clearContent: function () { for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1]; if (t) for (var j = 0; j < nc; j++) t[c + j - 1] = ''; } return R; },
       setFontWeight: function () { return R; }, setNumberFormat: function () { return R; },
+      sort: function (spec) { var col = (typeof spec === 'number' ? spec : spec.column) - c, asc = typeof spec === 'number' || spec.ascending !== false, part = sh.d.slice(r - 1, r - 1 + nr); part.sort(function (x, y) { var a = String((x || [])[col]).replace(/^'/, ''), b = String((y || [])[col]).replace(/^'/, ''); return (a < b ? -1 : a > b ? 1 : 0) * (asc ? 1 : -1); }); for (var i = 0; i < nr; i++) sh.d[r - 1 + i] = part[i]; return R; },
       createTextFinder: function (s) { return { matchEntireCell: function () { return this; }, findNext: function () { for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || []; if (String(t[c - 1]).replace(/^'/, '') === s) return { getRow: function () { return r + i; } }; } return null; }, findAll: function () { var out = []; for (var i = 0; i < nr; i++) { var t = sh.d[r + i - 1] || []; if (String(t[c - 1]).replace(/^'/, '') === s) out.push({ getRow: (function (n) { return function () { return n; }; })(r + i) }); } return out; } }; }
     };
     return R;
   },
   getDataRange: function () { return this.getRange(1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); },
   appendRow: function (row) { var hw = (this.d[0] || []).filter(function (v) { return v !== ''; }).length; if (row.length !== hw) { var m = 'APPEND WIDTH ' + this.name + ' got ' + row.length + ' header ' + hw; errors.push(m); throw new Error(m); } this.d.splice(this.getLastRow(), 0, row.slice()); },
-  deleteRow: function (i) { this.d.splice(i - 1, 1); }, deleteRows: function (i, n) { this.d.splice(i - 1, n); }, setFrozenRows: function () {}, getName: function () { return this.name; }
+  clear: function () { this.d = []; return this; },   deleteRow: function (i) { this.d.splice(i - 1, 1); }, deleteRows: function (i, n) { this.d.splice(i - 1, n); }, setFrozenRows: function () {}, getName: function () { return this.name; }
 };
 var sheets = {};
-var SS = { getSheetByName: function (n) { return sheets[n] || null; }, insertSheet: function (n) { return sheets[n] = new Sheet(n); }, getSheets: function () { return Object.values(sheets); } };
+var SS = { getSheetByName: function (n) { return sheets[n] || null; }, insertSheet: function (n) { return sheets[n] = new Sheet(n); }, getSheets: function () { return Object.values(sheets); }, deleteSheet: function (sh) { delete sheets[sh.name]; } };
 var props = {}, cache = {};
 var p2 = function (n) { return ('0' + n).slice(-2); };
 var ctx = { console: console, JSON: JSON, Math: Math, Date: Date,
   SpreadsheetApp: { flush: function () {}, getActive: function () { return SS; }, getActiveSpreadsheet: function () { return SS; }, openById: function () { return SS; } },
   LockService: { getScriptLock: function () { return { waitLock: function () {}, tryLock: function () { return true; }, releaseLock: function () {}, hasLock: function () { return true; } }; } },
   PropertiesService: { getScriptProperties: function () { return { getProperty: function (k) { return k in props ? props[k] : null; }, setProperty: function (k, v) { props[k] = String(v); }, getProperties: function () { return Object.assign({}, props); }, deleteProperty: function (k) { delete props[k]; } }; } },
-  CacheService: { getScriptCache: function () { return { get: function (k) { return cache[k] || null; }, put: function (k, v) { cache[k] = v; }, remove: function (k) { delete cache[k]; }, putAll: function () {}, getAll: function () { return {}; }, removeAll: function () {} }; } },
+  CacheService: { getScriptCache: function () { return { get: function (k) { return cache[k] || null; }, put: function (k, v) { cache[k] = v; }, remove: function (k) { delete cache[k]; }, putAll: function () {}, getAll: function () { return {}; }, removeAll: function (ks) { (ks || []).forEach(function (k) { delete cache[k]; }); } }; } },
   Utilities: { DigestAlgorithm: { SHA_256: 1 }, Charset: { UTF_8: 1 },
     computeDigest: function (alg, str) { return Array.from(require('crypto').createHash('sha256').update(String(str)).digest()).map(function (b) { return b > 127 ? b - 256 : b; }); },
     formatDate: function (d, tz, f) { return f.replace('yyyy', d.getFullYear()).replace('MM', p2(d.getMonth() + 1)).replace('dd', p2(d.getDate())).replace('HH', p2(d.getHours())).replace('mm', p2(d.getMinutes())).replace('ss', p2(d.getSeconds())); },
@@ -52,7 +53,7 @@ var ctx = { console: console, JSON: JSON, Math: Math, Date: Date,
     base64Encode: function (b) { return Buffer.from(typeof b === 'string' ? Buffer.from(b) : Uint8Array.from(b, function (x) { return x & 255; })).toString('base64'); },
     newBlob: function (bytes, mime, name) { return mockBlob(bytes, mime, name); },
     zip: function (blobs, name) { return mockBlob(Array.from(Buffer.from(JSON.stringify(blobs.map(function (b) { return b.getName(); })))), 'application/zip', name); } },
-  Logger: { log: function () {} },
+  Logger: { log: function () {} }, ScriptApp: { getProjectTriggers: function () { return []; } }, // 새 서버(gas.js)와 같게: 예약 작업 없음
   MailApp: { sendEmail: function (o) { drive.mails.push(o); }, getRemainingDailyQuota: function () { return 100; } },
   // 가짜 구글 드라이브 (파일 ID = F0, F1 … · 새 서버 시험의 가짜 int.drive 와 같은 순서)
   DriveApp: { createFolder: function (n) { return mockFolder('D' + (drive.n++)); }, getFolderById: function (id) { return mockFolder(id); }, getFileById: function (id) { var f = drive.files[id]; if (!f) throw new Error('파일 없음'); return { getId: function () { return id; }, getBlob: function () { return mockBlob(f.bytes, f.mime, f.name); }, setTrashed: function () { delete drive.files[id]; } }; } },
@@ -66,8 +67,10 @@ var SESS = { adm: { id: 'a', name: '관리', role: 'admin', perms: ['quote', 'an
 ctx.__realRequireSession = ctx.requireSession_;
 ctx.requireSession_ = function (t) { var s = SESS[t]; if (!s) throw new Error('no sess'); return JSON.parse(JSON.stringify(s)); };
 ctx.placePhotos_ = function () { return []; };
+// 가짜 인터넷: setNet(fn(url, opts) → { code, text }) 뒤에만 UrlFetchApp 이 생겨요 (그 전엔 예전처럼 없음)
+function setNet(fn) { ctx.UrlFetchApp = { fetch: function (u, o) { var r = fn(u, o || {}); return { getResponseCode: function () { return r.code; }, getContentText: function () { return r.text; } }; }, fetchAll: function (list) { return list.map(function (x) { return ctx.UrlFetchApp.fetch(x.url || x, x); }); } }; }
 function call(tok, action, req) { req = Object.assign({ action: action, token: tok }, req || {}); return JSON.parse(ctx.doPost({ postData: { contents: JSON.stringify(req) } }).s); }
 var fails = 0;
 function ok(name, cond, info) { if (!cond) fails++; console.log((cond ? 'PASS ' : 'FAIL ') + name + (info !== undefined && !cond ? ' :: ' + (typeof info === 'string' ? info : JSON.stringify(info)) : '')); }
 process.on('exit', function () { if (errors.length) { console.log('FAIL 시트 줄 너비 오류 :: ' + errors.join(' / ')); fails++; } if (fails) process.exitCode = 1; });
-module.exports = { drive: drive, SESS: SESS, call: call, sheets: sheets, props: props, cache: cache, errors: errors, ctx: ctx, Sheet: Sheet, ok: ok };
+module.exports = { setNet: setNet, drive: drive, SESS: SESS, call: call, sheets: sheets, props: props, cache: cache, errors: errors, ctx: ctx, Sheet: Sheet, ok: ok };

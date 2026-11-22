@@ -5,6 +5,7 @@
 import { sheetValue, readValue, enc, dec, display, formatDate } from './gas.js';
 import { createHash } from 'node:crypto';
 import { gzipSync, gunzipSync } from 'node:zlib';
+import { Buffer } from 'node:buffer'; // Deno(Supabase 함수)에는 Buffer 가 기본으로 없어요
 
 /** 이 파일이 맡는 액션 목록 (core.js ACTIONS 에 더해요) */
 export function portActions() { return makePort({}).ACTIONS; }
@@ -670,7 +671,8 @@ export function makePort(o) {
     return ob;
   }
   /** 시트의 '2번 줄부터 끝까지' (빈 줄 포함 · Code.js getRange(2,1,last-1,n).getValues() 와 같게) */
-  async function bodyRows(name, width, db) { var all = await readAll(name, db); return all.slice(1).map(function (r, i) { var v = []; for (var j = 0; j < width; j++) v.push(readValue(r[j] == null ? '' : r[j])); v._r = i + 2; return v; }); }
+  /** Code.js getRange(2, 1, getLastRow() - 1, width) — 끝의 빈 줄은 빼요(getLastRow 처럼) */
+  async function bodyRows(name, width, db) { var all = await readAll(name, db), n = all.length; while (n > 1 && (all[n - 1] || []).every(function (v) { return v === '' || v == null; })) n--; return all.slice(1, n).map(function (r, i) { var v = []; for (var j = 0; j < width; j++) v.push(readValue(r[j] == null ? '' : r[j])); v._r = i + 2; return v; }); }
   async function findReq(id, db) { if (!id) return null; var hit = (await bodyRows(SHEET_REQS, REQ_HEADER.length, db)).filter(function (r) { return display(r[0]) === String(id); })[0]; return hit ? { row: hit._r, raw: hit } : null; }
   async function reqFiles(reqId, db) {
     return (await bodyRows(SHEET_REQ_FILES, REQ_FILE_HEADER.length, db)).filter(function (r) { return String(r[1]) === String(reqId); }).map(function (r) {
@@ -1083,7 +1085,8 @@ export function makePort(o) {
       for (var i = 0; i < packed.length; i += CELL_LIMIT) parts.push(packed.slice(i, i + CELL_LIMIT));
       if (parts.length > 3) throw err('타리프 버전 데이터가 너무 큽니다.');
       while (parts.length < 3) parts.push('');
-      await edit([SHEET_VER], function (W) { return W.append(SHEET_VER, VER_HEADER, [id, nowTxt(), session ? session.name + ' (' + session.id + ')' : ''].concat(parts)); });
+      var at = nowTxt(), who = session ? session.name + ' (' + session.id + ')' : '';
+      await edit([SHEET_VER], async function (W) { await W.append(SHEET_VER, VER_HEADER, [id, at, who].concat(parts)); await verMirror(W.tx, id, at, who, content); });
     }
     return id;
   }
@@ -1240,7 +1243,56 @@ export function makePort(o) {
   function packChunks(meta, items) { var packed = packJson({ meta: meta, items: items }); if (packed.length <= CELL_LIMIT || items.length <= 1) return [packed]; var half = Math.ceil(items.length / 2); return packChunks(meta, items.slice(0, half)).concat(packChunks(meta, items.slice(half))); }
   async function appendPacked(name, id, userId, meta, items) {
     var now = Date.now(), rows = packChunks(meta, items).map(function (d) { return [id, now, userId, d]; });
-    await edit([name], async function (W) { var n = await W.lastRow(name); if (n < 1) { await W.putRows(name, 1, [PACK_HEADER]); n = 1; } await W.putRows(name, n + 1, rows); });
+    await edit([name], async function (W) {
+      var n = await W.lastRow(name); if (n < 1) { await W.putRows(name, 1, [PACK_HEADER]); n = 1; } await W.putRows(name, n + 1, rows);
+      for (var r of rows) await snapMirror(W.tx, name, r);
+    });
+  }
+  /* ── 풀어 둔 표(017) 같이 맞추기: 스냅샷·견적데이터 → quote_snaps · 타리프버전 → tariff_vers · 분석데이터 → an_rows ── */
+  function snapKind(name) { return name === SHEET_SNAP ? 'snap' : 'quote'; }
+  async function snapMirror(db, name, r) {
+    var d = unpackJson(r[3]);
+    await Q(db, "insert into quote_snaps (kind, id, part, saved_ms, user_id, meta, items) values ($1, $2, coalesce((select max(part) + 1 from quote_snaps where kind = $1 and id = $2), 1), $3, $4, $5::text::jsonb, $6::text::jsonb)",
+      [snapKind(name), String(r[0]), Number(r[1]) || null, String(r[2] || ''), JSON.stringify(d.meta), JSON.stringify(d.items)]);
+  }
+  async function verMirror(db, id, at, user, content) {
+    await Q(db, 'insert into tariff_vers (id, first_at, user_name, settings, rows) values ($1, $2, $3, $4::text::jsonb, $5::text::jsonb) on conflict (id) do nothing', [id, at, user, JSON.stringify(content.s), JSON.stringify(content.t)]);
+  }
+  async function anMirror(db, key, rows) {
+    if (!rows) { await Q(db, 'delete from an_rows where key = $1', [key]); return; }
+    var kp = key.split('|'), sales = 0, buys = 0; rows.forEach(function (r) { sales += Number(r[5]) || 0; buys += Number(r[6]) || 0; });
+    await Q(db, 'insert into an_rows (key, biz, month, n, sales, buys, rows) values ($1, $2, $3, $4, $5, $6, $7::text::jsonb) on conflict (key) do update set biz = excluded.biz, month = excluded.month, n = excluded.n, sales = excluded.sales, buys = excluded.buys, rows = excluded.rows, updated_at = now()',
+      [key, kp[0], kp[1] || '', rows.length, sales, buys, JSON.stringify(rows)]);
+  }
+  /** 처음 한 번: 압축 원본을 모두 풀어 채우고 원본과 건수·합계를 맞춰 봄 (결과에는 건수·맞음 여부만) */
+  async function unpackAll() {
+    var out = {};
+    await sql.begin(async function (tx) {
+      await Q(tx, 'select name from sheet_meta where name = any($1) order by name for update', [[SHEET_SNAP, SHEET_QDATA, SHEET_VER, SHEET_AN_DATA, SHEET_AN_INDEX]]);
+      for (var name of [SHEET_SNAP, SHEET_QDATA]) {
+        await Q(tx, 'delete from quote_snaps where kind = $1', [snapKind(name)]);
+        var rows = (await bodyRows(name, 4, tx)).filter(function (r) { return display(r[0]); }), items = 0, bad = 0;
+        for (var r of rows) { try { await snapMirror(tx, name, r); items += unpackJson(r[3]).items.length; } catch (e) { bad++; } }
+        var got = (await Q(tx, "select count(*)::int n, coalesce(sum(jsonb_array_length(items)), 0)::int i from quote_snaps where kind = $1", [snapKind(name)]))[0];
+        out[snapKind(name)] = { rows: rows.length, items: items, bad: bad, ok: !bad && got.n === rows.length && got.i === items };
+      }
+      var vers = (await bodyRows(SHEET_VER, 6, tx)).filter(function (r) { return display(r[0]); }), vbad = 0;
+      for (var v of vers) { try { await verMirror(tx, display(v[0]), fmtV(v[1]), String(v[2] || ''), unpackJson(String(v[3] || '') + String(v[4] || '') + String(v[5] || ''))); } catch (e) { vbad++; } }
+      out.ver = { rows: vers.length, bad: vbad, ok: !vbad && Number((await Q(tx, 'select count(*)::int n from tariff_vers'))[0].n) === vers.length };
+      var parts = {}; (await bodyRows(SHEET_AN_DATA, 3, tx)).forEach(function (r) { var k = display(r[0]); if (k) (parts[k] = parts[k] || []).push(r); });
+      var idx = {}; (await bodyRows(SHEET_AN_INDEX, 6, tx)).forEach(function (r) { idx[display(r[0])] = r; });
+      var keys = Object.keys(parts), same = 0, diff = [];
+      await Q(tx, 'delete from an_rows');
+      for (var k of keys) {
+        var data = parts[k].sort(function (a, b) { return a[1] - b[1]; }).map(function (x) { return String(x[2]); }).join(''), list;
+        try { list = unpackJson(data); } catch (e) { diff.push(k); continue; }
+        await anMirror(tx, k, list);
+        var got2 = (await Q(tx, 'select n, sales, buys from an_rows where key = $1', [k]))[0], ix = idx[k];
+        if (ix && got2.n === Number(ix[3]) && Math.abs(Number(got2.sales) - Number(ix[4])) < 0.5 && Math.abs(Number(got2.buys) - Number(ix[5])) < 0.5) same++; else diff.push(k);
+      }
+      out.an = { keys: keys.length, same: same, diff: diff, ok: !diff.length };
+    });
+    return out;
   }
   async function packedRows(name, id, db) { return (await bodyRows(name, 4, db)).filter(function (r) { return display(r[0]) === String(id); }); }
   async function readPacked(name, id) {
@@ -1289,6 +1341,7 @@ export function makePort(o) {
     await edit([SHEET_SNAP], async function (W) {
       var rows = await bodyRows(SHEET_SNAP, 2, W.tx), n = 0; while (n < rows.length && Number(rows[n][1]) < cutoff) n++;
       for (var i = 0; i < n; i++) await W.del(SHEET_SNAP, 2);
+      await Q(W.tx, "delete from quote_snaps where kind = 'snap' and saved_ms < $1", [cutoff]);
     });
   }
   async function historyList(session, req) {
@@ -1392,6 +1445,7 @@ export function makePort(o) {
       var rows = (await packedRows(SHEET_QDATA, found.data.id, W.tx)).map(function (r) { return r._r; }).sort(function (a, b) { return b - a; });
       for (var r of rows) await W.del(SHEET_QDATA, r);
       var f = await findQuoteAny(id, W.tx); await W.del(SHEET_QUOTES, f.row);
+      await Q(W.tx, "delete from quote_snaps where kind = 'quote' and id = $1", [found.data.id]);
     });
     return {};
   }
@@ -1475,6 +1529,269 @@ export function makePort(o) {
     return {};
   }
 
+  /* ───────────── 관리자: 설정 · 키 · 타리프 · 캐시 · 유가 (Code.js saveSettings_ … dieselImport_) ───────────── */
+  function publicOf(st) {
+    return { tons: st.tons.map(function (t) { return t.name; }), fuelMode: st.fuel.mode, manualPrice: st.fuel.manualPrice, baseTon: st.milkrun.baseTon, roundTrip: st.milkrun.roundTrip, maxRows: st.batch.maxRows,
+      retentionDays: st.snapshot.retentionDays, quoteFooter: st.quoteFooter, maxKm: st.maxKm, priceRounding: st.priceRounding,
+      specials: (st.specials || []).map(function (x) { return { id: x.id, name: x.name, mode: x.mode, set: Object.keys(x.values || {}).some(function (k) { return Number(x.values[k]); }) }; }) };
+  }
+  async function saveSettings(settings) {
+    if (!settings || !Array.isArray(settings.tons) || !Array.isArray(settings.regionRules)) throw err('설정 형식이 올바르지 않습니다.');
+    var merged = calc().joilMergeSettings(settings), tonNames = merged.tons.map(function (t) { return t.name; }), seen = {};
+    merged.specials = (Array.isArray(merged.specials) ? merged.specials : []).slice(0, 40).map(function (sp, i) {
+      var name = String(sp && sp.name || '').trim().slice(0, 30); if (!name) throw err('특수 운임 ' + (i + 1) + '번째 항목의 이름을 입력하세요.');
+      var id = /^[A-Za-z0-9_-]{1,20}$/.test(String(sp.id || '')) && !seen[sp.id] ? String(sp.id) : 'sp' + Date.now().toString(36) + i; seen[id] = true;
+      var vals = {}; tonNames.forEach(function (t) { var v = Number((sp.values || {})[t]); if (v) { if (!isFinite(v) || v < 0 || v > 100000000) throw err(name + ' ' + t + ' 금액이 올바르지 않습니다.'); vals[t] = Math.round(v * 100) / 100; } });
+      return { id: id, name: name, mode: sp.mode === 'percent' ? 'percent' : 'amount', values: vals };
+    });
+    // 로그인·me 가 읽는 공개 설정(core.js props.PUBLIC_SETTINGS)도 같이 — 예전엔 옮기기 때만 맞춰져서 설정을 바꿔도 화면에 늦게 보였어요
+    await sql.begin(async function (tx) { await propSet(tx, 'SETTINGS', JSON.stringify(merged)); await Q(tx, "insert into props (key, value) values ('PUBLIC_SETTINGS', $1) on conflict (key) do update set value = excluded.value", [JSON.stringify(publicOf(merged))]); });
+    return { settings: merged };
+  }
+  async function keyStatus() { var k = await Q(sql, "select key from gas_props where key in ('KAKAO_REST_KEY','OPINET_KEY','SB_KEY') and value <> ''"), has = {}; k.forEach(function (r) { has[r.key] = true; }); return { kakao: !!has.KAKAO_REST_KEY, opinet: !!has.OPINET_KEY, track: !!has.SB_KEY }; }
+  /** 키는 저장만 하고 화면으로 돌려보내지 않아요 */
+  async function saveKeys(kakao, opinet) {
+    await sql.begin(async function (tx) { if (kakao) await propSet(tx, 'KAKAO_REST_KEY', String(kakao).trim()); if (opinet) await propSet(tx, 'OPINET_KEY', String(opinet).trim()); });
+    return { keys: await keyStatus() };
+  }
+  async function saveTariff(tariff) {
+    var st = await getSettings(), e = calc().joilValidateTariff(tariff, st.tons.length, Number(st.maxKm) || 600); if (e) throw err(e);
+    var tons = st.tons.map(function (t) { return t.name; }), rows = tariff.rows.map(function (r, i) { return [i + 1].concat(r.map(Number)); });
+    await edit([SHEET_TARIFF], async function (W) { await Q(W.tx, 'select sheet_cut($1, 0)', [SHEET_TARIFF]); await W.putRows(SHEET_TARIFF, 1, [['km'].concat(tons)].concat(rows)); });
+    return {};
+  }
+  async function tariffWarn() {
+    var t = await readTariff(), zeros = 0, first = null;
+    t.rows.forEach(function (r, i) { r.forEach(function (v, j) { if (!(v > 0)) { zeros++; if (!first) first = (i + 1) + 'km ' + (t.tons[j] || ''); } }); });
+    var st = await getSettings();
+    return { zeros: zeros, first: first, rows: t.rows.length, tonMismatch: st.tons.map(function (x) { return x.name; }).join('|') !== t.tons.join('|') };
+  }
+  async function sheetLast(name) { var all = await readAll(name), n = all.length; while (n > 0 && (all[n - 1] || []).every(function (v) { return v === '' || v == null; })) n--; return n; }
+  async function cacheInfo() { var g = await sheetLast(SHEET_GEO_CACHE), r = await sheetLast(SHEET_ROUTE_CACHE); return { addresses: Math.max(0, g - 1), routes: Math.max(0, r - 1) }; }
+  async function clearCache() {
+    await edit([SHEET_GEO_CACHE, SHEET_ROUTE_CACHE], async function (W) { for (var n of [SHEET_GEO_CACHE, SHEET_ROUTE_CACHE]) await Q(W.tx, 'select sheet_cut($1, 0)', [n]); await propSet(W.tx, 'CACHE_GEN', String(Date.now())); });
+    return cacheInfo();
+  }
+  async function testKakao() { var q = '서울특별시 중구 세종대로 110', pt = (await geocodeMany([q]))[q]; if (pt.error) throw err(pt.error); return { message: '카카오 연결 정상: ' + pt.address }; }
+  async function dieselHistory() { var h = await dieselHistoryMap(); return { rows: Object.keys(h).sort().map(function (d) { return [d, h[d].price, h[d].source]; }), status: await dieselStatus() }; }
+  async function dieselImport(rows) {
+    var entries = (rows || []).map(function (r) { return { date: String(r[0]), price: Number(r[1]), source: '엑셀 가져오기' }; }).filter(function (e) { return /^\d{4}-\d{2}-\d{2}$/.test(e.date) && e.price > 0 && e.price < 10000; });
+    if (!entries.length) throw err('가져올 날짜·경유가가 없습니다.');
+    return { count: await upsertDiesel(entries), status: await dieselStatus() };
+  }
+  async function bootstrap() {
+    await cleanupSnapshots();
+    return { settings: await getSettings(), keys: await keyStatus(), users: await o.listUsers(), logs: await getLogs(200), cache: await cacheInfo(), diesel: await dieselStatus(), tariffWarn: await tariffWarn() };
+  }
+
+  /* ───────────── 매출매입 분석 (Code.js analysisIndex_ … analysisAccessLog_) — 화면이 보낸 압축 글자를 그대로 보관·전달 ───────────── */
+  var SHEET_AN_INDEX = '분석목록', SHEET_AN_DATA = '분석데이터', SHEET_AN_MAP = '매출처설정', SHEET_AN_LOG = '분석접속기록';
+  var AN_INDEX_HEADER = ['키', '사업자', '월', '건수', '매출합', '매입합', '파일명', '업로드일시', '업로더'], AN_DATA_HEADER = ['키', '순번', '데이터'], AN_MAP_HEADER = ['원본 매출처', '표시 이름', '숨김'];
+  var AN_LOG_HEADER = ['일시', '아이디', '이름', '데이터 묶음 수'], AN_LOAD_MAX = 12, AN_RULE_FIELDS = ['any', 'cust', 'from', 'to', 'weight', 'car', 'driver', 'etc', 'note'];
+  async function analysisRules() { var raw = await propGet('AN_RULES'); return raw ? JSON.parse(raw) : []; }
+  async function analysisIndex(session) {
+    var list = (await bodyRows(SHEET_AN_INDEX, AN_INDEX_HEADER.length)).map(function (r) {
+      var kp = String(r[0]).split('|');
+      return { key: String(r[0]), biz: kp[0], month: kp[1], count: Number(r[3]), sales: Number(r[4]), buys: Number(r[5]), fileName: String(r[6]), uploadedAt: fmtV(r[7]), uploader: String(r[8]) };
+    });
+    var mapping = (await bodyRows(SHEET_AN_MAP, 3)).map(function (r) { return { raw: String(r[0]), display: String(r[1] || ''), hidden: r[2] === 'Y' || r[2] === true }; });
+    await edit([SHEET_AN_LOG], function (W) { return W.append(SHEET_AN_LOG, AN_LOG_HEADER, [nowTxt(), session.id, session.name, list.length]); });
+    return { index: list, mapping: mapping, businesses: AN_BUSINESSES, rules: await analysisRules(), notes: await notesList() };
+  }
+  async function analysisLoad(keys) {
+    keys = (keys || []).map(String).slice(0, AN_LOAD_MAX); var out = {}, want = {};
+    if (!keys.length) return { data: out };
+    keys.forEach(function (k) { want[k] = []; });
+    var order = []; (await bodyRows(SHEET_AN_DATA, 3)).forEach(function (r) { var k = display(r[0]); if (want[k]) { if (!want[k].length) order.push(k); want[k].push(r); } });
+    order.forEach(function (k) { if (want[k].length) out[k] = want[k].sort(function (a, b) { return a[1] - b[1]; }).map(function (v) { return String(v[2]); }).join(''); });
+    return { data: out };
+  }
+  async function removeAnalysisRows(W, key) {
+    for (var name of [SHEET_AN_DATA, SHEET_AN_INDEX]) { var rows = await bodyRows(name, 1, W.tx); for (var i = rows.length - 1; i >= 0; i--) if (display(rows[i][0]) === key) await W.del(name, rows[i]._r); }
+  }
+  async function analysisUpload(session, req) {
+    var biz = String(req.biz || ''), month = String(req.month || '');
+    if (AN_BUSINESSES.indexOf(biz) === -1) throw err('사업자를 선택하세요.');
+    if (!/^\d{4}-\d{2}$/.test(month)) throw err('월 형식이 올바르지 않습니다: ' + month);
+    var data = String(req.data || ''); if (!data) throw err('데이터가 비어 있습니다.');
+    // 서버에서 한 번 풀어서 건수·합계를 직접 확인 (화면이 보낸 숫자를 그대로 믿지 않음)
+    var rows = unpackJson(data); if (!Array.isArray(rows) || !rows.length) throw err('행이 없습니다.');
+    var sales = 0, buys = 0;
+    rows.forEach(function (r) { if (String(r[0]).slice(0, 7) !== month) throw err('다른 달 행이 섞여 있습니다: ' + r[0]); sales += Number(r[5]) || 0; buys += Number(r[6]) || 0; });
+    if (req.count != null && Number(req.count) !== rows.length) throw err('건수가 맞지 않습니다. 다시 시도하세요.');
+    var key = biz + '|' + month;
+    await edit([SHEET_AN_DATA, SHEET_AN_INDEX], async function (W) {
+      await removeAnalysisRows(W, key);
+      var parts = []; for (var i = 0; i < data.length; i += CELL_LIMIT) parts.push([key, parts.length + 1, data.slice(i, i + CELL_LIMIT)]);
+      var n = await W.lastRow(SHEET_AN_DATA); if (n < 1) { await W.putRows(SHEET_AN_DATA, 1, [AN_DATA_HEADER]); n = 1; }
+      await W.putRows(SHEET_AN_DATA, n + 1, parts);
+      await W.append(SHEET_AN_INDEX, AN_INDEX_HEADER, [key, biz, "'" + month, rows.length, sales, buys, String(req.fileName || '').slice(0, 200), nowTxt(), session.name + ' (' + session.id + ')']);
+      await anMirror(W.tx, key, rows);
+    });
+    return { key: key, count: rows.length, sales: sales, buys: buys };
+  }
+  async function analysisDelete(key) {
+    key = String(key || ''); if (!key) throw err('삭제할 데이터를 선택하세요.');
+    await edit([SHEET_AN_DATA, SHEET_AN_INDEX], async function (W) { await removeAnalysisRows(W, key); await anMirror(W.tx, key, null); });
+    return {};
+  }
+  async function analysisSaveMap(map) {
+    if (!Array.isArray(map)) throw err('매출처 설정 형식이 올바르지 않습니다.');
+    var rows = map.filter(function (m) { return m && String(m.raw || '') !== ''; }).map(function (m) { return [String(m.raw), String(m.display || '').trim().slice(0, 100), m.hidden ? 'Y' : '']; });
+    await edit([SHEET_AN_MAP], async function (W) {
+      var n = await W.lastRow(SHEET_AN_MAP); if (n < 1) { await W.putRows(SHEET_AN_MAP, 1, [AN_MAP_HEADER]); n = 1; }
+      if (n > 1) await W.clearRows(SHEET_AN_MAP, 2, n - 1, 3);
+      if (rows.length) await W.putRows(SHEET_AN_MAP, 2, rows);
+    });
+    return { count: rows.length };
+  }
+  async function analysisSaveRules(rules) {
+    if (!Array.isArray(rules)) throw err('규칙 형식이 올바르지 않습니다.');
+    if (rules.length > 200) throw err('규칙은 200개까지 만들 수 있습니다.');
+    var clean = rules.map(function (r) {
+      var word = String(r.word || '').trim(); if (!word) throw err('단어가 비어 있는 규칙이 있습니다.');
+      if (AN_RULE_FIELDS.indexOf(r.field) === -1) throw err('칸 선택이 올바르지 않습니다.');
+      var action = r.action === 'class' ? 'class' : 'exclude', cat = String(r.cat || '').trim().slice(0, 30);
+      if (action === 'class' && !cat) throw err('분류 규칙은 분류 이름이 필요합니다: ' + word);
+      return { on: r.on !== false, field: r.field, mode: ['eq', 'contains', 'starts'].indexOf(r.mode) !== -1 ? r.mode : 'contains', word: word.slice(0, 100), biz: AN_BUSINESSES.indexOf(r.biz) !== -1 ? r.biz : '', action: action, cat: action === 'class' ? cat : '', memo: String(r.memo || '').slice(0, 200) };
+    });
+    await sql.begin(function (tx) { return propSet(tx, 'AN_RULES', JSON.stringify(clean)); });
+    return { rules: clean };
+  }
+  async function analysisAccessLog(limit) { var rows = await bodyRows(SHEET_AN_LOG, 4); return rows.slice(Math.max(0, rows.length - limit)).reverse().map(function (r) { return { at: fmtV(r[0]), id: r[1], name: r[2], n: r[3] }; }); }
+
+  /* ───────────── 물류 정보 (유가 · 뉴스 · 날씨 · 주식) — 로그인한 직원 누구나 ───────────── */
+  var NEWS_DEFAULT = { include: ['화물연대', '화물 파업', '안전운임', '화물차 운송', '물류 업계', '운송업계', '경유 가격', '고속도로 통행료', '항만 파업', '컨테이너 운임', '국토부 화물', '택배 노조'], exclude: ['교통사고', '추돌', '음주운전', '사망사고', '부고', '인사'], watch: ['쿠팡', 'CJ대한통운', '한진', '롯데글로벌로지스'] };
+  var WEATHER_REGIONS = [{ name: '경기도', city: '수원', lat: 37.26, lon: 127.03 }, { name: '충청도', city: '대전', lat: 36.35, lon: 127.38 }, { name: '전라도', city: '광주', lat: 35.16, lon: 126.85 }, { name: '강원도', city: '강릉', lat: 37.75, lon: 128.88 }, { name: '경상도', city: '대구', lat: 35.87, lon: 128.60 }];
+  var KR_MEDIA = ['KBS', 'MBC', 'SBS', 'YTN', 'JTBC', 'MBN', 'TV조선', 'TV CHOSUN', 'KTV', 'OBS', 'EBS', 'TBS', 'CBS', 'BBS', 'ZDNet Korea', 'ZDNET Korea', 'iMBC', 'Newsis', 'News1', 'NEWSIS', 'KMIB', 'SBS Biz', 'MTN', 'Edaily', 'inews24', 'etnews', 'thebell', 'Bloter', 'Ajunews', 'Hankyung', 'Chosunbiz', 'JoongAng', 'Dong-A'];
+  var KR_HOSTS = ['chosun.com', 'donga.com', 'hankyung.com', 'mk.co.kr', 'newsis.com', 'news1.kr', 'yna.co.kr', 'yonhapnewstv.co.kr', 'kbs.co.kr', 'imbc.com', 'sbs.co.kr', 'ytn.co.kr', 'jtbc.co.kr', 'joins.com', 'joongang.co.kr', 'hani.co.kr', 'khan.co.kr', 'hankookilbo.com', 'segye.com', 'kmib.co.kr', 'munhwa.com', 'seoul.co.kr', 'sedaily.com', 'edaily.co.kr', 'asiae.co.kr', 'mt.co.kr', 'heraldcorp.com', 'fnnews.com', 'etnews.com', 'dt.co.kr', 'inews24.com', 'zdnet.co.kr', 'nocutnews.co.kr', 'ohmynews.com', 'pressian.com', 'ajunews.com', 'newspim.com', 'businesspost.co.kr', 'mbn.co.kr', 'tvchosun.com', 'klnews.co.kr', 'cargonews.co.kr', 'ksg.co.kr', 'bloter.net', 'thebell.co.kr', 'wowtv.co.kr', 'sbsbiz.co.kr', 'biz.chosun.com', 'news.naver.com', 'n.news.naver.com', 'v.daum.net'];
+  async function newsRules() { var raw = await propGet('NEWS_RULES'), r = raw ? JSON.parse(raw) : {}; return { include: r.include || NEWS_DEFAULT.include, exclude: r.exclude || NEWS_DEFAULT.exclude, watch: r.watch || NEWS_DEFAULT.watch, blockSources: r.blockSources || [] }; }
+  async function saveNewsRules(rules) {
+    var clean = function (list) { var seen = {}; return (list || []).map(function (w) { return String(w || '').trim().slice(0, 40); }).filter(function (w) { if (!w || seen[w]) return false; seen[w] = true; return true; }).slice(0, 40); };
+    var r = { include: clean(rules && rules.include), exclude: clean(rules && rules.exclude), watch: clean(rules && rules.watch), blockSources: clean(rules && rules.blockSources) };
+    if (!r.include.length && !r.watch.length) throw err('모을 키워드를 하나 이상 넣으세요.');
+    await sql.begin(function (tx) { return propSet(tx, 'NEWS_RULES', JSON.stringify(r)); }); await cacheDel('NEWS');
+    return { rules: r };
+  }
+  function xmlText(v) { return String(v || '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/<[^>]+>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').trim(); }
+  function parseRss(xml, keyword, kind) {
+    var out = [], m, re = /<item>([\s\S]*?)<\/item>/g;
+    while ((m = re.exec(xml))) {
+      var it = m[1], g = function (tag) { var x = new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>').exec(it); return x ? xmlText(x[1]) : ''; };
+      var title = g('title'), source = g('source'), su = /<source[^>]*url="([^"]*)"/.exec(it), host = '';
+      if (su) { var hm = /^https?:\/\/([^\/:?#]+)/i.exec(su[1]); host = hm ? hm[1].toLowerCase() : ''; }
+      if (source && title.slice(-(source.length + 3)) === ' - ' + source) title = title.slice(0, -(source.length + 3));
+      var t = Date.parse(g('pubDate'));
+      out.push({ title: title, link: g('link'), source: source, host: host, at: isNaN(t) ? 0 : t, kw: keyword, kind: kind });
+    }
+    return out;
+  }
+  function isDomesticNews(n) {
+    var hangul = /[\uAC00-\uD7A3]/; if (!hangul.test(n.title || '')) return false;
+    var src = String(n.source || ''), host = String(n.host || '');
+    if (hangul.test(src) || /\.kr$/.test(host)) return true;
+    if (KR_HOSTS.some(function (h) { return host === h || host.slice(-(h.length + 1)) === '.' + h; })) return true;
+    return KR_MEDIA.some(function (m) { return src.toLowerCase().indexOf(m.toLowerCase()) !== -1; });
+  }
+  /** 바깥 주소 여러 개 한꺼번에 (UrlFetchApp.fetchAll · muteHttpExceptions 처럼 오류도 응답으로) */
+  function fetchMany(list) { return Promise.all(list.map(function (x) { return netFetch(x.url, { headers: x.headers || {} }).then(function (r) { return r.text().then(function (t) { return { code: r.status, text: t }; }); }, function () { return { code: 599, text: '' }; }); })); }
+  async function news(force) {
+    if (!force) { var hit = await cacheGet('NEWS'); if (hit) return JSON.parse(hit); }
+    var rules = await newsRules(), qs = rules.include.map(function (k) { return [k, 'topic']; }).concat(rules.watch.map(function (k) { return [k, 'watch']; }));
+    var urls = qs.map(function (q) { return { url: 'https://news.google.com/rss/search?q=' + encodeURIComponent('"' + q[0] + '" when:7d') + '&hl=ko&gl=KR&ceid=KR:ko' }; }), res = [];
+    for (var i = 0; i < urls.length; i += 20) res = res.concat(await fetchMany(urls.slice(i, i + 20)));
+    var byTitle = {}, failed = 0, foreign = 0;
+    res.forEach(function (r, i) {
+      if (r.code !== 200) { failed++; return; }
+      parseRss(r.text, qs[i][0], qs[i][1]).forEach(function (n) {
+        var key = n.title.replace(/[\s"'“”‘’\[\]…·,.]/g, '').slice(0, 40); if (!key) return;
+        var prev = byTitle[key];
+        if (prev) { if (prev.kws.indexOf(n.kw) === -1) prev.kws.push(n.kw); if (n.kind === 'watch') prev.watch = true; return; }
+        if (!isDomesticNews(n)) { foreign++; return; }
+        byTitle[key] = { title: n.title, link: n.link, source: n.source, at: n.at, kws: [n.kw], watch: n.kind === 'watch' };
+      });
+    });
+    var ex = rules.exclude, blocked = rules.blockSources || [], since = Date.now() - 7 * 86400000;
+    var list = Object.keys(byTitle).map(function (k) { return byTitle[k]; }).filter(function (n) {
+      if (n.at && n.at < since) return false;
+      if (blocked.some(function (b) { return n.source === b || (n.source || '').indexOf(b) !== -1; })) return false;
+      return !ex.some(function (w) { return n.title.indexOf(w) !== -1; });
+    }).sort(function (a, b) { return b.at - a.at; }).slice(0, 120);
+    var out = { items: list, at: nowTxt(), failed: failed, foreign: foreign, keywords: rules }, txt = JSON.stringify(out);
+    while (txt.length > 95000 && out.items.length > 10) { out.items = out.items.slice(0, Math.floor(out.items.length * 0.8)); txt = JSON.stringify(out); }
+    await cachePut('NEWS', txt, 1800); return out;
+  }
+  async function weather() {
+    var hit = await cacheGet('WEATHER'); if (hit) return JSON.parse(hit);
+    var R = WEATHER_REGIONS, url = 'https://api.open-meteo.com/v1/forecast?latitude=' + R.map(function (r) { return r.lat; }).join(',') + '&longitude=' + R.map(function (r) { return r.lon; }).join(',') +
+      '&current=temperature_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,snowfall_sum,wind_speed_10m_max&timezone=Asia%2FSeoul&forecast_days=3';
+    var r = (await fetchMany([{ url: url }]))[0]; if (r.code !== 200) throw err('날씨 정보를 받지 못했습니다. 잠시 후 다시 시도하세요.');
+    var data = JSON.parse(r.text); if (!Array.isArray(data)) data = [data];
+    var out = { at: nowTxt(), regions: R.map(function (reg, i) {
+      var d = data[i] || {}, dl = d.daily || {}, cur = d.current || {};
+      return { name: reg.name, city: reg.city, now: { temp: cur.temperature_2m, code: cur.weather_code, wind: cur.wind_speed_10m },
+        days: (dl.time || []).map(function (t, k) { return { date: t, code: dl.weather_code[k], max: dl.temperature_2m_max[k], min: dl.temperature_2m_min[k], pop: dl.precipitation_probability_max[k], rain: dl.precipitation_sum[k], snow: dl.snowfall_sum[k], wind: dl.wind_speed_10m_max[k] }; }) };
+    }) };
+    await cachePut('WEATHER', JSON.stringify(out), 3600); return out;
+  }
+  var STOCK_UA = { 'User-Agent': 'Mozilla/5.0', 'Referer': 'https://m.stock.naver.com/' }, STOCK_CUR = { USD: '$', JPY: '¥', CNY: '¥', HKD: 'HK$', EUR: '€', GBP: '£' };
+  function stockNum(v) { var n = Number(String(v == null ? '' : v).replace(/[,%\s+]/g, '')); return isFinite(n) ? n : null; }
+  function stockForeign(code) { return !/^\d{6}$/.test(code); }
+  function stockCodeOk(code) { return /^\d{6}$/.test(code) || /^[A-Za-z0-9][A-Za-z0-9.\-]{0,19}$/.test(code); }
+  function stockParse(code, json) {
+    var d = (json && json.datas || [])[0]; if (!d) throw err('시세 형식이 바뀌었어요');
+    var dir = d.compareToPreviousPrice && d.compareToPreviousPrice.name || '', diff = stockNum(d.compareToPreviousClosePrice), rate = stockNum(d.fluctuationsRatio);
+    if (diff != null && /FALL|LOWER/.test(dir) && diff > 0) diff = -diff;
+    if (rate != null && /FALL|LOWER/.test(dir) && rate > 0) rate = -rate;
+    var foreign = stockForeign(code), cur = foreign ? String(d.currencyType && d.currencyType.code || 'USD') : 'KRW';
+    return { code: code, name: String(d.stockName || d.stockNameEng || code), foreign: foreign, cur: cur, sym: foreign ? (STOCK_CUR[cur] || cur + ' ') : '', price: stockNum(d.closePrice), diff: diff, rate: rate,
+      open: stockNum(d.openPrice), high: stockNum(d.highPrice), low: stockNum(d.lowPrice), volume: stockNum(d.accumulatedTradingVolume), market: String(d.marketStatus || ''), at: String(d.localTradedAt || '') };
+  }
+  async function stockQuotes(codes) {
+    var keys = (codes || []).map(function (c) { return String(c).trim(); }).filter(stockCodeOk).slice(0, 5), out = {}, need = [];
+    for (var k of keys) { var v = await cacheGet('STK_' + k); if (v) out[k] = JSON.parse(v); else need.push(k); }
+    if (need.length) {
+      var res = await fetchMany(need.map(function (k) { return { url: 'https://polling.finance.naver.com/api/realtime/' + (stockForeign(k) ? 'worldstock/stock/' : 'domestic/stock/') + encodeURIComponent(k), headers: STOCK_UA }; }));
+      for (var i = 0; i < need.length; i++) {
+        var key = need[i], r = res[i];
+        try { if (r.code !== 200) throw err('응답 ' + r.code); out[key] = stockParse(key, JSON.parse(r.text)); await cachePut('STK_' + key, JSON.stringify(out[key]), 60); }
+        catch (e) { out[key] = { code: key, name: key, foreign: stockForeign(key), error: e.message }; }
+      }
+    }
+    return { quotes: keys.map(function (k) { return out[k]; }), at: nowTxt() };
+  }
+  async function stockSearch(q) {
+    q = String(q || '').trim(); if (!q) return { items: [] };
+    if (/^\d{6}$/.test(q)) { var one = (await stockQuotes([q])).quotes[0]; return { items: one && !one.error ? [{ code: q, name: one.name, market: '', ticker: q }] : [] }; }
+    var key = 'STKQ2_' + encodeURIComponent(q).slice(0, 200), hit = await cacheGet(key); if (hit) return JSON.parse(hit);
+    var r = (await fetchMany([{ url: 'https://ac.stock.naver.com/ac?q=' + encodeURIComponent(q) + '&target=stock', headers: STOCK_UA }]))[0];
+    if (r.code !== 200) throw err('종목 검색 응답 ' + r.code);
+    var j = JSON.parse(r.text), items = (j.items || []).map(function (x) {
+      var kor = (x.nationCode || 'KOR') === 'KOR', code = kor ? String(x.code || '') : String(x.reutersCode || x.code || '');
+      if (kor && !/^\d{6}$/.test(code)) return null; if (!kor && !stockCodeOk(code)) return null;
+      return { code: code, name: String(x.name || code), ticker: String(x.code || code), market: String(x.typeName || x.typeCode || '') + (kor ? '' : ' · ' + String(x.nationName || x.nationCode || '해외')), foreign: !kor };
+    }).filter(Boolean).slice(0, 12);
+    var out = { items: items }; await cachePut(key, JSON.stringify(out), 86400); return out;
+  }
+  async function stockChart(code) {
+    code = String(code || '').trim(); if (!stockCodeOk(code)) throw err('종목 코드를 확인하세요.');
+    var key = 'STKC_' + code, hit = await cacheGet(key); if (hit) return JSON.parse(hit);
+    var pts = [];
+    if (!stockForeign(code)) {
+      var r = (await fetchMany([{ url: 'https://fchart.stock.naver.com/sise.nhn?symbol=' + code + '&timeframe=day&count=70&requestType=0', headers: STOCK_UA }]))[0];
+      if (r.code !== 200) throw err('차트 응답 ' + r.code);
+      var re = /data="([^"]+)"/g, m; while ((m = re.exec(r.text))) { var f = m[1].split('|'); if (f.length >= 5) pts.push({ d: f[0].slice(0, 4) + '-' + f[0].slice(4, 6) + '-' + f[0].slice(6, 8), c: Number(f[4]) }); }
+    } else {
+      var end = new Date(), start = new Date(end.getTime() - 100 * 86400000), fmt = function (d) { return d.toISOString().slice(0, 10).replace(/-/g, '') + '0000'; };
+      var r2 = (await fetchMany([{ url: 'https://api.stock.naver.com/chart/foreign/item/' + encodeURIComponent(code) + '/day?startDateTime=' + fmt(start) + '&endDateTime=' + fmt(end), headers: STOCK_UA }]))[0];
+      if (r2.code !== 200) throw err('차트 응답 ' + r2.code);
+      var j = JSON.parse(r2.text), arr = Array.isArray(j) ? j : (j.priceInfos || []);
+      arr.forEach(function (x) { var d = String(x.localDate || x.localTradedAt || '').replace(/\D/g, '').slice(0, 8), c = stockNum(x.closePrice); if (d.length === 8 && c != null) pts.push({ d: d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8), c: c }); });
+      pts = pts.slice(-70);
+    }
+    var out = { code: code, points: pts }; await cachePut(key, JSON.stringify(out), 1800); return out;
+  }
+
   /* ───────────── 요청 나누기 (Code.js handle_ 의 순서·권한 그대로) ───────────── */
   // 권한: quote = 견적 메뉴 권한(Code.js QUOTE_ACTIONS) · admin = 관리자만 · '' = 로그인만
   var TABLE = {
@@ -1544,6 +1861,33 @@ export function makePort(o) {
     'rates.upload': ['quote', function (s, q) { return ratesUpload(s, q); }],
     'rates.saveSpecials': ['quote', function (s, q) { return saveCustSpecials(q.cust, q.specials); }],
     'rates.delete': ['admin', function (s, q) { return ratesDelete(q.cust); }],
+    'admin.bootstrap': ['admin', function (s, q) { return bootstrap(); }],
+    'admin.getSettings': ['admin', async function (s, q) { return { settings: await getSettings(), keys: await keyStatus() }; }],
+    'admin.saveSettings': ['admin', function (s, q) { return saveSettings(q.settings); }],
+    'admin.getTariff': ['admin', async function (s, q) { return { tariff: await readTariff() }; }],
+    'admin.saveTariff': ['admin', function (s, q) { return saveTariff(q.tariff); }],
+    'admin.getLogs': ['admin', async function (s, q) { return { logs: await getLogs(Number(q.limit) || 200) }; }],
+    'admin.saveKeys': ['admin', function (s, q) { return saveKeys(q.kakao, q.opinet); }],
+    'admin.testKakao': ['admin', function (s, q) { return testKakao(); }],
+    'admin.cacheInfo': ['admin', async function (s, q) { return { cache: await cacheInfo() }; }],
+    'admin.clearCache': ['admin', async function (s, q) { return { cache: await clearCache() }; }],
+    'admin.dieselHistory': ['admin', function (s, q) { return dieselHistory(); }],
+    'admin.dieselRecordNow': ['admin', async function (s, q) { await recordDieselDaily(); return dieselHistory(); }],
+    'admin.dieselImport': ['admin', function (s, q) { return dieselImport(q.rows); }],
+    'admin.saveNews': ['admin', function (s, q) { return saveNewsRules(q.rules); }],
+    'analysis.index': ['anls', function (s, q) { return analysisIndex(s); }],
+    'analysis.load': ['anls', function (s, q) { return analysisLoad(q.keys); }],
+    'analysis.upload': ['admin', function (s, q) { return analysisUpload(s, q); }],
+    'analysis.delete': ['admin', function (s, q) { return analysisDelete(q.key); }],
+    'analysis.saveMap': ['admin', function (s, q) { return analysisSaveMap(q.map); }],
+    'analysis.saveRules': ['admin', function (s, q) { return analysisSaveRules(q.rules); }],
+    'analysis.accessLog': ['admin', async function (s, q) { return { logs: await analysisAccessLog(50) }; }],
+    'info.diesel': ['', function (s, q) { return dieselRecent(100000); }],
+    'info.news': ['', function (s, q) { return news(!!q.force && s.role === 'admin'); }],
+    'info.weather': ['', function (s, q) { return weather(); }],
+    'stock.quotes': ['', function (s, q) { return stockQuotes(q.codes); }],
+    'stock.search': ['', function (s, q) { return stockSearch(q.q); }],
+    'stock.chart': ['', function (s, q) { return stockChart(q.code); }],
     'weekly.get': ['', async function (s, q) { return { weekly: await weekly(q.week, s) }; }],
     'weekly.send': ['admin1', function (s, q) { return weeklySend(q.week, q.onlyMe ? s : null); }],
     'cal.companyHolidays': ['admin1', async function (s, q) { await saveCompanyHolidays(q.list); return calAll(s); }]
@@ -1552,8 +1896,9 @@ export function makePort(o) {
     var t = TABLE[action];
     if (t[0] === 'quote') o.requirePerm(session, 'quote');
     else if (t[0] === 'analysis') o.requirePerm(session, 'analysis');
+    else if (t[0] === 'anls') { if (session.perms.indexOf('analysis') === -1 && session.perms.indexOf('search') === -1) o.requirePerm(session, 'analysis'); }
     else if ((t[0] === 'admin' || t[0] === 'admin1') && session.role !== 'admin') throw err('관리자만 사용할 수 있습니다.');
     return t[1](session, req);
   }
-  return { weeklySend: weeklySend, ACTIONS: Object.keys(TABLE), has: function (a) { return Object.prototype.hasOwnProperty.call(TABLE, a); }, handle: handle, _t: { readAll: readAll, rowsOf: rowsOf, edit: edit } };
+  return { weeklySend: weeklySend, unpackAll: unpackAll, ACTIONS: Object.keys(TABLE), has: function (a) { return Object.prototype.hasOwnProperty.call(TABLE, a); }, handle: handle, _t: { readAll: readAll, rowsOf: rowsOf, edit: edit } };
 }
