@@ -597,6 +597,30 @@
     return { txt: txt, old: m >= TRACK_OLD_MIN };
   }
   function trTime(iso) { var d = new Date(iso); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+  function trDur(ms) { var m = Math.round(ms / 60000); return m < 60 ? m + '분' : Math.floor(m / 60) + '시간' + (m % 60 ? ' ' + (m % 60) + '분' : ''); }
+  /** 한곳에 서 있던 시각: 마지막 위치 시각만 보면 언제 도착했는지 몰라서(5분마다 새 시각) — 15분 넘게 200m 안이면 '08:30부터 이곳' */
+  var TRACK_STAY_M = 200, TRACK_STAY_MIN = 15;
+  function trDist(a, b) { var dy = (b.lat - a.lat) * 111320, dx = (b.lng - a.lng) * 111320 * Math.cos((a.lat + b.lat) / 2 * Math.PI / 180); return Math.sqrt(dx * dx + dy * dy); }
+  function trStayTxt(v) {
+    if (!v.stay_since || !v.last_time) return '';
+    var s = new Date(v.stay_since), ms = new Date(v.last_time) - s; if (ms < TRACK_STAY_MIN * 60000) return '';
+    var day = s.toDateString() === new Date().toDateString() ? '' : (s.getMonth() + 1) + '/' + s.getDate() + ' ';
+    return day + trTime(v.stay_since) + '부터 이곳 (' + trDur(ms) + ')';
+  }
+  /** 그날 경로를 머묾·이동으로 나눠요 (머문 곳 첫 점에서 200m 안이 이어지면 한 덩어리, 15분 넘으면 머묾) */
+  function trStays(pts) {
+    var out = [], i = 0;
+    while (i < pts.length) {
+      var j = i; while (j + 1 < pts.length && trDist(pts[i], pts[j + 1]) <= TRACK_STAY_M) j++;
+      var ms = new Date(pts[j].t) - new Date(pts[i].t);
+      if (j > i && ms >= TRACK_STAY_MIN * 60000) { out.push({ stay: true, from: pts[i].t, to: pts[j].t, lat: pts[i].lat, lng: pts[i].lng, last: j === pts.length - 1 }); i = j + 1; continue; }
+      var prev = out[out.length - 1];
+      if (prev && !prev.stay) prev.to = pts[i].t; else out.push({ stay: false, from: pts[i].t, to: pts[i].t });
+      i++;
+    }
+    out.forEach(function (s, k) { if (!s.stay && out[k + 1]) s.to = out[k + 1].from; });
+    return out;
+  }
   function trInfo(v) { return [v.company, v.affiliation, v.ton ? v.ton + (/톤|t$/i.test(v.ton) ? '' : '톤') : '', v.body_type].filter(Boolean).join(' · '); }
   function renderTrack() {
     var st = trSt();
@@ -711,7 +735,7 @@
       var a = trAgo(v.last_time), lk = trLinkOf(v.id);
       return '<button type="button" class="tr-item' + (st.sel === v.id ? ' on' : '') + (v.active ? '' : ' off') + '" data-tv="' + v.id + '">' +
         '<span class="tr-dot' + (a.old ? ' old' : '') + '"></span><span class="tr-main"><b>' + esc(v.plate) + '</b> ' + esc(v.driver_name || '') + (v.active ? '' : ' <span class="muted">(사용 안 함)</span>') + (lk ? ' <span class="tr-lk ' + lk.cls + '">🔗 ' + lk.txt + '</span>' : '') +
-        '<span class="muted small">' + esc(trInfo(v)) + '</span></span><span class="tr-when small' + (a.old ? ' muted' : '') + '">' + esc(a.txt) + (v.last_battery != null ? '<br><span class="muted">🔋' + Math.round(v.last_battery) + '%</span>' : '') + '</span>' +
+        '<span class="muted small">' + esc(trInfo(v)) + '</span>' + (trStayTxt(v) ? '<span class="tr-stay small">📍 ' + esc(trStayTxt(v)) + '</span>' : '') + '</span><span class="tr-when small' + (a.old ? ' muted' : '') + '">' + esc(a.txt) + (v.last_battery != null ? '<br><span class="muted">🔋' + Math.round(v.last_battery) + '%</span>' : '') + '</span>' +
         '<span class="tr-edit" data-te="' + v.id + '" title="고치기">✎</span></button>';
     }).join('') || '<div class="muted small" style="padding:14px">찾는 차량이 없어요.</div>';
     $$('[data-tv]', el).forEach(function (b) {
@@ -738,8 +762,9 @@
       var path = pts.map(function (p) { return new K.LatLng(p.lat, p.lng); });
       if (path.length > 1) st.line = new K.Polyline({ map: map, path: path, strokeWeight: 5, strokeColor: '#F07A22', strokeOpacity: 0.85, strokeStyle: 'solid' });
       pin(pts[0].lat, pts[0].lng, '출발 ' + trTime(pts[0].t), 'start');
-      var last = pts[pts.length - 1];
-      pin(last.lat, last.lng, esc(sel.plate) + ' · ' + trTime(last.t), trAgo(last.t).old ? 'old' : '');
+      var last = pts[pts.length - 1], stays = trStays(pts), ls = stays[stays.length - 1];
+      stays.forEach(function (s, k) { if (s.stay && !s.last && k) pin(s.lat, s.lng, trTime(s.from) + '~' + trTime(s.to), 'stay'); });
+      pin(last.lat, last.lng, esc(sel.plate) + ' · ' + (ls && ls.stay && ls.last ? trTime(ls.from) + '부터' : trTime(last.t)), trAgo(last.t).old ? 'old' : '');
       path.forEach(function (p) { bounds.extend(p); });
     } else {
       st.list.forEach(function (v) {
@@ -760,7 +785,8 @@
       st.route = r; trDrawMap(); el = $('#trRoute'); if (!el) return;
       var p = r.points;
       el.innerHTML = '<b>' + esc(v.plate) + '</b> ' + esc(date) + ' · ' + (p.length ? '위치 ' + p.length + '개 · ' + trTime(p[0].t) + ' ~ ' + trTime(p[p.length - 1].t) : '이날 들어온 위치가 없어요' + (v.last_time ? ' (마지막 위치: ' + esc(trAgo(v.last_time).txt) + ')' : '')) +
-        ' <button class="btn btn-sm btn-ghost" id="trAll">전체 차량 보기</button>';
+        ' <button class="btn btn-sm btn-ghost" id="trAll">전체 차량 보기</button>' +
+        (p.length ? '<div class="tr-tl">' + trStays(p).map(function (s) { return s.stay ? '<span class="tr-st">📍 ' + trTime(s.from) + ' ~ ' + (s.last ? '지금' : trTime(s.to)) + ' 머묾 <b>' + trDur(new Date(s.to) - new Date(s.from)) + '</b></span>' : '<span class="tr-mv">🚚 ' + trTime(s.from) + ' ~ ' + trTime(s.to) + ' 이동</span>'; }).join('') + '</div>' : '');
       $('#trAll').onclick = function () { st.sel = null; st.route = null; st.fit = true; trDrawList(); trDrawMap(); $('#trRoute').innerHTML = ''; };
     }).catch(function (e) { if (!quiet) { el = $('#trRoute'); if (el) el.innerHTML = '<span class="err-text">' + esc(e.message) + '</span>'; } });
   }
@@ -777,8 +803,17 @@
         '<div class="field"><label>메모</label><textarea class="input" data-tf="memo" rows="2">' + f('memo') + '</textarea></div>' +
         '<label class="small"><input type="checkbox" data-tf="active"' + (x.active ? ' checked' : '') + '> 사용 중 (끄면 이 차 위치를 더 받지 않아요 · 지난 기록은 남아요)</label>' +
         '<p class="hint">기사 위치는 개인위치정보예요. 앱을 켜기 전에 기사 본인 동의를 받아 주세요.</p>',
-      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="trSave">저장</button>',
+      foot: (v && state.user.role === 'admin' ? '<button class="btn btn-danger" id="trDel" style="margin-right:auto">차량 지우기</button>' : '') + '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="trSave">저장</button>',
       onMount: function (m, close) {
+        var del = $('#trDel', m);
+        if (del) del.onclick = function () {
+          if (!confirm(v.plate + ' 차량을 지울까요?\n이 차의 지난 위치 기록과 용차 링크도 모두 지워지고 되돌릴 수 없어요.\n(기록을 남기려면 지우지 말고 "사용 중"을 꺼 주세요)')) return;
+          busy(del, true, '지우는 중…');
+          api('track.delete', { id: v.id }).then(function (r) {
+            st.list = r.vehicles || []; st.links = r.links || st.links; if (st.sel === v.id) { st.sel = null; st.route = null; var el = $('#trRoute'); if (el) el.innerHTML = ''; }
+            close(); trDrawList(); trDrawMap(); toast(v.plate + ' 지웠어요.');
+          }).catch(function (e) { busy(del, false); toast(e.message, 'err'); });
+        };
         $('#trSave', m).onclick = function () {
           var btn = this, o = { id: v ? v.id : '' };
           $$('[data-tf]', m).forEach(function (i) { o[i.dataset.tf] = i.type === 'checkbox' ? i.checked : i.value.trim(); });

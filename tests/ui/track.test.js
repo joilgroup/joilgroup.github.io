@@ -33,6 +33,19 @@ T.run(async function () {
   await p.click('#trAll'); await p.waitForTimeout(200);
   ok('전체 차량 보기로 돌아감', (await p.evaluate(function () { return window.__pins.filter(function (x) { return x.on; }).length; })) === 3);
 
+  // 머문 시작: 5분마다 시각이 새로 와도 '언제부터 여기 있었나'
+  ok('목록: 서 있는 차는 머문 시작 시각(N시N분부터 이곳)', /📍 \d\d:\d\d부터 이곳 \(1시간 3\d분\)/.test(await T.text(p, '.tr-item[data-tv="2"]')) && !/부터 이곳/.test(await T.text(p, '.tr-item[data-tv="1"]')), await T.text(p, '#trList'));
+  var hr = new Date(Date.now() + 9 * 3.6e6).getUTCHours();
+  if (hr >= 8 && hr < 19) {
+    await p.evaluate(function () { var d = document.querySelector('#trDate'); d.value = new Date(Date.now() + 9 * 3.6e6).toISOString().slice(0, 10); d.dispatchEvent(new Event('change')); });
+    await p.click('.tr-item[data-tv="2"]');
+    await p.waitForFunction(function () { return /머묾/.test((document.querySelector('#trRoute') || {}).innerText || ''); }, null, { timeout: 8000 });
+    var rt = await T.text(p, '#trRoute');
+    ok('경로: 이동·머묾 기록 (지금 머무는 중)', /🚚 \d\d:\d\d ~ \d\d:\d\d 이동/.test(rt) && /📍 \d\d:\d\d ~ 지금 머묾 1시간 3\d분/.test(rt), rt);
+    pins = await p.evaluate(function () { return window.__pins.filter(function (x) { return x.on; }).map(function (x) { return x.o.content.textContent; }); });
+    ok('지도: 마지막 핀에 머문 시작', pins.some(function (t) { return /00나0002 · \d\d:\d\d부터/.test(t); }), pins);
+    await p.click('#trAll'); await p.waitForTimeout(200);
+  } else console.log('PASS (건너뜀) 데모 경로가 06~19시라 지금 시각엔 경로 확인 생략');
   await p.fill('#trQ', '가짜기사2'); await p.waitForTimeout(150);
   ok('검색', (await p.$$('.tr-item')).length === 1);
   await p.fill('#trQ', '');
@@ -50,6 +63,10 @@ T.run(async function () {
   await p.click('.tr-item[data-tv="4"] [data-te]'); await p.waitForSelector('[data-tf="plate"]');
   await p.uncheck('[data-tf="active"]'); await p.click('#trSave'); await p.waitForTimeout(500);
   ok('고치기: 사용 안 함', /00라 0004.*사용 안 함/.test(await T.text(p, '#trList')));
+  await p.click('.tr-item[data-tv="4"] [data-te]'); await p.waitForSelector('#trDel');
+  p.once('dialog', function (d) { ok('지우기 전 확인: 위치 기록도 지워진다고 안내', /위치 기록/.test(d.message()), d.message()); });
+  await p.click('#trDel'); await p.waitForTimeout(600);
+  ok('차량 지우기: 목록에서 빠짐', !/00라 0004/.test(await T.text(p, '#trList')) && !(await p.$('.modal')), await T.text(p, '#trList'));
   var dup = await api(p, 'track.save', { vehicle: { plate: '00가0001' } });
   ok('같은 번호 두 번 거절', /이미 등록/.test(dup.error || ''), dup);
 
@@ -79,6 +96,7 @@ T.run(async function () {
 
   // 권한 받은 직원 / 없는 직원 / 협력사
   await T.relog(p, 'trk01', 'pw1234'); await p.waitForTimeout(500);
+  ok('권한 직원: 고치기 창에 지우기 버튼 없음 · 서버도 거절', /관리자만/.test((await api(p, 'track.delete', { id: 1 })).error || ''));
   ok('차량 위치 권한 직원: 메뉴 보이고 목록 읽힘', !!(await p.$('.nav button[data-view="track"]')) && !(await api(p, 'track.list')).error);
   await T.relog(p, 'qte01', 'pw1234'); await p.waitForTimeout(500);
   ok('권한 없는 직원: 메뉴 없음 · 서버도 거절', !(await p.$('.nav button[data-view="track"]')) && /권한/.test((await api(p, 'track.list')).error || ''));

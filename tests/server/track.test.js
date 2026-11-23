@@ -15,6 +15,7 @@ M.ctx.UrlFetchApp = { fetch: function (url, o) {
   var pf = /plate=eq\.([^&]+)/.exec(q); if (t === 'vehicles' && o.method === 'get' && pf) return res(200, db.vehicles.filter(function (v) { return v.plate === pf[1]; }));
   if (t === 'positions') return res(200, /vehicle_id=eq\.1&fix_time=gte\.2026-11-19T15:00:00/.test(q) ? [{ fix_time: '2026-11-20T00:10:00+00:00', lat: 37.1, lng: 127.1, speed: 30, battery: 80 }] : []);
   if (o.method === 'post') { var b = JSON.parse(o.payload); if (db.vehicles.some(function (v) { return v.plate === b.plate || v.device_id === b.device_id; })) return res(409, { message: 'duplicate key value' }); b.id = nextId++; db.vehicles.push(b); return res(201, [b]); }
+  if (o.method === 'delete') { var did = Number(/id=eq\.(\d+)/.exec(q)[1]); db.vehicles = db.vehicles.filter(function (x) { return x.id !== did; }); return res(204, null); }
   if (o.method === 'patch') { var id = Number(/id=eq\.(\d+)/.exec(q)[1]), v = db.vehicles.filter(function (x) { return x.id === id; })[0]; if (!v) return res(200, []); Object.assign(v, JSON.parse(o.payload)); return res(200, [v]); }
   return res(200, db.vehicles);
 } };
@@ -56,10 +57,16 @@ ok('링크 끝내기', !r.error && !!db.links[0].ended_at && !db.links[1].ended_
 ok('링크 끝내기: 이상한 값 거절', !!call('adm', 'track.linkEnd', { link: 'x&y' }).error);
 ok('링크: 권한 없는 직원·협력사 거절', !!call('stf', 'track.linkMake', { plate: '1가1' }).error && !!call('ptn', 'track.linkMake', { plate: '1가1' }).error);
 
+r = call('adm', 'track.save', { vehicle: { plate: '99지 9999' } }); var delId = r.vehicles.filter(function (v) { return v.plate === '99지 9999'; })[0].id;
+ok('목록에 머문 시작(stay_since) 칸도 읽음', /stay_since/.test(seen.filter(function (x) { return /vehicles\?select=/.test(x.url); }).pop().url));
+ok('차량 지우기: 이상한 id 거절', !!call('adm', 'track.delete', { id: '1;x' }).error);
+r = call('adm', 'track.delete', { id: delId });
+ok('차량 지우기(관리자): 목록에서 빠짐', !r.error && !r.vehicles.some(function (v) { return v.id === delId; }) && seen.some(function (x) { return x.o.method === 'delete' && new RegExp('id=eq.' + delId + '$').test(x.url); }), r.error);
 // '차량 위치' 권한을 받은 직원
 var real = M.ctx.requireSession_;
 M.ctx.requireSession_ = function (t) { return t === 'trk' ? { id: 't', name: '위치직원', role: 'staff', perms: ['track'] } : real(t); };
 r = call('trk', 'track.list');
 ok('track 권한 직원: 목록 보기', !r.error && r.vehicles.length === 2, r.error);
+ok('track 권한 직원: 차량 지우기는 관리자만', /관리자만/.test(call('trk', 'track.delete', { id: 1 }).error || ''));
 ok('track 권한 직원: 견적·키 저장은 못 함', !!call('trk', 'history.list').error && !!call('trk', 'admin.saveTrackKeys', { key: 'x' }).error);
 M.ctx.requireSession_ = real;

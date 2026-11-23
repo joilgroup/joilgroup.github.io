@@ -173,6 +173,7 @@ function handle_(req) {
     case 'track.list': return trackList_();
     case 'track.route': return trackRoute_(req.id, req.date);
     case 'track.save': return trackSave_(req.vehicle || {});
+    case 'track.delete': return trackDelete_(session, req.id);
     case 'track.linkMake': return trackLinkMake_(session, req);
     case 'track.linkEnd': return trackLinkEnd_(req.link); // token 은 로그인 토큰이라 이름을 link 로
     case 'analysis.index': return analysisIndex_(session);
@@ -4180,7 +4181,7 @@ function fmt_(v) { return v instanceof Date ? Utilities.formatDate(v, TZ, 'yyyy-
 /* ───────────── 차량 위치 (Supabase · 서버 이전 1단계) ─────────────
    기사 폰 Traccar 앱 → Supabase 함수 'track' 이 위치 저장(supabase/ 폴더) → 여기서 서비스 키로 읽어 화면에 줘요.
    서비스 키는 스크립트 속성 SB_KEY 에만(관리자 화면에서 입력, 화면으로 돌려보내지 않음). Supabase 표는 RLS 로 브라우저에서 못 읽어요. */
-var TRACK_COLS = 'id,plate,device_id,driver_name,driver_phone,affiliation,company,ton,body_type,memo,active,last_time,last_lat,last_lng,last_speed,last_battery,last_received';
+var TRACK_COLS = 'id,plate,device_id,driver_name,driver_phone,affiliation,company,ton,body_type,memo,active,last_time,last_lat,last_lng,last_speed,last_battery,last_received,stay_since';
 
 function sb_(method, path, body, prefer) {
   var p = PropertiesService.getScriptProperties(), url = p.getProperty('SB_URL'), key = p.getProperty('SB_KEY');
@@ -4245,7 +4246,7 @@ function trackRoute_(id, date) {
   return { points: (rows || []).map(function (r) { return { t: r.fix_time, lat: r.lat, lng: r.lng, speed: r.speed, battery: r.battery }; }) };
 }
 
-/** 차량 등록·수정 (지우기 대신 '사용 안 함' — 위치 기록을 남기려고) */
+/** 차량 등록·수정 */
 function trackSave_(v) {
   var str = function (x, n) { return String(x == null ? '' : x).trim().slice(0, n || 100); };
   var row = { plate: str(v.plate, 30), device_id: trackNorm_(v.device_id || v.plate).slice(0, 60), driver_name: str(v.driver_name, 40), driver_phone: str(v.driver_phone, 30),
@@ -4256,6 +4257,14 @@ function trackSave_(v) {
   if (id && !/^\d+$/.test(id)) throw new Error('차량을 다시 골라 주세요.');
   var r = id ? sb_('patch', 'vehicles?id=eq.' + id, row, 'return=representation') : sb_('post', 'vehicles', row, 'return=representation');
   if (!r || !r.length) throw new Error('차량을 찾지 못했어요. 새로고침해 주세요.');
+  return trackList_();
+}
+
+/** 차량 지우기 (관리자만) — 그 차의 위치 기록·용차 링크도 같이 지워져요(DB 연결 삭제) */
+function trackDelete_(session, id) {
+  if (session.role !== 'admin') throw new Error('차량 지우기는 관리자만 할 수 있어요.');
+  if (!/^\d+$/.test(String(id || ''))) throw new Error('차량을 다시 골라 주세요.');
+  sb_('delete', 'vehicles?id=eq.' + id);
   return trackList_();
 }
 

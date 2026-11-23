@@ -408,7 +408,7 @@
     if (/^notes\./.test(req.action)) needPerm(me, 'analysis');
     if (/^reqs\./.test(req.action)) needPerm(me, 'quote');
     if (/^track\./.test(req.action) && me.role !== 'admin') needPerm(me, 'track');
-    if (/^track\./.test(req.action)) return demoTrack(req);
+    if (/^track\./.test(req.action)) return demoTrack(req, me);
     switch (req.action) {
       case 'work.list': case 'work.stamp': case 'work.op': var wf = load(); if (wf) { store.work = wf.work || []; store.workStamp = wf.workStamp || {}; } // 다른 창(폰 대신)에서 적은 것도 보이게
         if (req.action === 'work.op') return workOp(me, req);
@@ -1055,20 +1055,22 @@
   }
 
   /* 차량 위치 (데모): 가짜 차량 3대 · 위치는 시각으로 만들어 냄(5분 간격, 한 대는 오래 안 들어옴) — 실제는 Supabase */
-  function demoTrack(req) {
+  function demoTrack(req, me) {
     if (!store.track) {
       store.track = [
         { id: 1, plate: '00가0001', device_id: '00가0001', driver_name: '가짜기사1', driver_phone: '', affiliation: '지입', company: '데모업체', ton: '5톤', body_type: '윙바디', memo: '', active: true, base: [37.40, 127.10], stale: 0 },
-        { id: 2, plate: '00나0002', device_id: '00나0002', driver_name: '가짜기사2', driver_phone: '', affiliation: '용차', company: '데모업체', ton: '11톤', body_type: '카고', memo: '', active: true, base: [36.35, 127.38], stale: 0 },
+        { id: 2, plate: '00나0002', device_id: '00나0002', driver_name: '가짜기사2', driver_phone: '', affiliation: '용차', company: '데모업체', ton: '11톤', body_type: '카고', memo: '', active: true, base: [36.35, 127.38], stale: 0, park: 95 },
         { id: 3, plate: '00다0003', device_id: '00다0003', driver_name: '가짜기사3', driver_phone: '', affiliation: '직영', company: '데모업체', ton: '1톤', body_type: '탑차', memo: '앱 꺼짐 예시', active: true, base: [35.18, 129.07], stale: 50 }
       ];
       save();
     }
-    var at = function (v, t) { var k = t / 3.6e6; return { lat: v.base[0] + Math.sin(k + v.id) * 0.08, lng: v.base[1] + Math.cos(k * 0.8 + v.id) * 0.1 }; };
+    // park: 그 분만큼 전부터 한곳에 서 있음(머문 시작 표시 예시)
+    var parkAt = function (v) { return v.park ? Math.floor((Date.now() - v.park * 60000) / 300000) * 300000 : Infinity; };
+    var at = function (v, t) { t = Math.min(t, parkAt(v)); var k = t / 3.6e6; return { lat: v.base[0] + Math.sin(k + v.id) * 0.08, lng: v.base[1] + Math.cos(k * 0.8 + v.id) * 0.1 }; };
     var view = function (v) {
       var o = {}; Object.keys(v).forEach(function (k) { if (k !== 'base' && k !== 'stale') o[k] = v[k]; });
-      if (v.base) { var t = Math.floor((Date.now() - (v.stale || 0) * 60000) / 300000) * 300000, p = at(v, t); o.last_time = new Date(t).toISOString(); o.last_lat = p.lat; o.last_lng = p.lng; o.last_speed = 40; o.last_battery = 70 + v.id * 5; }
-      else { o.last_time = null; o.last_lat = null; o.last_lng = null; o.last_speed = null; o.last_battery = null; }
+      if (v.base) { var t = Math.floor((Date.now() - (v.stale || 0) * 60000) / 300000) * 300000, p = at(v, t); o.last_time = new Date(t).toISOString(); o.last_lat = p.lat; o.last_lng = p.lng; o.last_speed = v.park ? 0 : 40; o.last_battery = 70 + v.id * 5; o.stay_since = new Date(Math.min(t, parkAt(v))).toISOString(); }
+      else { o.stay_since = null; o.last_time = null; o.last_lat = null; o.last_lng = null; o.last_speed = null; o.last_battery = null; }
       return o;
     };
     store.trackLinks = store.trackLinks || [];
@@ -1097,6 +1099,12 @@
     }
     if (req.action === 'track.linkEnd') {
       store.trackLinks.forEach(function (l) { if (l.token === req.link && !l.ended_at) l.ended_at = new Date().toISOString(); });
+      save(); return list();
+    }
+    if (req.action === 'track.delete') {
+      if (me.role !== 'admin') fail('차량 지우기는 관리자만 할 수 있어요.');
+      store.track = store.track.filter(function (y) { return y.id !== Number(req.id); });
+      store.trackLinks = store.trackLinks.filter(function (l) { return l.vehicle_id !== Number(req.id); });
       save(); return list();
     }
     if (req.action === 'track.save') {

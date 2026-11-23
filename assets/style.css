@@ -1689,6 +1689,11 @@ body.cal-dragging * { cursor: grabbing !important; }
 .tpin { background: #1E1C19; color: #fff; font: 700 12px/1 Pretendard, sans-serif; padding: 6px 8px; border-radius: 8px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,.35); border: 2px solid #fff; cursor: pointer; }
 .tpin.old { background: #8E887F; }
 .tpin.start { background: #F07A22; }
+.tpin.stay { background: #2B6CB0; font-weight: 600; }
+.tr-stay { color: #2B6CB0; }
+.tr-tl { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-size: 12.5px; }
+.tr-st { color: #2B6CB0; }
+.tr-mv { color: var(--muted, #888); }
 .tr-copy { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
 .tr-copy code { flex: 1; min-width: 0; word-break: break-all; background: var(--panel-2); padding: 6px 8px; border-radius: 8px; font-size: 12.5px; }
 .tr-copy > span { width: 100%; }
