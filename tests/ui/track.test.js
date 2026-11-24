@@ -62,6 +62,9 @@ T.run(async function () {
   ok('새 차는 위치 없음(회색)으로 목록에', /00라 0004.*위치 없음/.test(await T.text(p, '#trList')), [await T.text(p, '#trList'), await T.text(p, '.modal')]);
   await p.click('.tr-item[data-tv="4"] [data-te]'); await p.waitForSelector('[data-tf="plate"]');
   await p.uncheck('[data-tf="active"]'); await p.click('#trSave'); await p.waitForTimeout(500);
+  await p.click('.tr-item[data-tv="1"] [data-te]'); await p.waitForSelector('[data-tf="track_mode"]');
+  await p.selectOption('[data-tf="track_mode"]', 'work'); await p.click('#trSave'); await p.waitForTimeout(500);
+  ok('위치 받는 때: 배차 출발~도착만 → 목록에 표시', /출발~도착만/.test(await T.text(p, '.tr-item[data-tv="1"]')) && (await api(p, 'track.list')).vehicles.filter(function (v) { return v.id === 1; })[0].track_mode === 'work');
   ok('고치기: 사용 안 함', /00라 0004.*사용 안 함/.test(await T.text(p, '#trList')));
   await p.click('.tr-item[data-tv="4"] [data-te]'); await p.waitForSelector('#trDel');
   p.once('dialog', function (d) { ok('지우기 전 확인: 위치 기록도 지워진다고 안내', /위치 기록/.test(d.message()), d.message()); });

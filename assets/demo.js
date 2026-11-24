@@ -351,7 +351,8 @@
     var dn = [], dseen = {}; orders.forEach(function (o) { var k = o.d.fc + '|' + o.noteDrv; if (o.noteDrv && !dseen[k]) { dseen[k] = 1; dn.push({ fc: o.d.fc, text: o.noteDrv }); } });
     var dcn = demoNotes(tr.cust.replace(/\/.*$/, '')).filter(function (x) { return x.drv; }); orders.forEach(function (o) { var k = cnKey(o.d.fc); dcn.forEach(function (x) { if (k && cnKey(x.fc) === k && !dseen['|' + x.note]) { dseen['|' + x.note] = 1; dn.push({ fc: o.d.fc, text: x.note }); } }); });
     var rc = []; grp.forEach(function (g) { wk('rcpt').forEach(function (x) { if (x.cust === g.cust && x.date === g.date && x.no === g.no) rc.push({ fc: x.fc, at: x.at, tk: g.token }); }); });
-    return { notes: dn, date: tr.date, no: grp[0].no, cust: tr.cust.replace(/\/.*$/, ''), car: grp[0].car, driver: grp[0].driver, from: from || '', place: pl, more: more, stops: stops, receipts: rc };
+    return { notes: dn, date: tr.date, no: grp[0].no, cust: tr.cust.replace(/\/.*$/, ''), car: grp[0].car, driver: grp[0].driver, from: from || '', place: pl, more: more, stops: stops, receipts: rc,
+      trk: !!grp[0].car && (store.track || []).some(function (v) { var k = function (x) { return String(x || '').replace(/[\s-]/g, '').toUpperCase(); }; return v.track_mode === 'work' && v.active !== false && k(v.plate) && k(grp[0].car).indexOf(k(v.plate)) !== -1; }) }; // 배차 출발~도착만 받는 차(022)면 기사 화면에 안내
   }
   /* 변경 이력 (데모): 저장 전후 호차를 링크코드로 맞대어 바뀐 칸만 (서버는 DB 트리거 · supabase/migrations/008) */
   var DEMO_AUD_K = { car: 'car', driver: 'driver', phone: 'phone', time: 'time', ton: 'ton', memo: 'memo', status: 'status', no: 'no', retCost: 'ret_cost', wait: 'wait', support: 'support', rev: 'rev', cost: 'cost' };
@@ -1116,7 +1117,7 @@
       if (id && !row) fail('차량을 찾지 못했어요. 새로고침해 주세요.');
       if (!row) { row = { id: store.track.reduce(function (a, y) { return Math.max(a, y.id); }, 0) + 1 }; store.track.push(row); }
       ['driver_name', 'driver_phone', 'affiliation', 'company', 'ton', 'body_type', 'memo'].forEach(function (k) { row[k] = String(x[k] == null ? '' : x[k]).trim(); });
-      row.plate = plate; row.device_id = dev; row.active = x.active !== false;
+      row.plate = plate; row.device_id = dev; row.active = x.active !== false; if (x.track_mode != null) row.track_mode = x.track_mode === 'work' ? 'work' : 'always';
       save(); return list();
     }
     fail('알 수 없는 요청입니다: ' + req.action);

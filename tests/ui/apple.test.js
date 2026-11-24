@@ -24,6 +24,7 @@ T.run(async function () {
   var clip = await p.evaluate(function () { return navigator.clipboard.readText(); });
   ok('애플 문자: 짧게 · 상차·하차 순서 · go.html 링크', /^\[배차\]/.test(clip) && /상차: 가상상차/.test(clip) && /1\) 하차A/.test(clip) && /2\) 하차B/.test(clip) && clip.indexOf('go.html#' + tok) !== -1 && !/착지·길안내/.test(clip) && clip.split('\n').length <= 10, clip);
 
+  await api(p, 'track.save', { vehicle: { plate: '12가 3456', track_mode: 'work' } }); // 차량 위치 '배차 출발~도착만' 차(022)
   // 기사 화면
   var g = await o.ctx.newPage(); g.errs = []; g.on('pageerror', function (e) { g.errs.push(e.message); }); g.on('dialog', function (d) { d.accept(); });
   await g.route('**/config.js', function (r) { r.fulfill({ contentType: 'application/javascript', body: "window.JOIL_CONFIG={API_URL:''};" }); });
@@ -32,6 +33,7 @@ T.run(async function () {
   await g.goto(T.url + 'go.html#' + tok); await g.waitForSelector('[data-ev="dep"]');
   var gt = await T.text(g, 'body');
   ok('기사 화면: 상차지·하차 2곳·큰 버튼·한 줄 안내', /가상상차/.test(gt) && /하차 2곳/.test(gt) && /상차지 출발/.test(gt) && /하차A 도착/.test(gt) && /그 시각과 그때 위치/.test(gt) && /인수증 올리기/.test(gt), gt);
+  ok('출발~도착만 차: 마지막 하차지에만 작은 안내(팝업 없음)', (await g.$$eval('.tip', function (l) { return l.filter(function (x) { return /도착을 누르면 위치 전송이 종료됩니다/.test(x.textContent); }).map(function (x) { return x.closest('.card').id; }); })).join() === 'st1');
   var bh = await g.$eval('[data-ev="dep"]', function (x) { return x.getBoundingClientRect().height; }); ok('버튼이 커요 (60px 이상)', bh >= 60, bh);
   await g.click('[data-ev="dep"]'); await g.waitForSelector('.big.done');
   var ev = await api(p, 'dispatch.events', { cust: '애플', date: D });

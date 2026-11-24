@@ -748,8 +748,10 @@ export function makeServer(sql, opts) {
     orders.forEach(function (o) { var k = (o.d.fc || '') + '|' + o.noteDrv; if (o.noteDrv && !seen[k]) { seen[k] = 1; notes.push({ fc: o.d.fc || '', text: o.noteDrv }); } });
     try { var cn = (await dispNotes(co)).filter(function (x) { return x.drv; }); orders.forEach(function (o) { var k = dispCnKey(o.d.fc); cn.forEach(function (x) { if (k && dispCnKey(x.fc) === k && !seen['|' + x.note]) { seen['|' + x.note] = 1; notes.push({ fc: o.d.fc || '', text: x.note }); } }); }); } catch (e) { /* 특이사항 없이 */ }
     var pl = function (p) { return { name: p.name, addr: p.addr || '', time: p.time || '', contact: [p.manager, p.contact].filter(Boolean).join(' / '), photos: p.photos || [], lat: (geo[gk(p.addr)] || {}).lat, lng: (geo[gk(p.addr)] || {}).lng }; };
-    var b = grp[0];
-    return { notes: notes, date: tr.date, no: b.no, cust: co, car: b.car, driver: b.driver, from: from || '', place: place ? pl(place) : null, more: more.map(pl), stops: stops, receipts: rc };
+    var b = grp[0], trk = false;
+    try { trk = !!b.car && (await Q(sql, "select 1 from public.vehicles where track_mode = 'work' and active and public.track_plate_key(plate) <> '' and position(public.track_plate_key(plate) in public.track_plate_key($1)) > 0 limit 1", [b.car])).length > 0; } catch (e) { /* 022 전 */ }
+    var out = { notes: notes, date: tr.date, no: b.no, cust: co, car: b.car, driver: b.driver, from: from || '', place: place ? pl(place) : null, more: more.map(pl), stops: stops, receipts: rc, trk: trk };
+    if (!trk) delete out.trk; return out; // 구글 서버(drvGet_)와 같은 응답이 되게 — 위치 받는 차일 때만 붙임
   }
   /* ── 출발·도착 버튼 (019 · 애플 기사 화면 go.html): 시각 + 그때 위치 한 번 · 되돌리기 ── */
   function evRow(r) { return { id: Number(r.id), no: Number(r.no), kind: r.kind, stop: Number(r.stop), fc: r.fc, at: r.at_txt, lat: r.lat == null ? null : Number(r.lat), lng: r.lng == null ? null : Number(r.lng) }; }
@@ -763,7 +765,7 @@ export function makeServer(sql, opts) {
     var num = function (v, lo, hi) { v = Number(v); return v === v && v >= lo && v <= hi && req.lat != null ? v : null; };
     var la = num(req.lat, 33, 39), lo = num(req.lng, 124, 132); if (la == null || lo == null) la = lo = null; // 한국 밖 좌표·한쪽만 있으면 위치 없이
     var have = (await Q(sql, 'select 1 from drv_events where token = $1 and kind = $2 and stop = $3 and undone_at is null', [tr.token, kind, stop])).length;
-    if (!have) await Q(sql, 'insert into drv_events (token, cust, date, no, kind, stop, fc, lat, lng, acc) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [tr.token, tr.cust, tr.date, tr.no, kind, stop, String(req.fc || '').slice(0, 60), la, lo, la == null ? null : num(req.acc, 0, 100000)]); // 두 번 눌러도 한 번만
+    if (!have) await Q(sql, 'insert into drv_events (token, cust, date, no, kind, stop, fc, lat, lng, acc, last) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [tr.token, tr.cust, tr.date, tr.no, kind, stop, String(req.fc || '').slice(0, 60), la, lo, la == null ? null : num(req.acc, 0, 100000), kind === 'arr' && req.last === true]); // 두 번 눌러도 한 번만
     return drvEvents(req.t);
   }
   /** 배차 화면: 그 날짜·탭의 출발·도착 기록 (위치 좌표는 지도 보기용) */

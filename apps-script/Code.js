@@ -4181,7 +4181,7 @@ function fmt_(v) { return v instanceof Date ? Utilities.formatDate(v, TZ, 'yyyy-
 /* ───────────── 차량 위치 (Supabase · 서버 이전 1단계) ─────────────
    기사 폰 Traccar 앱 → Supabase 함수 'track' 이 위치 저장(supabase/ 폴더) → 여기서 서비스 키로 읽어 화면에 줘요.
    서비스 키는 스크립트 속성 SB_KEY 에만(관리자 화면에서 입력, 화면으로 돌려보내지 않음). Supabase 표는 RLS 로 브라우저에서 못 읽어요. */
-var TRACK_COLS = 'id,plate,device_id,driver_name,driver_phone,affiliation,company,ton,body_type,memo,active,last_time,last_lat,last_lng,last_speed,last_battery,last_received,stay_since';
+var TRACK_COLS = 'id,plate,device_id,driver_name,driver_phone,affiliation,company,ton,body_type,memo,active,last_time,last_lat,last_lng,last_speed,last_battery,last_received,stay_since,track_mode';
 
 function sb_(method, path, body, prefer) {
   var p = PropertiesService.getScriptProperties(), url = p.getProperty('SB_URL'), key = p.getProperty('SB_KEY');
@@ -4251,6 +4251,7 @@ function trackSave_(v) {
   var str = function (x, n) { return String(x == null ? '' : x).trim().slice(0, n || 100); };
   var row = { plate: str(v.plate, 30), device_id: trackNorm_(v.device_id || v.plate).slice(0, 60), driver_name: str(v.driver_name, 40), driver_phone: str(v.driver_phone, 30),
     affiliation: str(v.affiliation, 10), company: str(v.company, 60), ton: str(v.ton, 20), body_type: str(v.body_type, 30), memo: str(v.memo, 500), active: v.active !== false, updated_at: new Date().toISOString() };
+  if (v.track_mode != null) row.track_mode = v.track_mode === 'work' ? 'work' : 'always'; // 배차 출발~도착만 (022)
   if (!row.plate) throw new Error('차량번호를 넣어 주세요.');
   if (['', '지입', '직영', '용차'].indexOf(row.affiliation) === -1) throw new Error('소속은 지입·직영·용차 중 하나예요.');
   var id = String(v.id || '');

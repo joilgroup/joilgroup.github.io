@@ -621,7 +621,7 @@
     out.forEach(function (s, k) { if (!s.stay && out[k + 1]) s.to = out[k + 1].from; });
     return out;
   }
-  function trInfo(v) { return [v.company, v.affiliation, v.ton ? v.ton + (/톤|t$/i.test(v.ton) ? '' : '톤') : '', v.body_type].filter(Boolean).join(' · '); }
+  function trInfo(v) { return [v.company, v.affiliation, v.ton ? v.ton + (/톤|t$/i.test(v.ton) ? '' : '톤') : '', v.body_type, v.track_mode === 'work' ? '출발~도착만' : ''].filter(Boolean).join(' · '); }
   function renderTrack() {
     var st = trSt();
     $('#main').innerHTML = '<div class="card"><div class="tr-head"><div><div class="eyebrow">Tracking · 차량 위치</div><h2>차량 위치</h2></div>' +
@@ -801,6 +801,8 @@
         '<datalist id="trTons">' + ['1톤', '2.5톤', '3.5톤', '5톤', '8톤', '11톤', '14톤', '18톤', '25톤'].map(function (o) { return '<option value="' + o + '">'; }).join('') + '</datalist>' +
         '<datalist id="trBodies">' + ['윙바디', '카고', '탑차', '냉동탑차', '냉장탑차', '리프트', '츄레라'].map(function (o) { return '<option value="' + o + '">'; }).join('') + '</datalist>' +
         '<div class="field"><label>메모</label><textarea class="input" data-tf="memo" rows="2">' + f('memo') + '</textarea></div>' +
+        '<div class="field"><label>위치 받는 때</label><select class="input" data-tf="track_mode"><option value="always">항상 (앱이 켜져 있으면)</option><option value="work"' + (x.track_mode === 'work' ? ' selected' : '') + '>배차 출발~도착만 (기사가 출발 누른 때부터 마지막 도착까지)</option></select>' +
+        '<p class="hint" style="margin:4px 0 0">출발~도착만: 그날 배차에 이 차량번호가 있고 기사 화면에서 <b>출발</b>을 누른 때부터 마지막 하차지 <b>도착</b>까지만 저장해요(안 누르면 출발 14시간 뒤까지). 그 밖의 위치는 저장하지 않고 버려요. 지금은 애플 기사 화면에만 출발·도착 버튼이 있어요.</p></div>' +
         '<label class="small"><input type="checkbox" data-tf="active"' + (x.active ? ' checked' : '') + '> 사용 중 (끄면 이 차 위치를 더 받지 않아요 · 지난 기록은 남아요)</label>' +
         '<p class="hint">기사 위치는 개인위치정보예요. 앱을 켜기 전에 기사 본인 동의를 받아 주세요.</p>',
       foot: (v && state.user.role === 'admin' ? '<button class="btn btn-danger" id="trDel" style="margin-right:auto">차량 지우기</button>' : '') + '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="trSave">저장</button>',
