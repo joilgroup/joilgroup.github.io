@@ -404,7 +404,7 @@
     if (any) out.push(['home', '홈']);
     out.push(['work', '업무 기록']);
     if (q) grp('quote', '견적', [['calc', '단건 계산'], ['bulk', '대량 계산'], ['reqs', '견적접수'], ['quotes', '견적모음'], ['history', '조회기록']]);
-    grp('data', '업체·자료', [q && ['dispatch', '배차시트'], can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['manual', '업무 매뉴얼'], q && ['owners', '업무 담당표'], q && ['inq', '문의 기록'], q && ['rates', '업체단가'], q && ['docs', '서류함']]);
+    grp('data', '업체·자료', [q && ['dispatch', '배차시트'], can('search') && ['search', '배차검색'], q && ['custs', '거래처'], q && ['manual', '업무 매뉴얼'], q && ['owners', '업무 담당표'], q && ['inq', '문의 기록'], q && ['rates', '업체단가'], q && ['docs', '서류함'], q && ['gen', '일반업체 기록']]);
     if (any) grp('info', '일정·정보', [['cal', '일정'], ['info', '물류정보']]);
     if (can('track')) out.push(['track', '차량 위치']);
     if (can('analysis')) grp('an', '분석', [['analysis', '매출매입 분석'], ['report', '팀 월간 보고서']]);
@@ -581,9 +581,81 @@
     else if (state.view === 'report') renderReport();
     else if (state.view === 'work') renderWork();
     else if (state.view === 'track') renderTrack();
+    else if (state.view === 'gen') renderGen();
     else renderCalc();
     var mainEl = $('#main'); if (mainEl) mainEl.classList.toggle('wide', state.view === 'dispatch');
     syncRoute();
+  }
+
+  /* ───────── 일반업체 기록 (023) ─────────
+     구글 '일반업체 시트'의 날짜 탭을 시트 스크립트(apps-script/GenSync.js)가 매일 밤 Supabase 로 보내요 → 여기서 기간·찾기·엑셀. 배차금액은 분석 권한자만(서버가 지워서 보냄). */
+  var GEN_HEAD = [['date', '날짜'], ['cust', '매출처'], ['src', '발지'], ['dst', '착지'], ['kg', '중량'], ['amount', '배차금액'], ['car', '차량번호'], ['driver', '기사명'], ['phone', '차량전화'], ['note', '비고'], ['msg', '문자']], GEN_SHOW = 1000;
+  function genSt() { var t = today(); return state.gen || (state.gen = { from: t.slice(0, 8) + '01', to: t, q: '', res: null }); }
+  function genNum(v) { var n = Number(String(v == null ? '' : v).replace(/[,\s원]/g, '')); return isFinite(n) ? n : 0; }
+  function renderGen() {
+    var st = genSt();
+    $('#main').innerHTML = '<div class="card"><div class="tr-head"><div><div class="eyebrow">General · 일반업체</div><h2>일반업체 기록</h2></div>' +
+      '<div class="tr-tools"><input class="input" type="date" id="gnFrom" value="' + esc(st.from) + '"><span class="muted">~</span><input class="input" type="date" id="gnTo" value="' + esc(st.to) + '">' +
+      '<input class="input" id="gnQ" placeholder="매출처·발지·착지·차량번호·기사 찾기" value="' + esc(st.q) + '" style="min-width:220px"><button class="btn btn-sm btn-primary" id="gnGo">조회</button>' +
+      '<button class="btn btn-sm" id="gnXls" disabled>엑셀 받기</button>' + (state.user.role === 'admin' ? '<button class="btn btn-sm btn-ghost" id="gnKey">시트 연결 키</button>' : '') + '</div></div>' +
+      '<div id="gnInfo" class="small muted" style="margin:6px 0 10px"></div><div id="gnBody"></div>' +
+      '<p class="hint" style="margin:10px 0 0">구글 일반업체 시트의 날짜 탭(11월30일 등)을 매일 밤 11시에 그대로 받아 쌓아요. 시트에서 고치거나 취소한 건은 다음 날 밤에 반영돼요. 탭을 지워도 여기 기록은 남아요.</p></div>';
+    var go = function () { st.from = $('#gnFrom').value; st.to = $('#gnTo').value; st.q = $('#gnQ').value.trim(); genLoad(); };
+    $('#gnGo').onclick = go;
+    $('#gnQ').onkeydown = function (e) { if (e.key === 'Enter') go(); };
+    $('#gnXls').onclick = genXlsx;
+    if ($('#gnKey')) $('#gnKey').onclick = genKeyModal;
+    if (st.res) genDraw(); else genLoad();
+  }
+  function genLoad() {
+    var st = genSt(), el = $('#gnBody'); if (!el) return;
+    el.innerHTML = '<div class="muted small" style="padding:14px"><span class="spinner dark"></span> 불러오는 중…</div>';
+    api('gen.search', { from: st.from, to: st.to, q: st.q }).then(function (r) { st.res = r; genDraw(); })
+      .catch(function (e) { st.res = null; el = $('#gnBody'); if (el) el.innerHTML = '<p class="err-text">' + esc(e.message) + '</p>'; });
+  }
+  function genCols() { var r = genSt().res; return GEN_HEAD.filter(function (h) { return h[0] !== 'amount' || (r && r.money); }); }
+  function genDraw() {
+    var st = genSt(), r = st.res, el = $('#gnBody'); if (!el || !r) return;
+    var rows = r.rows || [], cols = genCols(), sum = r.money ? rows.reduce(function (a, x) { return a + genNum(x.amount); }, 0) : 0;
+    $('#gnInfo').textContent = (r.last ? '마지막으로 받은 때 ' + r.last + ' (' + r.lastDate + ' 탭까지)' : '아직 받은 기록이 없어요. 관리자가 시트 연결을 해 주세요.') +
+      ' · ' + won(rows.length) + '건' + (r.more ? '(2만 건까지만 · 기간을 줄여 주세요)' : '') + (r.money ? ' · 배차금액 합계 ' + won(sum) + '원' : '');
+    $('#gnXls').disabled = !rows.length;
+    if (!rows.length) { el.innerHTML = '<div class="muted small" style="padding:14px">이 기간에 기록이 없어요.</div>'; return; }
+    el.innerHTML = '<div class="table-wrap"><table class="data"><thead><tr>' + cols.map(function (h) { return '<th class="left">' + h[1] + '</th>'; }).join('') + '</tr></thead><tbody>' +
+      rows.slice(0, GEN_SHOW).map(function (x) {
+        return '<tr>' + cols.map(function (h) {
+          var v = x[h[0]] || '';
+          if (h[0] === 'amount') return '<td class="num">' + (v && genNum(v) ? won(genNum(v)) : esc(v)) + '</td>';
+          if (h[0] === 'msg' || h[0] === 'note') return '<td class="left small" title="' + esc(v) + '">' + esc(v.length > 30 ? v.slice(0, 30) + '…' : v) + '</td>';
+          return '<td class="left' + (h[0] === 'date' ? ' small' : '') + '">' + esc(v) + '</td>';
+        }).join('') + '</tr>';
+      }).join('') + '</tbody></table></div>' + (rows.length > GEN_SHOW ? '<p class="small muted">화면에는 앞 ' + won(GEN_SHOW) + '건만 보여요. 전체는 엑셀로 받아 주세요.</p>' : '');
+  }
+  function genXlsx() {
+    var st = genSt(), r = st.res; if (!r || !r.rows.length) return;
+    var cols = genCols(), btn = $('#gnXls'); busy(btn, true, '만드는 중…');
+    downloadXlsx('일반업체기록_' + st.from + '_' + st.to + '.xlsx', [{ name: '일반업체 기록', widths: cols.map(function (h) { return h[0] === 'msg' ? 40 : h[0] === 'note' ? 24 : 12; }),
+      rows: [cols.map(function (h) { return h[1]; })].concat(r.rows.map(function (x) { return cols.map(function (h) { var v = x[h[0]] || ''; return (h[0] === 'amount' || h[0] === 'kg') && v !== '' && isFinite(Number(String(v).replace(/,/g, ''))) ? Number(String(v).replace(/,/g, '')) : v; }); })) }])
+      .then(function () { busy(btn, false); }).catch(function (e) { busy(btn, false); toast('엑셀을 만들지 못했어요: ' + e.message, 'err'); });
+  }
+  /** 관리자: 시트 스크립트에 넣을 주소·키 (키는 새로 만들 때 한 번만 보여요 · 저장은 해시만) */
+  function genKeyModal() {
+    var url = CFG.SB_FN || API_URL || '';
+    modal({ eyebrow: '일반업체 기록', title: '시트 연결 키',
+      body: '<p class="small" style="margin:0 0 10px">일반업체 구글 시트의 Apps Script(파일 <b>GenSync</b>) → 프로젝트 설정 → 스크립트 속성에 아래 두 값을 넣고, <b>genStart</b>를 한 번 실행하면 매일 밤 11시에 날짜 탭을 보내요. 마스터시트를 지우기 전에는 <b>genMoveMaster</b>를 한 번 실행해 지난 기록을 옮겨 주세요.</p>' +
+        '<div class="tr-copy"><span class="small muted">GEN_URL</span><code id="gkUrl">' + esc(url) + '</code><button class="btn btn-sm" data-cp="gkUrl">복사</button></div>' +
+        '<div class="tr-copy"><span class="small muted">GEN_KEY</span><code id="gkKey" class="muted">새로 만들 때 한 번만 보여요</code><button class="btn btn-sm" data-cp="gkKey" disabled>복사</button></div>' +
+        '<p class="hint">키를 새로 만들면 예전 키는 바로 안 돼요 — 시트의 GEN_KEY 도 새 키로 바꿔 주세요. 키는 시트 칸에 적지 마세요.</p>',
+      foot: '<button class="btn" data-close>닫기</button><button class="btn btn-primary" id="gkNew">키 새로 만들기</button>',
+      onMount: function (m) {
+        $$('[data-cp]', m).forEach(function (b) { b.onclick = function () { copyText($('#' + b.dataset.cp, m).textContent).then(function () { toast('복사했어요.'); }); }; });
+        $('#gkNew', m).onclick = function () {
+          var btn = this; if (!confirm('시트 연결 키를 새로 만들까요? 예전 키를 쓰는 시트는 새 키로 바꾸기 전까지 보내지 못해요.')) return;
+          busy(btn, true, '만드는 중…');
+          api('gen.key', {}).then(function (r) { busy(btn, false); var k = $('#gkKey', m); k.textContent = r.key; k.classList.remove('muted'); $('[data-cp="gkKey"]', m).disabled = false; toast('새 키를 만들었어요. 지금 복사해 두세요.'); })
+            .catch(function (e) { busy(btn, false); toast(e.message, 'err'); });
+        };
+      } });
   }
 
   /* ───────── 차량 위치 (Supabase · '차량 위치' 권한) ─────────

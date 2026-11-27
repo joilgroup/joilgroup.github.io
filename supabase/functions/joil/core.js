@@ -25,7 +25,7 @@ export var ACTIONS = ['login', 'me', 'logout', 'changePassword', 'publicSettings
   'dispatch.day', 'dispatch.month', 'dispatch.dayAll', 'dispatch.monthAll', 'dispatch.stamp', 'dispatch.tabs', 'dispatch.tabsSave', 'dispatch.import', 'dispatch.save', 'dispatch.deleteOrders', 'dispatch.note', 'dispatch.copyOrders', 'dispatch.moveOrders', 'dispatch.editOrder',
   'dispatch.rates', 'dispatch.ratesSave', 'dispatch.mapSave', 'dispatch.map', 'dispatch.price', 'dispatch.priceSave', 'dispatch.codes', 'dispatch.codesSave', 'dispatch.must', 'dispatch.mustSave', 'dispatch.notes', 'dispatch.notesSave', 'dispatch.geo', 'dispatch.receipt',
   'loading.list', 'loading.save', 'loading.delete', 'loading.photo', 'loading.photoAdd', 'loading.photoCap', 'loading.photoDelete', 'drivers.list', 'drivers.save', 'drivers.delete', 'dest.list', 'dest.save', 'loading.bulk', 'drivers.bulk', 'dispatch.history', 'admin.audit', 'dispatch.search',
-  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage', 'admin.routes', 'admin.routeRefetch'].concat(portActions());
+  'notice.list', 'notice.save', 'notice.delete', 'inq.list', 'inq.save', 'inq.delete', 'owners.list', 'owners.save', 'owners.delete', 'work.list', 'work.stamp', 'work.op', 'admin.usage', 'admin.routes', 'admin.routeRefetch', 'gen.sync', 'gen.search', 'gen.key'].concat(portActions());
 /** 진짜 표로 옮긴 영역 (012): 액션 앞부분 → 시트 이름. props 'MOVED_시트'가 있을 때만 이 서버가 맡아요(없으면 gas.js 가 시트 그대로) */
 export var MOVED = { 'notice.': '공지', 'inq.': '문의기록', 'owners.': '업무담당', 'work.': '업무기록' };
 // 화면이 아무 설정도 안 옮겼을 때 쓰는 기본 공개 설정 (Calc.js joilDefaultSettings 에서 뽑은 것 · 옮기기 도구가 실제 값을 props.PUBLIC_SETTINGS 에 넣어요)
@@ -768,6 +768,47 @@ export function makeServer(sql, opts) {
     if (!have) await Q(sql, 'insert into drv_events (token, cust, date, no, kind, stop, fc, lat, lng, acc, last) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)', [tr.token, tr.cust, tr.date, tr.no, kind, stop, String(req.fc || '').slice(0, 60), la, lo, la == null ? null : num(req.acc, 0, 100000), kind === 'arr' && req.last === true]); // 두 번 눌러도 한 번만
     return drvEvents(req.t);
   }
+  /* ── 일반업체 기록 (023): 구글 시트 날짜 탭 → 매일 밤 통째로 (시트 스크립트 apps-script/GenSync.js) ── */
+  var GEN_COLS = ['cust', 'src', 'dst', 'kg', 'amount', 'car', 'driver', 'phone', 'note', 'msg'];
+  /** 시트가 보내는 것: { key, days: [{ date, origin, rows: [[매출처, 발지, 착지, 중량, 배차금액, 차량번호, 기사명, 차량전화, 비고, 문자], …] }] } — 날짜마다 지우고 새로 */
+  async function genSync(req) {
+    var h = (await propsGet(sql, ['GEN_KEY_HASH'])).GEN_KEY_HASH;
+    if (!h || !req.key || (await sha256hex(String(req.key))) !== h) throw err('시트 연결 키가 맞지 않아요. 조일 사이트 → 일반업체 기록 → 시트 연결 키에서 다시 받아 주세요.');
+    var days = Array.isArray(req.days) ? req.days : [], recs = [], dates = [];
+    if (days.length > 400) throw err('한 번에 400일까지만 보낼 수 있어요.');
+    days.forEach(function (d) {
+      var date = String(d && d.date || ''); if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw err('날짜 형식이 틀려요: ' + date);
+      if (dates.indexOf(date) !== -1) throw err('같은 날짜가 두 번 왔어요: ' + date);
+      var rows = Array.isArray(d.rows) ? d.rows : []; if (rows.length > 5000) throw err(date + ' 줄이 너무 많아요.');
+      dates.push(date);
+      rows.forEach(function (r, i) { var o = { date: date, seq: i + 1, origin: String(d.origin || '').slice(0, 40) }; GEN_COLS.forEach(function (k, j) { o[k] = String(r && r[j] != null ? r[j] : '').slice(0, k === 'msg' || k === 'note' ? 4000 : 200); }); recs.push(o); });
+    });
+    if (!dates.length) return { dates: 0, rows: 0 };
+    await sql.begin(async function (tx) {
+      await tx.unsafe('delete from gen_rows where date = any($1)', [dates]);
+      if (recs.length) await tx.unsafe('insert into gen_rows (date, seq, origin, ' + GEN_COLS.join(', ') + ') select date, seq, origin, ' + GEN_COLS.join(', ') + ' from jsonb_to_recordset($1::text::jsonb) as x(date text, seq int, origin text, ' + GEN_COLS.map(function (k) { return k + ' text'; }).join(', ') + ')', [JSON.stringify(recs)]);
+    });
+    return { dates: dates.length, rows: recs.length };
+  }
+  /** 조회: 기간(최대 1년) + 찾는 말(매출처·발지·착지·차량번호·기사명·비고) · 배차금액은 분석 권한자만 */
+  async function genSearch(session, req) {
+    var from = String(req.from || ''), to = String(req.to || ''), money = session.perms.indexOf('analysis') !== -1;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || from > to) throw err('기간을 확인해 주세요.');
+    if ((new Date(to) - new Date(from)) / 864e5 > 366) throw err('기간은 1년까지만 볼 수 있어요.');
+    var q = String(req.q || '').replace(/\s+/g, '').slice(0, 40), args = [from, to], w = '';
+    if (q) { args.push('%' + q.replace(/[\\%_]/g, '\\$&') + '%'); w = " and replace(cust || '|' || src || '|' || dst || '|' || car || '|' || driver || '|' || note, ' ', '') ilike $3"; }
+    var rows = await Q(sql, 'select date, seq, ' + GEN_COLS.join(', ') + ' from gen_rows where date between $1 and $2' + w + ' order by date, seq limit 20001', args);
+    var more = rows.length > 20000; if (more) rows = rows.slice(0, 20000);
+    var last = (await Q(sql, "select to_char(max(synced_at) at time zone 'Asia/Seoul', 'YYYY-MM-DD HH24:MI') t, max(date) d from gen_rows"))[0] || {};
+    return { rows: rows.map(function (r) { var o = { date: r.date }; GEN_COLS.forEach(function (k) { if (k !== 'amount' || money) o[k] = r[k]; }); return o; }), more: more, money: money, last: last.t || '', lastDate: last.d || '' };
+  }
+  /** 관리자: 시트 연결 키 새로 만들기 (저장은 해시만 · 키는 이때 한 번만 보여 줌) */
+  async function genKey(session) {
+    if (session.role !== 'admin') throw err('관리자만 사용할 수 있습니다.');
+    var b = new Uint8Array(24); crypto.getRandomValues(b); var key = Array.from(b).map(function (x) { return ('0' + x.toString(16)).slice(-2); }).join('');
+    await propSet(sql, 'GEN_KEY_HASH', await sha256hex(key));
+    return { key: key };
+  }
   /** 배차 화면: 그 날짜·탭의 출발·도착 기록 (위치 좌표는 지도 보기용) */
   async function dispEvents(cust, date) { cust = dispCust(cust); date = dispDate(date); return { events: (await Q(sql, 'select ' + EV_SEL + ' from drv_events where cust = $1 and date = $2 and undone_at is null order by no, at, id', [cust, date])).map(evRow) }; }
   async function drvUpload(req) {
@@ -803,6 +844,7 @@ export function makeServer(sql, opts) {
     if (action === 'drv.photo') return drvPhoto(req);
     if (action === 'drv.events') return drvEvents(req.t);
     if (action === 'drv.event') return drvEvent(req);
+    if (action === 'gen.sync') return genSync(req); // 구글 시트 스크립트가 시트 연결 키로 (로그인 없음)
     var session = await requireSession(req.token), cx = ctxStore.getStore(); if (cx) cx.who = session.name || session.id;
     if (session.mustChange && ['me', 'logout', 'changePassword', 'publicSettings'].indexOf(action) === -1) throw err('임시 비밀번호입니다. 비밀번호를 먼저 변경하세요.');
     if (session.role === 'partner') return partnerHandle(session, action, req);
@@ -820,6 +862,8 @@ export function makeServer(sql, opts) {
       case 'work.stamp': return { stamp: await workStamp(workWho(session, req.uid)) };
       case 'work.op': return workOp(session, req);
     }
+    if (action === 'gen.search') { requirePerm(session, 'quote'); return genSearch(session, req); }
+    if (action === 'gen.key') return genKey(session);
     if (port.has(action)) return port.handle(action, session, req); // 옮긴 Code.js 영역 (port.js · 권한 확인도 거기서)
     if (/^dispatch\.|^loading\.|^drivers\.|^dest\.|^inq\.|^owners\./.test(action)) requirePerm(session, 'quote'); // Code.js QUOTE_ACTIONS 안의 배차 액션들 · 문의·업무담당
     switch (action) {

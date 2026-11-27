@@ -410,6 +410,16 @@
     if (/^reqs\./.test(req.action)) needPerm(me, 'quote');
     if (/^track\./.test(req.action) && me.role !== 'admin') needPerm(me, 'track');
     if (/^track\./.test(req.action)) return demoTrack(req, me);
+    if (req.action === 'gen.search' || req.action === 'gen.key') { // 일반업체 기록(023) · 가짜 3줄
+      if (req.action === 'gen.key') { if (me.role !== 'admin') fail('관리자만 사용할 수 있습니다.'); return { key: 'demo0000000000000000000000000000000000000000demo' }; }
+      needPerm(me, 'quote');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(req.from)) || !/^\d{4}-\d{2}-\d{2}$/.test(String(req.to)) || req.from > req.to) fail('기간을 확인해 주세요.');
+      var gd = today().slice(0, 10), gm = me.role === 'admin' || me.perms.indexOf('analysis') !== -1, gq = String(req.q || '').replace(/\s/g, '');
+      var gr = [[gd, '가상화주', '오창', '대전', '1', '100000', '00가0001', '가짜기사1', '010-0000-0000', '사외 : 30km', '가짜 문자 내용'], [gd, '가상화주', '구미', '대전', '5', '80000', '00가0002', '가짜기사2', '', '', ''], [gd, '다른화주', '대전', '청주', '1', '50,000', '', '', '', '무진동', '']]
+        .filter(function (x) { return x[0] >= req.from && x[0] <= req.to && (!gq || [x[1], x[2], x[3], x[6], x[7], x[9]].join('|').replace(/\s/g, '').indexOf(gq) !== -1); })
+        .map(function (x) { var o = { date: x[0], cust: x[1], src: x[2], dst: x[3], kg: x[4], car: x[6], driver: x[7], phone: x[8], note: x[9], msg: x[10] }; if (gm) o.amount = x[5]; return o; });
+      return { rows: gr, more: false, money: gm, last: gd + ' 23:00', lastDate: gd };
+    }
     switch (req.action) {
       case 'work.list': case 'work.stamp': case 'work.op': var wf = load(); if (wf) { store.work = wf.work || []; store.workStamp = wf.workStamp || {}; } // 다른 창(폰 대신)에서 적은 것도 보이게
         if (req.action === 'work.op') return workOp(me, req);
